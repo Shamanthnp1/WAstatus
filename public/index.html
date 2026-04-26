@@ -7,9 +7,6 @@
     initial-scale=1.0"/>
   <title>StatusDrop - HD WhatsApp Status</title>
   <style>
-    /* =====================
-       RESET & BASE
-    ===================== */
     * {
       margin: 0;
       padding: 0;
@@ -35,17 +32,10 @@
       overflow-x: hidden;
     }
 
-    /* =====================
-       HERO SECTION
-    ===================== */
     .hero {
       text-align: center;
       padding: 60px 20px 40px;
-      background: linear-gradient(
-        180deg,
-        #0a1f0a 0%,
-        #000000 100%
-      );
+      background: linear-gradient(180deg, #0a1f0a 0%, #000000 100%);
     }
 
     .logo {
@@ -73,9 +63,7 @@
       color: var(--white);
     }
 
-    .logo-text span {
-      color: var(--green);
-    }
+    .logo-text span { color: var(--green); }
 
     .hero h1 {
       font-size: 48px;
@@ -85,9 +73,7 @@
       color: var(--white);
     }
 
-    .hero h1 span {
-      color: var(--green);
-    }
+    .hero h1 span { color: var(--green); }
 
     .hero p {
       font-size: 18px;
@@ -111,18 +97,41 @@
       font-size: 14px;
     }
 
-    /* =====================
-       MAIN CONTAINER
-    ===================== */
+    /* NEW — split feature banner */
+    .split-banner {
+      background: linear-gradient(90deg, #0a2a0a, #0d3d0d);
+      border: 1px solid var(--dark-green);
+      border-radius: 12px;
+      padding: 14px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .split-banner-icon {
+      font-size: 28px;
+      flex-shrink: 0;
+    }
+
+    .split-banner-text h4 {
+      color: var(--green);
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .split-banner-text p {
+      color: var(--grey);
+      font-size: 12px;
+    }
+
     .container {
       max-width: 700px;
       margin: 0 auto;
       padding: 20px;
     }
 
-    /* =====================
-       CARDS
-    ===================== */
     .card {
       background: var(--dark);
       border: 1px solid var(--dark2);
@@ -155,9 +164,6 @@
       flex-shrink: 0;
     }
 
-    /* =====================
-       UPLOAD ZONE
-    ===================== */
     .upload-zone {
       border: 2px dashed var(--dark-green);
       border-radius: 12px;
@@ -176,10 +182,7 @@
       box-shadow: 0 0 20px rgba(37,211,102,0.1);
     }
 
-    .upload-icon {
-      font-size: 48px;
-      margin-bottom: 16px;
-    }
+    .upload-icon { font-size: 48px; margin-bottom: 16px; }
 
     .upload-zone h3 {
       font-size: 20px;
@@ -193,9 +196,7 @@
       margin-bottom: 8px;
     }
 
-    .upload-zone input {
-      display: none;
-    }
+    .upload-zone input { display: none; }
 
     .upload-formats {
       display: flex;
@@ -214,16 +215,8 @@
       font-weight: 600;
     }
 
-    /* =====================
-       FILES LIST
-    ===================== */
-    .files-list {
-      display: none;
-    }
-
-    .files-list.visible {
-      display: block;
-    }
+    .files-list { display: none; }
+    .files-list.visible { display: block; }
 
     .file-item {
       background: var(--dark2);
@@ -237,24 +230,13 @@
     }
 
     @keyframes slideIn {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .file-icon {
-      font-size: 24px;
-      flex-shrink: 0;
-    }
+    .file-icon { font-size: 24px; flex-shrink: 0; }
 
-    .file-info {
-      flex: 1;
-    }
+    .file-info { flex: 1; }
 
     .file-name {
       font-size: 14px;
@@ -267,9 +249,17 @@
       max-width: 300px;
     }
 
-    .file-size {
-      font-size: 12px;
-      color: var(--grey);
+    .file-size { font-size: 12px; color: var(--grey); }
+
+    /* NEW — split hint badge on file */
+    .file-split-hint {
+      background: #0d3d0d;
+      border: 1px solid var(--dark-green);
+      color: var(--green);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      white-space: nowrap;
     }
 
     .file-remove {
@@ -283,9 +273,7 @@
       transition: color 0.2s;
     }
 
-    .file-remove:hover {
-      color: #ff4444;
-    }
+    .file-remove:hover { color: #ff4444; }
 
     .size-tracker {
       display: flex;
@@ -297,30 +285,13 @@
       border-radius: 8px;
     }
 
-    .size-text {
-      font-size: 14px;
-      color: var(--grey);
-    }
+    .size-text { font-size: 14px; color: var(--grey); }
+    .size-text span { color: var(--green); font-weight: 700; }
 
-    .size-text span {
-      color: var(--green);
-      font-weight: 700;
-    }
+    .progress-container { display: none; }
+    .progress-container.visible { display: block; }
 
-    /* =====================
-       PROGRESS BARS
-    ===================== */
-    .progress-container {
-      display: none;
-    }
-
-    .progress-container.visible {
-      display: block;
-    }
-
-    .progress-item {
-      margin-bottom: 16px;
-    }
+    .progress-item { margin-bottom: 16px; }
 
     .progress-label {
       display: flex;
@@ -330,9 +301,7 @@
       color: var(--grey);
     }
 
-    .progress-label span:last-child {
-      color: var(--green);
-    }
+    .progress-label span:last-child { color: var(--green); }
 
     .progress-bar {
       height: 6px;
@@ -343,16 +312,11 @@
 
     .progress-fill {
       height: 100%;
-      background: linear-gradient(
-        90deg,
-        var(--dark-green),
-        var(--green)
-      );
+      background: linear-gradient(90deg, var(--dark-green), var(--green));
       border-radius: 3px;
       width: 0%;
       transition: width 0.3s ease;
-      animation: progressPulse 1.5s 
-        ease-in-out infinite;
+      animation: progressPulse 1.5s ease-in-out infinite;
     }
 
     @keyframes progressPulse {
@@ -360,9 +324,20 @@
       50% { opacity: 0.7; }
     }
 
-    /* =====================
-       AD SECTION
-    ===================== */
+    /* NEW — splitting status message */
+    .splitting-info {
+      background: #0a2a0a;
+      border: 1px solid var(--dark-green);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--green);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     .ad-container {
       background: var(--dark2);
       border: 1px dashed var(--light-grey);
@@ -376,14 +351,8 @@
       justify-content: center;
     }
 
-    .ad-placeholder {
-      color: var(--grey);
-      font-size: 13px;
-    }
+    .ad-placeholder { color: var(--grey); font-size: 13px; }
 
-    /* =====================
-       BUTTONS
-    ===================== */
     .btn {
       width: 100%;
       padding: 16px;
@@ -399,16 +368,12 @@
       gap: 10px;
     }
 
-    .btn-primary {
-      background: var(--green);
-      color: var(--black);
-    }
+    .btn-primary { background: var(--green); color: var(--black); }
 
     .btn-primary:hover {
       background: #20c55a;
       transform: translateY(-2px);
-      box-shadow: 0 8px 25px 
-        rgba(37,211,102,0.3);
+      box-shadow: 0 8px 25px rgba(37,211,102,0.3);
     }
 
     .btn-primary:disabled {
@@ -425,10 +390,7 @@
       border: 2px solid var(--white);
     }
 
-    .btn-secondary:hover {
-      background: var(--white);
-      color: var(--black);
-    }
+    .btn-secondary:hover { background: var(--white); color: var(--black); }
 
     .btn-whatsapp {
       background: var(--green);
@@ -440,20 +402,11 @@
     .btn-whatsapp:hover {
       background: #20c55a;
       transform: translateY(-2px);
-      box-shadow: 0 8px 30px 
-        rgba(37,211,102,0.4);
+      box-shadow: 0 8px 30px rgba(37,211,102,0.4);
     }
 
-    /* =====================
-       ACTIVATION SECTION
-    ===================== */
-    .activation-section {
-      display: none;
-    }
-
-    .activation-section.visible {
-      display: block;
-    }
+    .activation-section { display: none; }
+    .activation-section.visible { display: block; }
 
     .code-display {
       background: var(--dark2);
@@ -492,10 +445,20 @@
       transition: all 0.2s;
     }
 
-    .code-copy:hover {
-      border-color: var(--green);
-      color: var(--green);
+    .code-copy:hover { border-color: var(--green); color: var(--green); }
+
+    /* NEW — file count info */
+    .file-count-info {
+      background: var(--dark2);
+      border-radius: 10px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--grey);
+      text-align: center;
     }
+
+    .file-count-info span { color: var(--green); font-weight: 700; }
 
     .activation-steps {
       background: var(--dark2);
@@ -504,11 +467,7 @@
       margin-bottom: 20px;
     }
 
-    .activation-steps h4 {
-      color: var(--white);
-      margin-bottom: 16px;
-      font-size: 15px;
-    }
+    .activation-steps h4 { color: var(--white); margin-bottom: 16px; font-size: 15px; }
 
     .step-item {
       display: flex;
@@ -531,31 +490,13 @@
       flex-shrink: 0;
     }
 
-    .step-text {
-      font-size: 14px;
-      color: var(--grey);
-      padding-top: 2px;
-    }
+    .step-text { font-size: 14px; color: var(--grey); padding-top: 2px; }
+    .step-text strong { color: var(--white); }
 
-    .step-text strong {
-      color: var(--white);
-    }
+    .success-section { display: none; }
+    .success-section.visible { display: block; }
 
-    /* =====================
-       SUCCESS SECTION
-    ===================== */
-    .success-section {
-      display: none;
-    }
-
-    .success-section.visible {
-      display: block;
-    }
-
-    .success-animation {
-      text-align: center;
-      padding: 20px 0;
-    }
+    .success-animation { text-align: center; padding: 20px 0; }
 
     .checkmark {
       font-size: 64px;
@@ -575,11 +516,7 @@
       margin: 16px 0 8px;
     }
 
-    .success-subtitle {
-      color: var(--grey);
-      font-size: 15px;
-      margin-bottom: 24px;
-    }
+    .success-subtitle { color: var(--grey); font-size: 15px; margin-bottom: 24px; }
 
     .upload-instructions {
       background: var(--dark2);
@@ -589,41 +526,11 @@
       text-align: left;
     }
 
-    .upload-instructions h4 {
-      color: var(--white);
-      margin-bottom: 16px;
-      font-size: 15px;
-    }
+    .upload-instructions h4 { color: var(--white); margin-bottom: 16px; font-size: 15px; }
 
-    .share-buttons {
-      display: flex;
-      gap: 12px;
-      margin-top: 16px;
-    }
+    .share-buttons { display: flex; gap: 12px; margin-top: 16px; }
+    .share-buttons .btn { flex: 1; }
 
-    .share-buttons .btn {
-      flex: 1;
-    }
-
-    /* =====================
-       SPINNER
-    ===================== */
-    .spinner {
-      width: 20px;
-      height: 20px;
-      border: 3px solid rgba(0,0,0,0.3);
-      border-top-color: var(--black);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    /* =====================
-       FOOTER
-    ===================== */
     footer {
       border-top: 1px solid var(--dark2);
       padding: 30px 20px;
@@ -631,17 +538,9 @@
       margin-top: 40px;
     }
 
-    footer p {
-      color: var(--grey);
-      font-size: 14px;
-      margin-bottom: 12px;
-    }
+    footer p { color: var(--grey); font-size: 14px; margin-bottom: 12px; }
 
-    .footer-links {
-      display: flex;
-      gap: 20px;
-      justify-content: center;
-    }
+    .footer-links { display: flex; gap: 20px; justify-content: center; }
 
     .footer-links a {
       color: var(--grey);
@@ -650,38 +549,22 @@
       transition: color 0.2s;
     }
 
-    .footer-links a:hover {
-      color: var(--green);
-    }
+    .footer-links a:hover { color: var(--green); }
 
-    /* =====================
-       RESPONSIVE
-    ===================== */
     @media (max-width: 600px) {
-      .hero h1 {
-        font-size: 32px;
-      }
-
-      .code-value {
-        font-size: 28px;
-        letter-spacing: 4px;
-      }
-
-      .share-buttons {
-        flex-direction: column;
-      }
+      .hero h1 { font-size: 32px; }
+      .code-value { font-size: 28px; letter-spacing: 4px; }
+      .share-buttons { flex-direction: column; }
     }
   </style>
 </head>
 <body>
 
-  <!-- HERO SECTION -->
+  <!-- HERO -->
   <div class="hero">
     <div class="logo">
       <div class="logo-icon">💚</div>
-      <div class="logo-text">
-        WA<span>Status</span>
-      </div>
+      <div class="logo-text">WA<span>Status</span></div>
     </div>
     <h1>Send <span>HD Videos</span><br/>to WhatsApp Status</h1>
     <p>Compress & deliver videos directly to your WhatsApp</p>
@@ -689,12 +572,21 @@
       <span class="badge">✅ Free</span>
       <span class="badge">⚡ Fast</span>
       <span class="badge">🔒 Private</span>
+      <span class="badge">✂️ Auto Split</span>
       <span class="badge">🌍 Works Worldwide</span>
     </div>
   </div>
 
-  <!-- MAIN CONTENT -->
   <div class="container">
+
+    <!-- NEW — Split Feature Banner -->
+    <div class="split-banner">
+      <div class="split-banner-icon">✂️</div>
+      <div class="split-banner-text">
+        <h4>Auto Split & Compress — Any Size Video!</h4>
+        <p>Long videos are automatically split into 29-second WhatsApp-ready clips. Upload up to 200MB!</p>
+      </div>
+    </div>
 
     <!-- STEP 1: UPLOAD -->
     <div class="card" id="uploadCard">
@@ -703,14 +595,12 @@
         Upload Your Videos
       </div>
 
-      <!-- Upload Zone -->
-      <div class="upload-zone" 
-           id="uploadZone">
+      <div class="upload-zone" id="uploadZone">
         <div class="upload-icon">📁</div>
         <h3>Drop Videos Here</h3>
         <p>or click to browse files</p>
         <p style="color:#444;font-size:13px;">
-          Maximum 200MB total
+          Up to 200MB · Long videos auto-split into 29s clips!
         </p>
         <div class="upload-formats">
           <span class="format-tag">MP4</span>
@@ -719,35 +609,27 @@
           <span class="format-tag">MKV</span>
           <span class="format-tag">3GP</span>
         </div>
-        <input type="file" 
-               id="fileInput" 
-               multiple 
-               accept="video/*"/>
+        <input type="file" id="fileInput" multiple accept="video/*"/>
       </div>
 
-      <!-- Files List -->
-      <div class="files-list" 
-           id="filesList">
+      <div class="files-list" id="filesList">
         <div style="height:16px"></div>
         <div id="filesContainer"></div>
         <div class="size-tracker">
           <span class="size-text">
             Total: <span id="totalSize">0 MB</span> / 200 MB
           </span>
-          <button 
-            onclick="clearFiles()"
+          <button onclick="clearFiles()"
             style="background:none;border:1px solid #333;
             color:#666;padding:4px 12px;
-            border-radius:6px;cursor:pointer;
-            font-size:12px;">
+            border-radius:6px;cursor:pointer;font-size:12px;">
             Clear All
           </button>
         </div>
       </div>
 
-      <!-- Compress Button -->
       <div style="margin-top:20px">
-        <button class="btn btn-primary" 
+        <button class="btn btn-primary"
                 id="compressBtn"
                 onclick="startCompression()"
                 disabled>
@@ -757,20 +639,19 @@
     </div>
 
     <!-- STEP 2: PROGRESS -->
-    <div class="card" 
-         id="progressCard" 
-         style="display:none">
+    <div class="card" id="progressCard" style="display:none">
       <div class="card-title">
         <div class="step-badge">2</div>
-        Compressing Videos...
+        Processing Videos...
       </div>
 
-      <div class="progress-container visible" 
-           id="progressContainer">
-        <!-- Progress bars added here -->
+      <!-- Splitting info -->
+      <div class="splitting-info" id="splittingInfo" style="display:none">
+        ✂️ Long video detected — splitting into 29-second WhatsApp clips...
       </div>
 
-      <!-- AD DURING COMPRESSION -->
+      <div class="progress-container visible" id="progressContainer"></div>
+
       <div class="ad-container">
         <div class="ad-placeholder">
           📢 Advertisement<br/>
@@ -778,83 +659,55 @@
         </div>
       </div>
 
-      <p style="text-align:center;
-         color:#666;font-size:13px;">
-        ⚡ Compressing & uploading...
-        Please wait!
+      <p style="text-align:center;color:#666;font-size:13px;">
+        ⚡ Splitting, compressing & uploading... Please wait!
       </p>
     </div>
 
     <!-- STEP 3: ACTIVATION -->
-    <div class="activation-section" 
-         id="activationSection">
+    <div class="activation-section" id="activationSection">
       <div class="card">
         <div class="card-title">
           <div class="step-badge">3</div>
           Activate on WhatsApp
         </div>
 
-        <!-- Activation Code -->
-        <div class="code-display">
-          <div class="code-label">
-            Your Activation Code
-          </div>
-          <div class="code-value" 
-               id="activationCode">
-            - - - - -
-          </div>
-          <button class="code-copy" 
-                  onclick="copyCode()">
-            📋 Copy Code
-          </button>
+        <!-- File count info -->
+        <div class="file-count-info" id="fileCountInfo" style="display:none">
+          ✂️ Your video was split into <span id="clipCount">?</span> clips — all will be sent to WhatsApp!
         </div>
 
-        <!-- Instructions -->
+        <div class="code-display">
+          <div class="code-label">Your Activation Code</div>
+          <div class="code-value" id="activationCode">- - - - -</div>
+          <button class="code-copy" onclick="copyCode()">📋 Copy Code</button>
+        </div>
+
         <div class="activation-steps">
           <h4>📋 How it works:</h4>
           <div class="step-item">
             <div class="step-num">1</div>
-            <div class="step-text">
-              Click the button below to 
-              <strong>open WhatsApp</strong>
-            </div>
+            <div class="step-text">Click the button below to <strong>open WhatsApp</strong></div>
           </div>
           <div class="step-item">
             <div class="step-num">2</div>
-            <div class="step-text">
-              Your activation code is 
-              <strong>already typed</strong> 
-              in the message
-            </div>
+            <div class="step-text">Your activation code is <strong>already typed</strong> in the message</div>
           </div>
           <div class="step-item">
             <div class="step-num">3</div>
-            <div class="step-text">
-              Just press 
-              <strong>SEND</strong> 
-              in WhatsApp
-            </div>
+            <div class="step-text">Just press <strong>SEND</strong> in WhatsApp</div>
           </div>
           <div class="step-item">
             <div class="step-num">4</div>
-            <div class="step-text">
-              Receive your 
-              <strong>HD video</strong> 
-              directly in WhatsApp! 🎬
-            </div>
+            <div class="step-text">Receive your <strong>HD video clips</strong> directly in WhatsApp! 🎬</div>
           </div>
         </div>
 
-        <!-- WhatsApp Button -->
-        <button class="btn btn-whatsapp" 
-                id="waButton"
-                onclick="openWhatsApp()">
+        <button class="btn btn-whatsapp" id="waButton" onclick="openWhatsApp()">
           💚 Activate on WhatsApp
         </button>
 
-        <!-- AD AFTER ACTIVATION -->
-        <div class="ad-container" 
-             style="margin-top:20px">
+        <div class="ad-container" style="margin-top:20px">
           <div class="ad-placeholder">
             📢 Advertisement<br/>
             <small>Your ad will appear here</small>
@@ -864,121 +717,78 @@
     </div>
 
     <!-- STEP 4: SUCCESS -->
-    <div class="success-section" 
-         id="successSection">
+    <div class="success-section" id="successSection">
       <div class="card">
         <div class="success-animation">
           <div class="checkmark">🎉</div>
-          <div class="success-title">
-            Videos Sent!
-          </div>
-          <div class="success-subtitle">
-            Check your WhatsApp now!
-          </div>
+          <div class="success-title">Videos Sent!</div>
+          <div class="success-subtitle">Check your WhatsApp now!</div>
         </div>
 
         <div class="upload-instructions">
           <h4>📱 Upload to Status:</h4>
           <div class="step-item">
             <div class="step-num">1</div>
-            <div class="step-text">
-              Open <strong>WhatsApp</strong>
-            </div>
+            <div class="step-text">Open <strong>WhatsApp</strong></div>
           </div>
           <div class="step-item">
             <div class="step-num">2</div>
-            <div class="step-text">
-              Find the video message 
-              from <strong>StatusDrop</strong>
-            </div>
+            <div class="step-text">Find the video message from <strong>StatusDrop</strong></div>
           </div>
           <div class="step-item">
             <div class="step-num">3</div>
-            <div class="step-text">
-              <strong>Tap & hold</strong> 
-              the video
-            </div>
+            <div class="step-text"><strong>Tap & hold</strong> the video</div>
           </div>
           <div class="step-item">
             <div class="step-num">4</div>
-            <div class="step-text">
-              Tap <strong>Forward</strong> → 
-              Select <strong>My Status</strong>
-            </div>
+            <div class="step-text">Tap <strong>Forward</strong> → Select <strong>My Status</strong></div>
           </div>
           <div class="step-item">
             <div class="step-num">5</div>
-            <div class="step-text">
-              <strong>Done! 🎉</strong> 
-              Enjoy your HD Status!
-            </div>
+            <div class="step-text"><strong>Done! 🎉</strong> Enjoy your HD Status!</div>
           </div>
         </div>
 
         <div class="share-buttons">
-          <button 
-            class="btn btn-primary"
-            onclick="resetApp()">
-            🔄 Process More Videos
-          </button>
-          <button 
-            class="btn btn-secondary"
-            onclick="shareApp()">
-            📤 Share App
-          </button>
+          <button class="btn btn-primary" onclick="resetApp()">🔄 Process More Videos</button>
+          <button class="btn btn-secondary" onclick="shareApp()">📤 Share App</button>
         </div>
       </div>
     </div>
 
-  </div><!-- end container -->
+  </div>
 
-  <!-- FOOTER -->
   <footer>
-    <p>StatusDrop © 2024</p>
+    <p>StatusDrop © 2026</p>
     <div class="footer-links">
       <a href="/privacy">Privacy Policy</a>
-      <a href="/about">About Us</a>
     </div>
   </footer>
 
   <script>
-    // ========================
-    // STATE
-    // ========================
     let files = [];
     let waLink = '';
     let activationCode = '';
+    let fileCount = 0;
     const MAX_SIZE = 200 * 1024 * 1024;
+    const LONG_VIDEO_THRESHOLD = 30 * 1024 * 1024; // 30MB — show split hint
 
-    // ========================
-    // UPLOAD ZONE
-    // ========================
-    const uploadZone = 
-      document.getElementById('uploadZone');
-    const fileInput = 
-      document.getElementById('fileInput');
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
 
-    uploadZone.addEventListener('click', () => {
-      fileInput.click();
-    });
+    uploadZone.addEventListener('click', () => fileInput.click());
 
     uploadZone.addEventListener('dragover', (e) => {
       e.preventDefault();
       uploadZone.classList.add('dragover');
     });
 
-    uploadZone.addEventListener('dragleave', () => {
-      uploadZone.classList.remove('dragover');
-    });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
 
     uploadZone.addEventListener('drop', (e) => {
       e.preventDefault();
       uploadZone.classList.remove('dragover');
-      const dropped = Array.from(
-        e.dataTransfer.files
-      ).filter(f => 
-        f.type.startsWith('video/')
-      );
+      const dropped = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/'));
       addFiles(dropped);
     });
 
@@ -987,18 +797,11 @@
       fileInput.value = '';
     });
 
-    // ========================
-    // FILE MANAGEMENT
-    // ========================
     function addFiles(newFiles) {
       for (const file of newFiles) {
-        const totalSize = 
-          files.reduce((s, f) => s + f.size, 0);
+        const totalSize = files.reduce((s, f) => s + f.size, 0);
         if (totalSize + file.size > MAX_SIZE) {
-          alert(
-            `Cannot add ${file.name}!\n` +
-            `Total size would exceed 200MB!`
-          );
+          alert(`Cannot add ${file.name}!\nTotal size would exceed 200MB!`);
           break;
         }
         files.push(file);
@@ -1007,12 +810,9 @@
     }
 
     function renderFiles() {
-      const container = 
-        document.getElementById('filesContainer');
-      const filesList = 
-        document.getElementById('filesList');
-      const compressBtn = 
-        document.getElementById('compressBtn');
+      const container = document.getElementById('filesContainer');
+      const filesList = document.getElementById('filesList');
+      const compressBtn = document.getElementById('compressBtn');
 
       if (files.length === 0) {
         filesList.classList.remove('visible');
@@ -1023,29 +823,23 @@
       filesList.classList.add('visible');
       compressBtn.disabled = false;
 
-      container.innerHTML = files.map(
-        (file, index) => `
-        <div class="file-item">
-          <div class="file-icon">🎬</div>
-          <div class="file-info">
-            <div class="file-name">
-              ${file.name}
+      container.innerHTML = files.map((file, index) => {
+        const isLarge = file.size > LONG_VIDEO_THRESHOLD;
+        return `
+          <div class="file-item">
+            <div class="file-icon">🎬</div>
+            <div class="file-info">
+              <div class="file-name">${file.name}</div>
+              <div class="file-size">${formatSize(file.size)}</div>
             </div>
-            <div class="file-size">
-              ${formatSize(file.size)}
-            </div>
+            ${isLarge ? `<span class="file-split-hint">✂️ Will be split</span>` : ''}
+            <button class="file-remove" onclick="removeFile(${index})">✕</button>
           </div>
-          <button class="file-remove"
-            onclick="removeFile(${index})">
-            ✕
-          </button>
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
-      const totalSize = 
-        files.reduce((s, f) => s + f.size, 0);
-      document.getElementById('totalSize')
-        .textContent = formatSize(totalSize);
+      const totalSize = files.reduce((s, f) => s + f.size, 0);
+      document.getElementById('totalSize').textContent = formatSize(totalSize);
     }
 
     function removeFile(index) {
@@ -1059,41 +853,31 @@
     }
 
     function formatSize(bytes) {
-      if (bytes < 1024 * 1024) {
-        return (bytes / 1024).toFixed(1) + ' KB';
-      }
-      return (bytes / (1024 * 1024))
-        .toFixed(1) + ' MB';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
-    // ========================
-    // COMPRESSION
-    // ========================
     async function startCompression() {
       if (files.length === 0) return;
 
-      // Show progress card
-      document.getElementById('progressCard')
-        .style.display = 'block';
-      document.getElementById('compressBtn')
-        .disabled = true;
+      // Show splitting info if any large file
+      const hasLargeFile = files.some(f => f.size > LONG_VIDEO_THRESHOLD);
+      if (hasLargeFile) {
+        document.getElementById('splittingInfo').style.display = 'flex';
+      }
 
-      // Show fake progress
-      // (real progress from server)
-      const container = 
-        document.getElementById('progressContainer');
+      document.getElementById('progressCard').style.display = 'block';
+      document.getElementById('compressBtn').disabled = true;
 
-      container.innerHTML = files.map(
-        (file, i) => `
+      const container = document.getElementById('progressContainer');
+      container.innerHTML = files.map((file, i) => `
         <div class="progress-item">
           <div class="progress-label">
             <span>${file.name}</span>
             <span id="pct${i}">0%</span>
           </div>
           <div class="progress-bar">
-            <div class="progress-fill" 
-                 id="fill${i}">
-            </div>
+            <div class="progress-fill" id="fill${i}"></div>
           </div>
         </div>
       `).join('') + `
@@ -1103,93 +887,61 @@
             <span id="pctOverall">0%</span>
           </div>
           <div class="progress-bar">
-            <div class="progress-fill"
-                 id="fillOverall">
-            </div>
+            <div class="progress-fill" id="fillOverall"></div>
           </div>
         </div>
       `;
 
-      // Animate progress bars
-      // while server processes
       animateProgress();
 
       try {
         const formData = new FormData();
-        files.forEach(file => {
-          formData.append('videos', file);
-        });
+        files.forEach(file => formData.append('videos', file));
 
-        const response = await fetch(
-          '/api/compress',
-          {
-            method: 'POST',
-            body: formData
-          }
-        );
+        const response = await fetch('/api/compress', {
+          method: 'POST',
+          body: formData
+        });
 
         const data = await response.json();
 
-        if (!data.success) {
-          throw new Error(
-            data.error || 'Compression failed!'
-          );
-        }
+        if (!data.success) throw new Error(data.error || 'Compression failed!');
 
-        // Save activation data
         activationCode = data.activationCode;
         waLink = data.waLink;
+        fileCount = data.fileCount;
 
-        // Complete progress bars
         completeProgress();
 
-        // Wait & show activation
-        setTimeout(() => {
-          showActivation();
-        }, 1000);
+        setTimeout(() => showActivation(), 1000);
 
       } catch (error) {
         alert('Error: ' + error.message);
-        document.getElementById('progressCard')
-          .style.display = 'none';
-        document.getElementById('compressBtn')
-          .disabled = false;
+        document.getElementById('progressCard').style.display = 'none';
+        document.getElementById('compressBtn').disabled = false;
       }
     }
 
-    // ========================
-    // PROGRESS ANIMATION
-    // ========================
     let progressInterval;
 
     function animateProgress() {
       let progress = 0;
       progressInterval = setInterval(() => {
-        progress += Math.random() * 3;
+        progress += Math.random() * 2;
         if (progress > 85) progress = 85;
 
         files.forEach((_, i) => {
-          const fill = 
-            document.getElementById(`fill${i}`);
-          const pct = 
-            document.getElementById(`pct${i}`);
-          if (fill) {
-            fill.style.width = progress + '%';
-          }
-          if (pct) {
-            pct.textContent = 
-              Math.round(progress) + '%';
-          }
+          const fill = document.getElementById(`fill${i}`);
+          const pct = document.getElementById(`pct${i}`);
+          if (fill) fill.style.width = progress + '%';
+          if (pct) pct.textContent = Math.round(progress) + '%';
         });
 
-        const fillOverall = 
-          document.getElementById('fillOverall');
-        const pctOverall = 
-          document.getElementById('pctOverall');
+        const fillOverall = document.getElementById('fillOverall');
+        const pctOverall = document.getElementById('pctOverall');
         if (fillOverall) {
           fillOverall.style.width = progress + '%';
-          pctOverall.textContent = 
-            Math.round(progress) + '%';
+          pctOverall.textContent = Math.round(progress) + '%';
         }
       }, 200);
     }
@@ -1197,104 +949,76 @@
     function completeProgress() {
       clearInterval(progressInterval);
       files.forEach((_, i) => {
-        const fill = 
-          document.getElementById(`fill${i}`);
-        const pct = 
-          document.getElementById(`pct${i}`);
+        const fill = document.getElementById(`fill${i}`);
+        const pct = document.getElementById(`pct${i}`);
         if (fill) fill.style.width = '100%';
         if (pct) pct.textContent = '100%';
       });
-      const fillOverall = 
-        document.getElementById('fillOverall');
-      const pctOverall = 
-        document.getElementById('pctOverall');
-      if (fillOverall) {
-        fillOverall.style.width = '100%';
-        pctOverall.textContent = '100%';
-      }
+      const fillOverall = document.getElementById('fillOverall');
+      const pctOverall = document.getElementById('pctOverall');
+      if (fillOverall) fillOverall.style.width = '100%';
+      if (pctOverall) pctOverall.textContent = '100%';
     }
 
-    // ========================
-    // ACTIVATION
-    // ========================
     function showActivation() {
-      document.getElementById('activationCode')
-        .textContent = activationCode;
-      document.getElementById('activationSection')
-        .classList.add('visible');
+      document.getElementById('activationCode').textContent = activationCode;
 
-      // Scroll to activation
-      document.getElementById('activationSection')
-        .scrollIntoView({ behavior: 'smooth' });
+      // Show clip count if video was split
+      if (fileCount > files.length) {
+        document.getElementById('clipCount').textContent = fileCount;
+        document.getElementById('fileCountInfo').style.display = 'block';
+      }
+
+      document.getElementById('activationSection').classList.add('visible');
+      document.getElementById('activationSection').scrollIntoView({ behavior: 'smooth' });
     }
 
     function openWhatsApp() {
       window.open(waLink, '_blank');
-
-      // Show success after delay
-      setTimeout(() => {
-        showSuccess();
-      }, 3000);
+      setTimeout(() => showSuccess(), 3000);
     }
 
     function copyCode() {
-      navigator.clipboard.writeText(
-        activationCode
-      );
-      const btn = document.querySelector(
-        '.code-copy'
-      );
+      navigator.clipboard.writeText(activationCode);
+      const btn = document.querySelector('.code-copy');
       btn.textContent = '✅ Copied!';
-      setTimeout(() => {
-        btn.textContent = '📋 Copy Code';
-      }, 2000);
+      setTimeout(() => { btn.textContent = '📋 Copy Code'; }, 2000);
     }
 
-    // ========================
-    // SUCCESS
-    // ========================
     function showSuccess() {
-      document.getElementById('successSection')
-        .classList.add('visible');
-      document.getElementById('successSection')
-        .scrollIntoView({ behavior: 'smooth' });
+      document.getElementById('successSection').classList.add('visible');
+      document.getElementById('successSection').scrollIntoView({ behavior: 'smooth' });
     }
 
     function resetApp() {
       files = [];
       waLink = '';
       activationCode = '';
+      fileCount = 0;
 
       renderFiles();
 
-      document.getElementById('progressCard')
-        .style.display = 'none';
-      document.getElementById('activationSection')
-        .classList.remove('visible');
-      document.getElementById('successSection')
-        .classList.remove('visible');
+      document.getElementById('progressCard').style.display = 'none';
+      document.getElementById('splittingInfo').style.display = 'none';
+      document.getElementById('fileCountInfo').style.display = 'none';
+      document.getElementById('activationSection').classList.remove('visible');
+      document.getElementById('successSection').classList.remove('visible');
 
-      window.scrollTo({ 
-        top: 0, 
-        behavior: 'smooth' 
-      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     function shareApp() {
       if (navigator.share) {
         navigator.share({
           title: 'StatusDrop',
-          text: 'Send HD videos to WhatsApp Status for FREE!',
+          text: 'Send HD videos to WhatsApp Status for FREE! Auto-splits long videos!',
           url: window.location.href
         });
       } else {
-        navigator.clipboard.writeText(
-          window.location.href
-        );
+        navigator.clipboard.writeText(window.location.href);
         alert('Link copied! Share it! 🔗');
       }
     }
   </script>
-
 </body>
 </html>
