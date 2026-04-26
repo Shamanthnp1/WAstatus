@@ -19,6 +19,14 @@ const PORT = process.env.PORT || 3000;
 
 app.set('trust proxy', 1);
 
+// Create required folders if they don't exist
+if (!fs.existsSync('uploads')) {
+  fs.mkdirSync('uploads', { recursive: true });
+}
+if (!fs.existsSync('compressed')) {
+  fs.mkdirSync('compressed', { recursive: true });
+}
+
 // Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
@@ -271,7 +279,7 @@ app.get('/api/health', (req, res) => {
 // Privacy Policy
 app.get('/privacy', (req, res) => {
   res.send(`
-    <h1>Privacy Policy - StatusDrop</h1>
+    <h1>Privacy Policy - WAStatus</h1>
     <p><b>Last updated: April 2026</b></p>
     <p>StatusDrop compresses your videos for WhatsApp Status.</p>
     <h2>Data We Collect</h2>
