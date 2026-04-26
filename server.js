@@ -247,7 +247,7 @@ async function deleteFromR2(fileName) {
 async function sendWhatsAppMessage(to, message) {
   try {
     await axios.post(
-      `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: to,
@@ -288,7 +288,7 @@ async function uploadToWhatsAppMedia(videoUrl) {
   form.append('type', 'video/mp4');
 
   const uploadResponse = await axios.post(
-    `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/media`,
+    `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_ID}/media`,
     form,
     {
       headers: {
@@ -308,7 +308,7 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
   console.log('Media ID:', mediaId);
 
   await axios.post(
-    `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
+    `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
     {
       messaging_product: 'whatsapp',
       to: to,
