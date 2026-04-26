@@ -268,6 +268,21 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Privacy Policy
+app.get('/privacy', (req, res) => {
+  res.send(`
+    <h1>Privacy Policy - StatusDrop</h1>
+    <p><b>Last updated: April 2026</b></p>
+    <p>StatusDrop compresses your videos for WhatsApp Status.</p>
+    <h2>Data We Collect</h2>
+    <p>We temporarily store uploaded videos for compression only. All files are permanently deleted within 1 hour.</p>
+    <h2>WhatsApp</h2>
+    <p>We use your WhatsApp number only to deliver your compressed video. We do not store or share it.</p>
+    <h2>Contact</h2>
+    <p>Email: shamanthnadumane@email.com</p>
+  `);
+});
+
 // Upload & Compress Videos
 app.post(
   '/api/compress',
