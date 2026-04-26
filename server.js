@@ -262,15 +262,54 @@ async function sendWhatsAppMessage(to, message) {
   );
 }
 
-// Send WhatsApp video
+// Upload video to WhatsApp Media
+async function uploadToWhatsAppMedia(videoUrl) {
+  // Download from R2 first
+  const response = await axios.get(videoUrl, { 
+    responseType: 'arraybuffer' 
+  });
+  const buffer = Buffer.from(response.data);
+
+  // Upload to WhatsApp
+  const FormData = require('form-data');
+  const form = new FormData();
+  form.append('file', buffer, {
+    filename: 'video.mp4',
+    contentType: 'video/mp4'
+  });
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', 'video/mp4');
+
+  const uploadResponse = await axios.post(
+    `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/media`,
+    form,
+    {
+      headers: {
+        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        ...form.getHeaders()
+      }
+    }
+  );
+
+  return uploadResponse.data.id; // media ID
+}
+
+// Send WhatsApp video using media ID
 async function sendWhatsAppVideo(to, videoUrl, caption) {
+  console.log('Uploading video to WhatsApp Media...');
+  const mediaId = await uploadToWhatsAppMedia(videoUrl);
+  console.log('Media ID:', mediaId);
+
   await axios.post(
     `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
     {
       messaging_product: 'whatsapp',
       to: to,
       type: 'video',
-      video: { link: videoUrl, caption: caption }
+      video: {
+        id: mediaId,
+        caption: caption
+      }
     },
     {
       headers: {
@@ -279,6 +318,7 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
       }
     }
   );
+  console.log('Video sent via media ID! ✅');
 }
 
 // ========================
