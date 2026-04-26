@@ -20,7 +20,12 @@ const PORT = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 // Set FFmpeg path
+
 ffmpeg.setFfmpegPath(ffmpegStatic);
+
+// Set ffprobe path
+const ffprobePath = require('ffprobe-static').path;
+ffmpeg.setFfprobePath(ffprobePath);
 
 // ========================
 // MIDDLEWARE
