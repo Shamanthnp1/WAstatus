@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" 
+    content="width=device-width, 
+    initial-scale=1.0"/>
+  <title>StatusDrop - HD WhatsApp Status</title>
+  <style>
+    /* =====================
+       RESET & BASE
+    ===================== */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --black: #000000;
+      --dark: #111111;
+      --dark2: #1a1a1a;
+      --green: #25D366;
+      --dark-green: #128C7E;
+      --white: #ffffff;
+      --grey: #666666;
+      --light-grey: #333333;
+    }
+
+    body {
+      background-color: var(--black);
+      color: var(--white);
+      font-family: 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* =====================
+       HERO SECTION
+    ===================== */
+    .hero {
+      text-align: center;
+      padding: 60px 20px 40px;
+      background: linear-gradient(
+        180deg,
+        #0a1f0a 0%,
+        #000000 100%
+      );
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .logo-icon {
+      width: 48px;
+      height: 48px;
+      background: var(--green);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+
+    .logo-text {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--white);
+    }
+
+    .logo-text span {
+      color: var(--green);
+    }
+
+    .hero h1 {
+      font-size: 48px;
+      font-weight: 800;
+      line-height: 1.2;
+      margin-bottom: 16px;
+      color: var(--white);
+    }
+
+    .hero h1 span {
+      color: var(--green);
+    }
+
+    .hero p {
+      font-size: 18px;
+      color: var(--grey);
+      margin-bottom: 24px;
+    }
+
+    .hero-badges {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      background: var(--dark2);
+      border: 1px solid var(--light-grey);
+      color: var(--green);
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+    }
+
+    /* =====================
+       MAIN CONTAINER
+    ===================== */
+    .container {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    /* =====================
+       CARDS
+    ===================== */
+    .card {
+      background: var(--dark);
+      border: 1px solid var(--dark2);
+      border-radius: 16px;
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--white);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .step-badge {
+      background: var(--green);
+      color: var(--black);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+
+    /* =====================
+       UPLOAD ZONE
+    ===================== */
+    .upload-zone {
+      border: 2px dashed var(--dark-green);
+      border-radius: 12px;
+      padding: 48px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: #050f05;
+      position: relative;
+    }
+
+    .upload-zone:hover,
+    .upload-zone.dragover {
+      border-color: var(--green);
+      background: #0a1f0a;
+      box-shadow: 0 0 20px rgba(37,211,102,0.1);
+    }
+
+    .upload-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .upload-zone h3 {
+      font-size: 20px;
+      color: var(--white);
+      margin-bottom: 8px;
+    }
+
+    .upload-zone p {
+      color: var(--grey);
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .upload-zone input {
+      display: none;
+    }
+
+    .upload-formats {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .format-tag {
+      background: var(--dark2);
+      color: var(--green);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    /* =====================
+       FILES LIST
+    ===================== */
+    .files-list {
+      display: none;
+    }
+
+    .files-list.visible {
+      display: block;
+    }
+
+    .file-item {
+      background: var(--dark2);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .file-icon {
+      font-size: 24px;
+      flex-shrink: 0;
+    }
+
+    .file-info {
+      flex: 1;
+    }
+
+    .file-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--white);
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 300px;
+    }
+
+    .file-size {
+      font-size: 12px;
+      color: var(--grey);
+    }
+
+    .file-remove {
+      background: none;
+      border: none;
+      color: var(--grey);
+      cursor: pointer;
+      font-size: 18px;
+      padding: 4px;
+      border-radius: 4px;
+      transition: color 0.2s;
+    }
+
+    .file-remove:hover {
+      color: #ff4444;
+    }
+
+    .size-tracker {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--dark2);
+      border-radius: 8px;
+    }
+
+    .size-text {
+      font-size: 14px;
+      color: var(--grey);
+    }
+
+    .size-text span {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    /* =====================
+       PROGRESS BARS
+    ===================== */
+    .progress-container {
+      display: none;
+    }
+
+    .progress-container.visible {
+      display: block;
+    }
+
+    .progress-item {
+      margin-bottom: 16px;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--grey);
+    }
+
+    .progress-label span:last-child {
+      color: var(--green);
+    }
+
+    .progress-bar {
+      height: 6px;
+      background: var(--dark2);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        var(--dark-green),
+        var(--green)
+      );
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.3s ease;
+      animation: progressPulse 1.5s 
+        ease-in-out infinite;
+    }
+
+    @keyframes progressPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    /* =====================
+       AD SECTION
+    ===================== */
+    .ad-container {
+      background: var(--dark2);
+      border: 1px dashed var(--light-grey);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      margin: 20px 0;
+      min-height: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .ad-placeholder {
+      color: var(--grey);
+      font-size: 13px;
+    }
+
+    /* =====================
+       BUTTONS
+    ===================== */
+    .btn {
+      width: 100%;
+      padding: 16px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .btn-primary {
+      background: var(--green);
+      color: var(--black);
+    }
+
+    .btn-primary:hover {
+      background: #20c55a;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px 
+        rgba(37,211,102,0.3);
+    }
+
+    .btn-primary:disabled {
+      background: var(--light-grey);
+      color: var(--grey);
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--white);
+      border: 2px solid var(--white);
+    }
+
+    .btn-secondary:hover {
+      background: var(--white);
+      color: var(--black);
+    }
+
+    .btn-whatsapp {
+      background: var(--green);
+      color: var(--black);
+      font-size: 18px;
+      padding: 20px;
+    }
+
+    .btn-whatsapp:hover {
+      background: #20c55a;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px 
+        rgba(37,211,102,0.4);
+    }
+
+    /* =====================
+       ACTIVATION SECTION
+    ===================== */
+    .activation-section {
+      display: none;
+    }
+
+    .activation-section.visible {
+      display: block;
+    }
+
+    .code-display {
+      background: var(--dark2);
+      border: 2px solid var(--green);
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .code-label {
+      font-size: 13px;
+      color: var(--grey);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .code-value {
+      font-size: 36px;
+      font-weight: 800;
+      color: var(--green);
+      letter-spacing: 6px;
+      margin-bottom: 8px;
+      font-family: monospace;
+    }
+
+    .code-copy {
+      background: none;
+      border: 1px solid var(--light-grey);
+      color: var(--grey);
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .code-copy:hover {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .activation-steps {
+      background: var(--dark2);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .activation-steps h4 {
+      color: var(--white);
+      margin-bottom: 16px;
+      font-size: 15px;
+    }
+
+    .step-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .step-num {
+      background: var(--dark-green);
+      color: var(--white);
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .step-text {
+      font-size: 14px;
+      color: var(--grey);
+      padding-top: 2px;
+    }
+
+    .step-text strong {
+      color: var(--white);
+    }
+
+    /* =====================
+       SUCCESS SECTION
+    ===================== */
+    .success-section {
+      display: none;
+    }
+
+    .success-section.visible {
+      display: block;
+    }
+
+    .success-animation {
+      text-align: center;
+      padding: 20px 0;
+    }
+
+    .checkmark {
+      font-size: 64px;
+      animation: bounceIn 0.5s ease;
+    }
+
+    @keyframes bounceIn {
+      0% { transform: scale(0); }
+      50% { transform: scale(1.2); }
+      100% { transform: scale(1); }
+    }
+
+    .success-title {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--green);
+      margin: 16px 0 8px;
+    }
+
+    .success-subtitle {
+      color: var(--grey);
+      font-size: 15px;
+      margin-bottom: 24px;
+    }
+
+    .upload-instructions {
+      background: var(--dark2);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+
+    .upload-instructions h4 {
+      color: var(--white);
+      margin-bottom: 16px;
+      font-size: 15px;
+    }
+
+    .share-buttons {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .share-buttons .btn {
+      flex: 1;
+    }
+
+    /* =====================
+       SPINNER
+    ===================== */
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(0,0,0,0.3);
+      border-top-color: var(--black);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* =====================
+       FOOTER
+    ===================== */
+    footer {
+      border-top: 1px solid var(--dark2);
+      padding: 30px 20px;
+      text-align: center;
+      margin-top: 40px;
+    }
+
+    footer p {
+      color: var(--grey);
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+    }
+
+    .footer-links a {
+      color: var(--grey);
+      text-decoration: none;
+      font-size: 14px;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--green);
+    }
+
+    /* =====================
+       RESPONSIVE
+    ===================== */
+    @media (max-width: 600px) {
+      .hero h1 {
+        font-size: 32px;
+      }
+
+      .code-value {
+        font-size: 28px;
+        letter-spacing: 4px;
+      }
+
+      .share-buttons {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HERO SECTION -->
+  <div class="hero">
+    <div class="logo">
+      <div class="logo-icon">💚</div>
+      <div class="logo-text">
+        WA<span>Status</span>
+      </div>
+    </div>
+    <h1>Send <span>HD Videos</span><br/>to WhatsApp Status</h1>
+    <p>Compress & deliver videos directly to your WhatsApp</p>
+    <div class="hero-badges">
+      <span class="badge">✅ Free</span>
+      <span class="badge">⚡ Fast</span>
+      <span class="badge">🔒 Private</span>
+      <span class="badge">🌍 Works Worldwide</span>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="container">
+
+    <!-- STEP 1: UPLOAD -->
+    <div class="card" id="uploadCard">
+      <div class="card-title">
+        <div class="step-badge">1</div>
+        Upload Your Videos
+      </div>
+
+      <!-- Upload Zone -->
+      <div class="upload-zone" 
+           id="uploadZone">
+        <div class="upload-icon">📁</div>
+        <h3>Drop Videos Here</h3>
+        <p>or click to browse files</p>
+        <p style="color:#444;font-size:13px;">
+          Maximum 200MB total
+        </p>
+        <div class="upload-formats">
+          <span class="format-tag">MP4</span>
+          <span class="format-tag">MOV</span>
+          <span class="format-tag">AVI</span>
+          <span class="format-tag">MKV</span>
+          <span class="format-tag">3GP</span>
+        </div>
+        <input type="file" 
+               id="fileInput" 
+               multiple 
+               accept="video/*"/>
+      </div>
+
+      <!-- Files List -->
+      <div class="files-list" 
+           id="filesList">
+        <div style="height:16px"></div>
+        <div id="filesContainer"></div>
+        <div class="size-tracker">
+          <span class="size-text">
+            Total: <span id="totalSize">0 MB</span> / 200 MB
+          </span>
+          <button 
+            onclick="clearFiles()"
+            style="background:none;border:1px solid #333;
+            color:#666;padding:4px 12px;
+            border-radius:6px;cursor:pointer;
+            font-size:12px;">
+            Clear All
+          </button>
+        </div>
+      </div>
+
+      <!-- Compress Button -->
+      <div style="margin-top:20px">
+        <button class="btn btn-primary" 
+                id="compressBtn"
+                onclick="startCompression()"
+                disabled>
+          🚀 Compress Videos
+        </button>
+      </div>
+    </div>
+
+    <!-- STEP 2: PROGRESS -->
+    <div class="card" 
+         id="progressCard" 
+         style="display:none">
+      <div class="card-title">
+        <div class="step-badge">2</div>
+        Compressing Videos...
+      </div>
+
+      <div class="progress-container visible" 
+           id="progressContainer">
+        <!-- Progress bars added here -->
+      </div>
+
+      <!-- AD DURING COMPRESSION -->
+      <div class="ad-container">
+        <div class="ad-placeholder">
+          📢 Advertisement<br/>
+          <small>Your ad will appear here</small>
+        </div>
+      </div>
+
+      <p style="text-align:center;
+         color:#666;font-size:13px;">
+        ⚡ Compressing & uploading...
+        Please wait!
+      </p>
+    </div>
+
+    <!-- STEP 3: ACTIVATION -->
+    <div class="activation-section" 
+         id="activationSection">
+      <div class="card">
+        <div class="card-title">
+          <div class="step-badge">3</div>
+          Activate on WhatsApp
+        </div>
+
+        <!-- Activation Code -->
+        <div class="code-display">
+          <div class="code-label">
+            Your Activation Code
+          </div>
+          <div class="code-value" 
+               id="activationCode">
+            - - - - -
+          </div>
+          <button class="code-copy" 
+                  onclick="copyCode()">
+            📋 Copy Code
+          </button>
+        </div>
+
+        <!-- Instructions -->
+        <div class="activation-steps">
+          <h4>📋 How it works:</h4>
+          <div class="step-item">
+            <div class="step-num">1</div>
+            <div class="step-text">
+              Click the button below to 
+              <strong>open WhatsApp</strong>
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">2</div>
+            <div class="step-text">
+              Your activation code is 
+              <strong>already typed</strong> 
+              in the message
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">3</div>
+            <div class="step-text">
+              Just press 
+              <strong>SEND</strong> 
+              in WhatsApp
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">4</div>
+            <div class="step-text">
+              Receive your 
+              <strong>HD video</strong> 
+              directly in WhatsApp! 🎬
+            </div>
+          </div>
+        </div>
+
+        <!-- WhatsApp Button -->
+        <button class="btn btn-whatsapp" 
+                id="waButton"
+                onclick="openWhatsApp()">
+          💚 Activate on WhatsApp
+        </button>
+
+        <!-- AD AFTER ACTIVATION -->
+        <div class="ad-container" 
+             style="margin-top:20px">
+          <div class="ad-placeholder">
+            📢 Advertisement<br/>
+            <small>Your ad will appear here</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 4: SUCCESS -->
+    <div class="success-section" 
+         id="successSection">
+      <div class="card">
+        <div class="success-animation">
+          <div class="checkmark">🎉</div>
+          <div class="success-title">
+            Videos Sent!
+          </div>
+          <div class="success-subtitle">
+            Check your WhatsApp now!
+          </div>
+        </div>
+
+        <div class="upload-instructions">
+          <h4>📱 Upload to Status:</h4>
+          <div class="step-item">
+            <div class="step-num">1</div>
+            <div class="step-text">
+              Open <strong>WhatsApp</strong>
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">2</div>
+            <div class="step-text">
+              Find the video message 
+              from <strong>StatusDrop</strong>
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">3</div>
+            <div class="step-text">
+              <strong>Tap & hold</strong> 
+              the video
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">4</div>
+            <div class="step-text">
+              Tap <strong>Forward</strong> → 
+              Select <strong>My Status</strong>
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">5</div>
+            <div class="step-text">
+              <strong>Done! 🎉</strong> 
+              Enjoy your HD Status!
+            </div>
+          </div>
+        </div>
+
+        <div class="share-buttons">
+          <button 
+            class="btn btn-primary"
+            onclick="resetApp()">
+            🔄 Process More Videos
+          </button>
+          <button 
+            class="btn btn-secondary"
+            onclick="shareApp()">
+            📤 Share App
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end container -->
+
+  <!-- FOOTER -->
+  <footer>
+    <p>StatusDrop © 2024</p>
+    <div class="footer-links">
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/about">About Us</a>
+    </div>
+  </footer>
+
+  <script>
+    // ========================
+    // STATE
+    // ========================
+    let files = [];
+    let waLink = '';
+    let activationCode = '';
+    const MAX_SIZE = 200 * 1024 * 1024;
+
+    // ========================
+    // UPLOAD ZONE
+    // ========================
+    const uploadZone = 
+      document.getElementById('uploadZone');
+    const fileInput = 
+      document.getElementById('fileInput');
+
+    uploadZone.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadZone.classList.add('dragover');
+    });
+
+    uploadZone.addEventListener('dragleave', () => {
+      uploadZone.classList.remove('dragover');
+    });
+
+    uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadZone.classList.remove('dragover');
+      const dropped = Array.from(
+        e.dataTransfer.files
+      ).filter(f => 
+        f.type.startsWith('video/')
+      );
+      addFiles(dropped);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      addFiles(Array.from(e.target.files));
+      fileInput.value = '';
+    });
+
+    // ========================
+    // FILE MANAGEMENT
+    // ========================
+    function addFiles(newFiles) {
+      for (const file of newFiles) {
+        const totalSize = 
+          files.reduce((s, f) => s + f.size, 0);
+        if (totalSize + file.size > MAX_SIZE) {
+          alert(
+            `Cannot add ${file.name}!\n` +
+            `Total size would exceed 200MB!`
+          );
+          break;
+        }
+        files.push(file);
+      }
+      renderFiles();
+    }
+
+    function renderFiles() {
+      const container = 
+        document.getElementById('filesContainer');
+      const filesList = 
+        document.getElementById('filesList');
+      const compressBtn = 
+        document.getElementById('compressBtn');
+
+      if (files.length === 0) {
+        filesList.classList.remove('visible');
+        compressBtn.disabled = true;
+        return;
+      }
+
+      filesList.classList.add('visible');
+      compressBtn.disabled = false;
+
+      container.innerHTML = files.map(
+        (file, index) => `
+        <div class="file-item">
+          <div class="file-icon">🎬</div>
+          <div class="file-info">
+            <div class="file-name">
+              ${file.name}
+            </div>
+            <div class="file-size">
+              ${formatSize(file.size)}
+            </div>
+          </div>
+          <button class="file-remove"
+            onclick="removeFile(${index})">
+            ✕
+          </button>
+        </div>
+      `).join('');
+
+      const totalSize = 
+        files.reduce((s, f) => s + f.size, 0);
+      document.getElementById('totalSize')
+        .textContent = formatSize(totalSize);
+    }
+
+    function removeFile(index) {
+      files.splice(index, 1);
+      renderFiles();
+    }
+
+    function clearFiles() {
+      files = [];
+      renderFiles();
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024 * 1024) {
+        return (bytes / 1024).toFixed(1) + ' KB';
+      }
+      return (bytes / (1024 * 1024))
+        .toFixed(1) + ' MB';
+    }
+
+    // ========================
+    // COMPRESSION
+    // ========================
+    async function startCompression() {
+      if (files.length === 0) return;
+
+      // Show progress card
+      document.getElementById('progressCard')
+        .style.display = 'block';
+      document.getElementById('compressBtn')
+        .disabled = true;
+
+      // Show fake progress
+      // (real progress from server)
+      const container = 
+        document.getElementById('progressContainer');
+
+      container.innerHTML = files.map(
+        (file, i) => `
+        <div class="progress-item">
+          <div class="progress-label">
+            <span>${file.name}</span>
+            <span id="pct${i}">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" 
+                 id="fill${i}">
+            </div>
+          </div>
+        </div>
+      `).join('') + `
+        <div class="progress-item">
+          <div class="progress-label">
+            <span>Overall Progress</span>
+            <span id="pctOverall">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill"
+                 id="fillOverall">
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Animate progress bars
+      // while server processes
+      animateProgress();
+
+      try {
+        const formData = new FormData();
+        files.forEach(file => {
+          formData.append('videos', file);
+        });
+
+        const response = await fetch(
+          '/api/compress',
+          {
+            method: 'POST',
+            body: formData
+          }
+        );
+
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(
+            data.error || 'Compression failed!'
+          );
+        }
+
+        // Save activation data
+        activationCode = data.activationCode;
+        waLink = data.waLink;
+
+        // Complete progress bars
+        completeProgress();
+
+        // Wait & show activation
+        setTimeout(() => {
+          showActivation();
+        }, 1000);
+
+      } catch (error) {
+        alert('Error: ' + error.message);
+        document.getElementById('progressCard')
+          .style.display = 'none';
+        document.getElementById('compressBtn')
+          .disabled = false;
+      }
+    }
+
+    // ========================
+    // PROGRESS ANIMATION
+    // ========================
+    let progressInterval;
+
+    function animateProgress() {
+      let progress = 0;
+      progressInterval = setInterval(() => {
+        progress += Math.random() * 3;
+        if (progress > 85) progress = 85;
+
+        files.forEach((_, i) => {
+          const fill = 
+            document.getElementById(`fill${i}`);
+          const pct = 
+            document.getElementById(`pct${i}`);
+          if (fill) {
+            fill.style.width = progress + '%';
+          }
+          if (pct) {
+            pct.textContent = 
+              Math.round(progress) + '%';
+          }
+        });
+
+        const fillOverall = 
+          document.getElementById('fillOverall');
+        const pctOverall = 
+          document.getElementById('pctOverall');
+        if (fillOverall) {
+          fillOverall.style.width = progress + '%';
+          pctOverall.textContent = 
+            Math.round(progress) + '%';
+        }
+      }, 200);
+    }
+
+    function completeProgress() {
+      clearInterval(progressInterval);
+      files.forEach((_, i) => {
+        const fill = 
+          document.getElementById(`fill${i}`);
+        const pct = 
+          document.getElementById(`pct${i}`);
+        if (fill) fill.style.width = '100%';
+        if (pct) pct.textContent = '100%';
+      });
+      const fillOverall = 
+        document.getElementById('fillOverall');
+      const pctOverall = 
+        document.getElementById('pctOverall');
+      if (fillOverall) {
+        fillOverall.style.width = '100%';
+        pctOverall.textContent = '100%';
+      }
+    }
+
+    // ========================
+    // ACTIVATION
+    // ========================
+    function showActivation() {
+      document.getElementById('activationCode')
+        .textContent = activationCode;
+      document.getElementById('activationSection')
+        .classList.add('visible');
+
+      // Scroll to activation
+      document.getElementById('activationSection')
+        .scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function openWhatsApp() {
+      window.open(waLink, '_blank');
+
+      // Show success after delay
+      setTimeout(() => {
+        showSuccess();
+      }, 3000);
+    }
+
+    function copyCode() {
+      navigator.clipboard.writeText(
+        activationCode
+      );
+      const btn = document.querySelector(
+        '.code-copy'
+      );
+      btn.textContent = '✅ Copied!';
+      setTimeout(() => {
+        btn.textContent = '📋 Copy Code';
+      }, 2000);
+    }
+
+    // ========================
+    // SUCCESS
+    // ========================
+    function showSuccess() {
+      document.getElementById('successSection')
+        .classList.add('visible');
+      document.getElementById('successSection')
+        .scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function resetApp() {
+      files = [];
+      waLink = '';
+      activationCode = '';
+
+      renderFiles();
+
+      document.getElementById('progressCard')
+        .style.display = 'none';
+      document.getElementById('activationSection')
+        .classList.remove('visible');
+      document.getElementById('successSection')
+        .classList.remove('visible');
+
+      window.scrollTo({ 
+        top: 0, 
+        behavior: 'smooth' 
+      });
+    }
+
+    function shareApp() {
+      if (navigator.share) {
+        navigator.share({
+          title: 'StatusDrop',
+          text: 'Send HD videos to WhatsApp Status for FREE!',
+          url: window.location.href
+        });
+      } else {
+        navigator.clipboard.writeText(
+          window.location.href
+        );
+        alert('Link copied! Share it! 🔗');
+      }
+    }
+  </script>
+
+</body>
+</html>
