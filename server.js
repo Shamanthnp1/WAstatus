@@ -245,21 +245,28 @@ async function deleteFromR2(fileName) {
 
 // Send WhatsApp message
 async function sendWhatsAppMessage(to, message) {
-  await axios.post(
-    `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: to,
-      type: 'text',
-      text: { body: message }
-    },
-    {
-      headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'text',
+        text: { body: message }
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       }
-    }
-  );
+    );
+  } catch (err) {
+    console.error('SendMessage failed!');
+    console.error('To:', to);
+    console.error('Error:', JSON.stringify(err.response?.data));
+    throw err;
+  }
 }
 
 // Upload video to WhatsApp Media
