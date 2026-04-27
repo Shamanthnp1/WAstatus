@@ -143,6 +143,15 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
       const totalChunks = Math.ceil(duration / chunkDuration);
       console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
+      const targetSizeMB = 15; // 1MB buffer from WhatsApp's 16MB limit
+      const audioBitrateK = 192;
+      const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
+      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
+
+      console.log(`Target size per chunk: ${targetSizeMB}MB`);
+      console.log(`Video bitrate: ${videoBitrateK}kbps`);
+      console.log(`Audio bitrate: ${audioBitrateK}kbps`);
+
       const chunkPaths = [];
 
       for (let i = 0; i < totalChunks; i++) {
@@ -156,17 +165,24 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
             .setDuration(chunkDuration)
             .outputOptions([
               '-c:v libx264',
-              '-crf 28',
-              '-preset ultrafast',
+              `-b:v ${videoBitrateK}k`,
+              `-maxrate ${videoBitrateK}k`,
+              `-bufsize ${videoBitrateK * 2}k`,
+              '-profile:v high',
+              '-level 4.1',
               '-c:a aac',
-              '-b:a 128k',
+              `-b:a ${audioBitrateK}k`,
+              '-ar 44100',
               '-movflags faststart',
-              '-vf scale=1280:720:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2',
+              '-pix_fmt yuv420p',
+              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
             ])
             .output(chunkPath)
             .on('start', () => console.log(`Chunk ${i + 1}/${totalChunks} started...`))
             .on('end', () => {
-              console.log(`Chunk ${i + 1}/${totalChunks} done!`);
+              const stats = fs.statSync(chunkPath);
+              const sizeMB = stats.size / (1024 * 1024);
+              console.log(`Chunk ${i + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
               chunkPaths.push(chunkPath);
               res();
             })
@@ -188,28 +204,88 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
 // Compress single video (for short videos under 29s)
 function compressVideo(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .outputOptions([
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+      if (err) return reject(err);
+
+      const duration = metadata.format.duration;
+      if (!duration || Number.isNaN(duration)) {
+        return reject(new Error('Could not read video duration'));
+      }
+
+      const targetSizeMB = 15; // 1MB buffer from WhatsApp's 16MB limit
+      const audioBitrateK = 192;
+      const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
+      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
+      const passLogBase = `ffmpeg2pass_${uuidv4()}`;
+      const nullOutput = process.platform === 'win32' ? 'NUL' : '/dev/null';
+
+      const cleanupPassLogs = () => {
+        [`${passLogBase}-0.log`, `${passLogBase}-0.log.mbtree`].forEach((file) => {
+          if (fs.existsSync(file)) fs.unlinkSync(file);
+        });
+      };
+
+      const videoOptions = [
         '-c:v libx264',
-        '-crf 28',
-        '-preset ultrafast',
+        `-b:v ${videoBitrateK}k`,
+        `-maxrate ${videoBitrateK}k`,
+        `-bufsize ${videoBitrateK * 2}k`,
+        '-profile:v high',
+        '-level 4.1',
+        '-pix_fmt yuv420p',
+        '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-passlogfile',
+        passLogBase,
+      ];
+      const audioOptions = [
         '-c:a aac',
-        '-b:a 128k',
-        '-movflags faststart',
-        '-vf scale=1280:720:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2',
-        '-fs 15728640', // 15MB cap for single videos
-      ])
-      .output(outputPath)
-      .on('start', () => console.log('Compression started...'))
-      .on('end', () => {
-        console.log('Compression done!');
-        resolve();
-      })
-      .on('error', (err) => {
-        console.error('FFmpeg error:', err);
-        reject(err);
-      })
-      .run();
+        `-b:a ${audioBitrateK}k`,
+        '-ar 44100',
+      ];
+
+      console.log(`Duration: ${duration.toFixed(1)}s`);
+      console.log(`Target size: ${targetSizeMB}MB`);
+      console.log(`Video bitrate: ${videoBitrateK}kbps`);
+      console.log(`Audio bitrate: ${audioBitrateK}kbps`);
+
+      ffmpeg(inputPath)
+        .outputOptions([
+          ...videoOptions,
+          '-pass 1',
+          '-an',
+          '-f null',
+        ])
+        .output(nullOutput)
+        .on('start', () => console.log('Compression pass 1 started...'))
+        .on('end', () => {
+          ffmpeg(inputPath)
+            .outputOptions([
+              ...videoOptions,
+              ...audioOptions,
+              '-movflags faststart',
+              '-pass 2',
+            ])
+            .output(outputPath)
+            .on('start', () => console.log('Compression pass 2 started...'))
+            .on('end', () => {
+              const outputStats = fs.statSync(outputPath);
+              const outputSizeMB = outputStats.size / (1024 * 1024);
+              console.log(`Final size: ${outputSizeMB.toFixed(2)}MB / 16MB`);
+              cleanupPassLogs();
+              resolve();
+            })
+            .on('error', (error) => {
+              cleanupPassLogs();
+              reject(error);
+            })
+            .run();
+        })
+        .on('error', (error) => {
+          cleanupPassLogs();
+          reject(error);
+        })
+        .run();
+    });
   });
 }
 
