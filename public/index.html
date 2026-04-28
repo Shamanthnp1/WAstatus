@@ -324,6 +324,45 @@
       50% { opacity: 0.7; }
     }
 
+    @keyframes shine {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    .step-indicator {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      color: var(--grey);
+      font-size: 10px;
+      font-weight: 600;
+      text-align: center;
+      min-width: 46px;
+    }
+
+    .step-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--light-grey);
+      transition: all 0.3s ease;
+    }
+
+    .step-indicator.active,
+    .step-indicator.complete {
+      color: var(--green);
+    }
+
+    .step-indicator.active .step-dot {
+      background: var(--green);
+      box-shadow: 0 0 10px rgba(37,211,102,0.6);
+    }
+
+    .step-indicator.complete .step-dot {
+      background: var(--dark-green);
+    }
+
     /* NEW — splitting status message */
     .splitting-info {
       background: #0a2a0a;
@@ -556,6 +595,80 @@
       .code-value { font-size: 28px; letter-spacing: 4px; }
       .share-buttons { flex-direction: column; }
     }
+
+    /* Step indicators */
+    .step-indicator {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      opacity: 0.3;
+      transition: all 0.5s ease;
+    }
+
+    .step-indicator.active {
+      opacity: 1;
+    }
+
+    .step-indicator.done {
+      opacity: 1;
+    }
+
+    .step-indicator.skipped {
+      opacity: 0.15;  /* Very faded — clearly not relevant */
+    }
+
+    .step-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #333;
+      transition: all 0.5s ease;
+    }
+
+    .step-indicator.active .step-dot {
+      background: #25D366;
+      box-shadow: 0 0 8px rgba(37,211,102,0.6);
+      animation: dotPulse 1s ease-in-out infinite;
+    }
+
+    .step-indicator.done .step-dot {
+      background: #25D366;
+    }
+
+    .step-indicator.skipped .step-dot {
+      background: #222;
+      box-shadow: none;
+      animation: none;
+    }
+
+    .step-indicator span {
+      font-size: 10px;
+      color: #444;
+      transition: color 0.5s ease;
+    }
+
+    .step-indicator.active span {
+      color: #25D366;
+    }
+
+    .step-indicator.done span {
+      color: #128C7E;
+    }
+
+    .step-indicator.skipped span {
+      color: #333;
+    }
+
+    @keyframes dotPulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 8px rgba(37,211,102,0.6); }
+      50% { transform: scale(1.3); box-shadow: 0 0 14px rgba(37,211,102,0.9); }
+    }
+
+    @keyframes shine {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(200%); }
+    }
   </style>
 </head>
 <body>
@@ -645,12 +758,121 @@
         Processing Videos...
       </div>
 
-      <!-- Splitting info -->
-      <div class="splitting-info" id="splittingInfo" style="display:none">
-        ✂️ Long video detected — splitting into 29-second WhatsApp clips...
-      </div>
+      <!-- Single unified progress section -->
+      <div style="margin-bottom:24px;">
 
-      <div class="progress-container visible" id="progressContainer"></div>
+        <!-- Status message -->
+        <div id="statusMessage"
+          style="background:#0a2a0a;
+                 border:1px solid #128C7E;
+                 border-radius:10px;
+                 padding:14px 16px;
+                 margin-bottom:20px;
+                 display:flex;
+                 align-items:center;
+                 gap:12px;
+                 min-height:52px;">
+          <span id="statusIcon" style="font-size:20px;">⚙️</span>
+          <span id="statusText"
+            style="color:#25D366;
+                   font-size:14px;
+                   font-weight:600;">
+            Starting...
+          </span>
+        </div>
+
+        <!-- Single progress bar -->
+        <div style="margin-bottom:10px;">
+          <div style="display:flex;
+                      justify-content:space-between;
+                      align-items:center;
+                      margin-bottom:10px;">
+            <span style="color:#666;font-size:13px;">
+              Overall Progress
+            </span>
+            <span id="progressPct"
+              style="color:#25D366;
+                     font-size:14px;
+                     font-weight:700;
+                     font-family:monospace;">
+              0%
+            </span>
+          </div>
+
+          <!-- Progress bar track -->
+          <div style="height:10px;
+                      background:#1a1a1a;
+                      border-radius:5px;
+                      overflow:hidden;
+                      position:relative;">
+            <div id="mainProgressFill"
+              style="height:100%;
+                     width:0%;
+                     background:linear-gradient(90deg,#128C7E,#25D366);
+                     border-radius:5px;
+                     transition:width 0.5s ease;
+                     position:relative;">
+              <!-- Shine effect -->
+              <div style="position:absolute;
+                          top:0;left:0;
+                          right:0;bottom:0;
+                          background:linear-gradient(90deg,
+                            transparent 0%,
+                            rgba(255,255,255,0.2) 50%,
+                            transparent 100%);
+                          animation:shine 1.5s infinite;">
+              </div>
+            </div>
+          </div>
+
+          <!-- Step indicators -->
+          <div style="display:flex;
+                      justify-content:space-between;
+                      margin-top:12px;">
+            <div id="step1Indicator" class="step-indicator active">
+              <div class="step-dot"></div>
+              <span>Upload</span>
+            </div>
+            <div id="step2Indicator" class="step-indicator">
+              <div class="step-dot"></div>
+              <span>Compress</span>
+            </div>
+            <div id="step3Indicator" class="step-indicator">
+              <div class="step-dot"></div>
+              <span>Split</span>
+            </div>
+            <div id="step4Indicator" class="step-indicator">
+              <div class="step-dot"></div>
+              <span>Upload R2</span>
+            </div>
+            <div id="step5Indicator" class="step-indicator">
+              <div class="step-dot"></div>
+              <span>Ready!</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- File being processed -->
+        <div id="currentFileBox"
+          style="margin-top:16px;
+                 padding:10px 14px;
+                 background:#111;
+                 border-radius:8px;
+                 border-left:3px solid #128C7E;
+                 display:none;">
+          <div style="font-size:11px;color:#444;margin-bottom:3px;">
+            Processing:
+          </div>
+          <div id="currentFileName"
+            style="font-size:13px;
+                   color:#888;
+                   white-space:nowrap;
+                   overflow:hidden;
+                   text-overflow:ellipsis;">
+          </div>
+        </div>
+
+      </div>
 
       <div class="ad-container">
         <div class="ad-placeholder">
@@ -658,10 +880,6 @@
           <small>Your ad will appear here</small>
         </div>
       </div>
-
-      <p style="text-align:center;color:#666;font-size:13px;">
-        ⚡ Splitting, compressing & uploading... Please wait!
-      </p>
     </div>
 
     <!-- STEP 3: ACTIVATION -->
@@ -917,38 +1135,18 @@
     async function startCompression() {
       if (files.length === 0) return;
 
-      // Show splitting info if any large file
-      const hasLargeFile = files.some(f => f.size > LONG_VIDEO_THRESHOLD);
-      if (hasLargeFile) {
-        document.getElementById('splittingInfo').style.display = 'flex';
-      }
-
       document.getElementById('progressCard').style.display = 'block';
       document.getElementById('compressBtn').disabled = true;
 
-      const container = document.getElementById('progressContainer');
-      container.innerHTML = files.map((file, i) => `
-        <div class="progress-item">
-          <div class="progress-label">
-            <span>${file.name}</span>
-            <span id="pct${i}">0%</span>
-          </div>
-          <div class="progress-bar">
-            <div class="progress-fill" id="fill${i}"></div>
-          </div>
-        </div>
-      `).join('') + `
-        <div class="progress-item">
-          <div class="progress-label">
-            <span>Overall Progress</span>
-            <span id="pctOverall">0%</span>
-          </div>
-          <div class="progress-bar">
-            <div class="progress-fill" id="fillOverall"></div>
-          </div>
-        </div>
-      `;
-
+      currentProgress = 0;
+      targetProgress = 0;
+      updateProgressBar(0);
+      setStep(1);
+      setStatus('📤', 'Uploading video to server...');
+      // Show current file being processed
+      if (files.length > 0) {
+        showCurrentFile(files[0].name);
+      }
       animateProgress();
 
       try {
@@ -973,6 +1171,7 @@
         setTimeout(() => showActivation(), 1000);
 
       } catch (error) {
+        clearInterval(progressInterval);
         alert('Error: ' + error.message);
         document.getElementById('progressCard').style.display = 'none';
         document.getElementById('compressBtn').disabled = false;
@@ -980,41 +1179,139 @@
     }
 
     let progressInterval;
+    let currentProgress = 0;
+    let targetProgress = 0;
+
+    // Smooth progress animation
+    function animateToTarget() {
+      if (progressInterval) clearInterval(progressInterval);
+      progressInterval = setInterval(() => {
+        if (currentProgress < targetProgress) {
+          currentProgress += 0.5;
+          if (currentProgress > targetProgress) currentProgress = targetProgress;
+          updateProgressBar(currentProgress);
+        }
+      }, 30);
+    }
+
+    function updateProgressBar(pct) {
+      const fill = document.getElementById('mainProgressFill');
+      const pctEl = document.getElementById('progressPct');
+      if (fill) fill.style.width = pct + '%';
+      if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+    }
+
+    function setStatus(icon, text) {
+      document.getElementById('statusIcon').textContent = icon;
+      document.getElementById('statusText').textContent = text;
+    }
+
+    function setStep(stepNum) {
+      const hasLargeFile = files.some(f => f.size > LONG_VIDEO_THRESHOLD);
+
+      for (let i = 1; i <= 5; i++) {
+        const el = document.getElementById(`step${i}Indicator`);
+        if (!el) continue;
+        el.classList.remove('active', 'done', 'skipped');
+
+        // ✅ For short videos — step 3 (Split) is skipped
+        if (!hasLargeFile && i === 3) {
+          el.classList.add('skipped');
+          continue;
+        }
+
+        if (i < stepNum) el.classList.add('done');
+        if (i === stepNum) el.classList.add('active');
+      }
+    }
+
+    function showCurrentFile(name) {
+      const box = document.getElementById('currentFileBox');
+      const nameEl = document.getElementById('currentFileName');
+      if (box) box.style.display = 'block';
+      if (nameEl) nameEl.textContent = name;
+    }
 
     function animateProgress() {
-      let progress = 0;
-      progressInterval = setInterval(() => {
-        progress += Math.random() * 2;
-        if (progress > 85) progress = 85;
+      const hasLargeFile = files.some(f => f.size > LONG_VIDEO_THRESHOLD);
 
-        files.forEach((_, i) => {
-          const fill = document.getElementById(`fill${i}`);
-          const pct = document.getElementById(`pct${i}`);
-          if (fill) fill.style.width = progress + '%';
-          if (pct) pct.textContent = Math.round(progress) + '%';
-        });
+      // Stage 1: Uploading to server (0→15%)
+      currentProgress = 0;
+      targetProgress = 15;
+      setStatus('📤', 'Uploading video to server...');
+      setStep(1);
+      animateToTarget();
 
-        const fillOverall = document.getElementById('fillOverall');
-        const pctOverall = document.getElementById('pctOverall');
-        if (fillOverall) {
-          fillOverall.style.width = progress + '%';
-          pctOverall.textContent = Math.round(progress) + '%';
-        }
-      }, 200);
+      // Stage 2: Compressing (15→50%)
+      setTimeout(() => {
+        targetProgress = 50;
+        setStatus('⚙️', 'Compressing video for maximum quality...');
+        setStep(2);
+        animateToTarget();
+      }, 2000);
+
+      if (hasLargeFile) {
+        // ✅ LONG VIDEO PATH — Show split step
+
+        // Stage 3: Splitting (50→70%)
+        setTimeout(() => {
+          targetProgress = 70;
+          setStatus('✂️', 'Splitting into 29-second WhatsApp clips...');
+          setStep(3);
+          animateToTarget();
+        }, 5000);
+
+        // Stage 4: Uploading to R2 (70→88%)
+        setTimeout(() => {
+          targetProgress = 88;
+          setStatus('☁️', 'Uploading clips to cloud storage...');
+          setStep(4);
+          animateToTarget();
+        }, 9000);
+
+        // Stage 4b: Still uploading
+        setTimeout(() => {
+          if (currentProgress < 90) {
+            setStatus('☁️', 'Almost there... finalizing upload...');
+          }
+        }, 14000);
+
+      } else {
+        // ✅ SHORT VIDEO PATH — Skip split step
+
+        // Stage 3: Skip split — mark as done, go straight to R2
+        setTimeout(() => {
+          targetProgress = 70;
+          setStatus('☁️', 'Uploading to cloud storage...');
+          setStep(3); // Mark split as skipped
+          setStep(4); // Jump straight to R2 step
+          animateToTarget();
+        }, 5000);
+
+        // Stage 4b: Still uploading
+        setTimeout(() => {
+          if (currentProgress < 88) {
+            targetProgress = 88;
+            setStatus('☁️', 'Almost there... finalizing upload...');
+            animateToTarget();
+          }
+        }, 9000);
+      }
     }
 
     function completeProgress() {
       clearInterval(progressInterval);
-      files.forEach((_, i) => {
-        const fill = document.getElementById(`fill${i}`);
-        const pct = document.getElementById(`pct${i}`);
-        if (fill) fill.style.width = '100%';
-        if (pct) pct.textContent = '100%';
-      });
-      const fillOverall = document.getElementById('fillOverall');
-      const pctOverall = document.getElementById('pctOverall');
-      if (fillOverall) fillOverall.style.width = '100%';
-      if (pctOverall) pctOverall.textContent = '100%';
+      currentProgress = 100;
+      targetProgress = 100;
+      updateProgressBar(100);
+      setStatus('✅', 'Done! Your videos are ready!');
+      setStep(5);
+
+      // Green glow on complete
+      const fill = document.getElementById('mainProgressFill');
+      if (fill) {
+        fill.style.boxShadow = '0 0 20px rgba(37,211,102,0.5)';
+      }
     }
 
     let countdownInterval;
@@ -1119,6 +1416,7 @@
 
       // ✅ Clear countdown timer
       if (countdownInterval) clearInterval(countdownInterval);
+      if (progressInterval) clearInterval(progressInterval);
 
       // ✅ Reset timer UI
       document.getElementById('timerDisplay').textContent = '05:00';
@@ -1140,10 +1438,16 @@
       renderFiles();
 
       document.getElementById('progressCard').style.display = 'none';
-      document.getElementById('splittingInfo').style.display = 'none';
       document.getElementById('fileCountInfo').style.display = 'none';
       document.getElementById('activationSection').classList.remove('visible');
       document.getElementById('successSection').classList.remove('visible');
+      currentProgress = 0;
+      targetProgress = 0;
+      updateProgressBar(0);
+      setStep(1);
+      setStatus('⚙️', 'Starting...');
+      document.getElementById('currentFileBox').style.display = 'none';
+      document.getElementById('mainProgressFill').style.boxShadow = '';
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
