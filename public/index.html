@@ -584,7 +584,7 @@
       <div class="split-banner-icon">✂️</div>
       <div class="split-banner-text">
         <h4>Auto Split & Compress — Any Size Video!</h4>
-        <p>Long videos are automatically split into 29-second WhatsApp-ready clips. Upload up to 200MB!</p>
+        <p>Long videos are automatically split into 29-second WhatsApp-ready clips. Upload up to 300MB!</p>
       </div>
     </div>
 
@@ -600,7 +600,7 @@
         <h3>Drop Videos Here</h3>
         <p>or click to browse files</p>
         <p style="color:#444;font-size:13px;">
-          Up to 200MB · Long videos auto-split into 29s clips!
+          Up to 300MB · Long videos auto-split into 29s clips!
         </p>
         <div class="upload-formats">
           <span class="format-tag">MP4</span>
@@ -617,7 +617,7 @@
         <div id="filesContainer"></div>
         <div class="size-tracker">
           <span class="size-text">
-            Total: <span id="totalSize">0 MB</span> / 200 MB
+            Total: <span id="totalSize">0 MB</span> / 300 MB
           </span>
           <button onclick="clearFiles()"
             style="background:none;border:1px solid #333;
@@ -681,6 +681,48 @@
           <div class="code-label">Your Activation Code</div>
           <div class="code-value" id="activationCode">- - - - -</div>
           <button class="code-copy" onclick="copyCode()">📋 Copy Code</button>
+
+          <!-- ✅ NEW: 5 minute countdown -->
+          <div id="timerBox" style="margin-top:16px;">
+            <div style="font-size:12px;color:#666;margin-bottom:6px;">
+              ⏱️ Code expires in:
+            </div>
+            <div id="timerDisplay"
+              style="font-size:28px;
+                     font-weight:800;
+                     color:#25D366;
+                     font-family:monospace;
+                     letter-spacing:3px;">
+              05:00
+            </div>
+            <div style="font-size:11px;color:#444;margin-top:4px;">
+              Send code before timer runs out!
+            </div>
+          </div>
+
+          <!-- ✅ NEW: Expired state (hidden initially) -->
+          <div id="expiredBox"
+            style="display:none;
+                   margin-top:16px;
+                   background:#1a0000;
+                   border:1px solid #ff4444;
+                   border-radius:10px;
+                   padding:14px;">
+            <div style="color:#ff4444;
+                        font-size:16px;
+                        font-weight:700;
+                        margin-bottom:6px;">
+              ❌ Code Expired!
+            </div>
+            <div style="color:#666;font-size:13px;margin-bottom:12px;">
+              Your 5 minutes are up. Please compress your video again.
+            </div>
+            <button class="btn btn-primary"
+                    onclick="resetApp()"
+                    style="padding:10px;font-size:14px;">
+              🔄 Start Again
+            </button>
+          </div>
         </div>
 
         <div class="activation-steps">
@@ -701,6 +743,21 @@
             <div class="step-num">4</div>
             <div class="step-text">Receive your <strong>HD video clips</strong> directly in WhatsApp! 🎬</div>
           </div>
+        </div>
+
+        <!-- ✅ NEW: Urgency warning -->
+        <div id="urgencyWarning"
+          style="background:#1a1500;
+                 border:1px solid #856404;
+                 border-radius:10px;
+                 padding:12px 16px;
+                 margin-bottom:16px;
+                 font-size:13px;
+                 color:#ffc107;
+                 display:flex;
+                 align-items:center;
+                 gap:8px;">
+          ⚠️ <span>Code valid for <strong>5 minutes only!</strong> Send it on WhatsApp before it expires!</span>
         </div>
 
         <button class="btn btn-whatsapp" id="waButton" onclick="openWhatsApp()">
@@ -960,6 +1017,8 @@
       if (pctOverall) pctOverall.textContent = '100%';
     }
 
+    let countdownInterval;
+
     function showActivation() {
       document.getElementById('activationCode').textContent = activationCode;
 
@@ -971,6 +1030,68 @@
 
       document.getElementById('activationSection').classList.add('visible');
       document.getElementById('activationSection').scrollIntoView({ behavior: 'smooth' });
+
+      // ✅ Start 5 minute countdown
+      startCountdown(5 * 60); // 300 seconds
+    }
+
+    function startCountdown(seconds) {
+      let remaining = seconds;
+      const timerDisplay = document.getElementById('timerDisplay');
+      const timerBox = document.getElementById('timerBox');
+      const expiredBox = document.getElementById('expiredBox');
+      const waButton = document.getElementById('waButton');
+      const urgencyWarning = document.getElementById('urgencyWarning');
+
+      // Clear any existing countdown
+      if (countdownInterval) clearInterval(countdownInterval);
+
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      timerDisplay.textContent = `0${mins}:${secs < 10 ? '0' : ''}${secs}`;
+      timerDisplay.style.color = '#25D366';
+      timerBox.style.display = 'block';
+      expiredBox.style.display = 'none';
+      waButton.disabled = false;
+      waButton.style.opacity = '';
+      waButton.style.cursor = '';
+      urgencyWarning.style.display = 'flex';
+      urgencyWarning.style.borderColor = '#856404';
+      urgencyWarning.style.background = '#1a1500';
+      urgencyWarning.style.color = '#ffc107';
+
+      countdownInterval = setInterval(() => {
+        remaining--;
+
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        const display = `0${mins}:${secs < 10 ? '0' : ''}${secs}`;
+        timerDisplay.textContent = display;
+
+        // Turn red in last 60 seconds
+        if (remaining <= 60) {
+          timerDisplay.style.color = '#ff4444';
+          urgencyWarning.style.borderColor = '#ff4444';
+          urgencyWarning.style.background = '#1a0000';
+          urgencyWarning.style.color = '#ff4444';
+        }
+
+        // Turn orange at 2 minutes
+        if (remaining <= 120 && remaining > 60) {
+          timerDisplay.style.color = '#ffc107';
+        }
+
+        // Expired!
+        if (remaining <= 0) {
+          clearInterval(countdownInterval);
+          timerBox.style.display = 'none';
+          expiredBox.style.display = 'block';
+          waButton.disabled = true;
+          waButton.style.opacity = '0.4';
+          waButton.style.cursor = 'not-allowed';
+          urgencyWarning.style.display = 'none';
+        }
+      }, 1000);
     }
 
     function openWhatsApp() {
@@ -995,6 +1116,26 @@
       waLink = '';
       activationCode = '';
       fileCount = 0;
+
+      // ✅ Clear countdown timer
+      if (countdownInterval) clearInterval(countdownInterval);
+
+      // ✅ Reset timer UI
+      document.getElementById('timerDisplay').textContent = '05:00';
+      document.getElementById('timerDisplay').style.color = '#25D366';
+      document.getElementById('timerBox').style.display = 'block';
+      document.getElementById('expiredBox').style.display = 'none';
+
+      const waBtn = document.getElementById('waButton');
+      waBtn.disabled = false;
+      waBtn.style.opacity = '1';
+      waBtn.style.cursor = 'pointer';
+
+      const urgency = document.getElementById('urgencyWarning');
+      urgency.style.display = 'flex';
+      urgency.style.borderColor = '#856404';
+      urgency.style.background = '#1a1500';
+      urgency.style.color = '#ffc107';
 
       renderFiles();
 
