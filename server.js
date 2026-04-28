@@ -61,16 +61,28 @@ const r2Client = new S3Client({
 // ========================
 const sessions = new Map();
 
-// Auto cleanup every 30 minutes
-setInterval(() => {
+// Auto cleanup every 1 minute
+setInterval(async () => {
   const now = Date.now();
   for (const [code, session] of sessions.entries()) {
-    if (now - session.createdAt > 3600000) {
+    if (now - session.createdAt > 300000) { // 5 minutes = 300000ms
+
+      // Delete from R2
+      for (const file of session.files) {
+        try {
+          await deleteFromR2(file.fileName);
+          console.log(`R2 cleanup: ${file.fileName} deleted`);
+        } catch (err) {
+          console.error('R2 cleanup error:', err.message);
+        }
+      }
+
+      // Delete session from memory
       sessions.delete(code);
-      console.log(`Session expired: ${code}`);
+      console.log(`Session expired & R2 cleaned: ${code}`);
     }
   }
-}, 1800000);
+}, 60000); // Check every 1 minute
 
 // ========================
 // RATE LIMITING
@@ -480,6 +492,28 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
       status: 'pending'
     });
 
+    // ✅ Start 5 minute expiry timer immediately!
+    setTimeout(async () => {
+      const session = sessions.get(activationCode);
+      if (session) {
+        console.log(`Code ${activationCode} expired after 5 minutes`);
+
+        // Delete from R2
+        for (const file of session.files) {
+          try {
+            await deleteFromR2(file.fileName);
+            console.log(`R2 deleted: ${file.fileName}`);
+          } catch (err) {
+            console.error('R2 delete error:', err.message);
+          }
+        }
+
+        // Delete session
+        sessions.delete(activationCode);
+        console.log(`Session ${activationCode} removed!`);
+      }
+    }, 300000); // 5 minutes
+
     // WhatsApp link
     const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
     const waLink = `https://wa.me/${cleanNumber}?text=Activation%20Code%3A%20${activationCode}`;
@@ -608,18 +642,17 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
-    // Schedule R2 cleanup after 1 hour
-    setTimeout(async () => {
-      for (const file of session.files) {
-        try {
-          await deleteFromR2(file.fileName);
-          console.log(`Deleted from R2: ${file.fileName}`);
-        } catch (err) {
-          console.error('R2 delete error:', err);
-        }
+    // ✅ Delete from R2 immediately after videos sent!
+    for (const file of session.files) {
+      try {
+        await deleteFromR2(file.fileName);
+        console.log(`R2 deleted after send: ${file.fileName}`);
+      } catch (err) {
+        console.error('R2 delete error:', err.message);
       }
-      sessions.delete(code);
-    }, 3600000);
+    }
+    sessions.delete(code);
+    console.log(`Session ${code} cleaned up after delivery!`);
 
     res.sendStatus(200);
 
