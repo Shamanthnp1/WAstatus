@@ -1180,8 +1180,9 @@
                    id="successClipCount">
                 1
               </div>
-              <div style="font-size:11px;color:#444;">
-                Clips Sent
+              <div style="font-size:11px;color:#444;"
+                   id="successClipLabel">
+                Video Sent
               </div>
             </div>
             <div style="background:#0a2a0a;
@@ -1730,13 +1731,24 @@
     }
 
     function showSuccess() {
-      // ✅ Show correct clip count in success card
       const clipCountEl = document.getElementById('successClipCount');
-      if (clipCountEl) clipCountEl.textContent = fileCount || 1;
+      const clipLabelEl = document.getElementById('successClipLabel');
+
+      if (clipCountEl) {
+        clipCountEl.textContent = fileCount || 1;
+      }
+
+      if (clipLabelEl) {
+        if (!fileCount || fileCount <= 1) {
+          // ✅ Short video — single video
+          clipLabelEl.textContent = 'Video Sent';
+        } else {
+          // ✅ Long video — multiple clips
+          clipLabelEl.textContent = 'Clips Sent';
+        }
+      }
 
       document.getElementById('successSection').classList.add('visible');
-
-      // ✅ Smooth scroll to success
       setTimeout(() => {
         document.getElementById('successSection').scrollIntoView({
           behavior: 'smooth',
