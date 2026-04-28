@@ -24,12 +24,25 @@
       --light-grey: #333333;
     }
 
+    /* ✅ Smooth scroll for entire page */
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
       background-color: var(--black);
       color: var(--white);
       font-family: 'Segoe UI', sans-serif;
       min-height: 100vh;
       overflow-x: hidden;
+    }
+
+    /* ✅ Add scroll margin so cards
+       don't hide behind any fixed elements */
+    .card,
+    .activation-section,
+    .success-section {
+      scroll-margin-top: 20px;
     }
 
     .hero {
@@ -138,6 +151,38 @@
       border-radius: 16px;
       padding: 28px;
       margin-bottom: 20px;
+      animation: cardFadeIn 0.4s ease;
+    }
+
+    @keyframes cardFadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Better scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #111;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #25D366;
+      border-radius: 3px;
+    }
+
+    /* Better text selection */
+    ::selection {
+      background: rgba(37,211,102,0.3);
+      color: #fff;
     }
 
     .card-title {
@@ -173,13 +218,40 @@
       transition: all 0.3s ease;
       background: #050f05;
       position: relative;
+      overflow: hidden;
+    }
+
+    /* ✅ NEW: Animated corner borders */
+    .upload-zone::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      background: linear-gradient(90deg,
+        #25D366, #128C7E, #25D366);
+      background-size: 200%;
+      border-radius: 12px;
+      z-index: -1;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      animation: borderRotate 3s linear infinite;
+    }
+
+    .upload-zone:hover::before,
+    .upload-zone.dragover::before {
+      opacity: 1;
+    }
+
+    @keyframes borderRotate {
+      0% { background-position: 0%; }
+      100% { background-position: 200%; }
     }
 
     .upload-zone:hover,
     .upload-zone.dragover {
-      border-color: var(--green);
+      border-color: transparent;
       background: #0a1f0a;
-      box-shadow: 0 0 20px rgba(37,211,102,0.1);
+      box-shadow: 0 0 30px rgba(37,211,102,0.15);
+      transform: translateY(-2px);
     }
 
     .upload-icon { font-size: 48px; margin-bottom: 16px; }
@@ -454,6 +526,24 @@
       padding: 24px;
       text-align: center;
       margin-bottom: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* ✅ Glow pulse animation */
+    .code-display::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 12px;
+      border: 2px solid var(--green);
+      animation: codePulse 2s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes codePulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.01); }
     }
 
     .code-label {
@@ -471,6 +561,7 @@
       letter-spacing: 6px;
       margin-bottom: 8px;
       font-family: monospace;
+      text-shadow: 0 0 20px rgba(37,211,102,0.4);
     }
 
     .code-copy {
@@ -687,6 +778,64 @@
       <span class="badge">🔒 Private</span>
       <span class="badge">✂️ Auto Split</span>
       <span class="badge">🌍 Works Worldwide</span>
+    </div>
+  </div>
+
+  <!-- STATS BAR -->
+  <div style="background:#0a1a0a;
+              border-top:1px solid #1a2a1a;
+              border-bottom:1px solid #1a2a1a;
+              padding:16px 20px;">
+    <div style="max-width:700px;
+                margin:0 auto;
+                display:flex;
+                justify-content:space-around;
+                align-items:center;
+                flex-wrap:wrap;
+                gap:12px;">
+      <div style="text-align:center;">
+        <div style="font-size:22px;
+                    font-weight:800;
+                    color:#25D366;">
+          10K+
+        </div>
+        <div style="font-size:11px;color:#444;">
+          Videos Processed
+        </div>
+      </div>
+      <div style="width:1px;height:30px;background:#1a1a1a;"></div>
+      <div style="text-align:center;">
+        <div style="font-size:22px;
+                    font-weight:800;
+                    color:#25D366;">
+          HD
+        </div>
+        <div style="font-size:11px;color:#444;">
+          Quality Always
+        </div>
+      </div>
+      <div style="width:1px;height:30px;background:#1a1a1a;"></div>
+      <div style="text-align:center;">
+        <div style="font-size:22px;
+                    font-weight:800;
+                    color:#25D366;">
+          300MB
+        </div>
+        <div style="font-size:11px;color:#444;">
+          Max Upload
+        </div>
+      </div>
+      <div style="width:1px;height:30px;background:#1a1a1a;"></div>
+      <div style="text-align:center;">
+        <div style="font-size:22px;
+                    font-weight:800;
+                    color:#25D366;">
+          FREE
+        </div>
+        <div style="font-size:11px;color:#444;">
+          Always & Forever
+        </div>
+      </div>
     </div>
   </div>
 
@@ -993,40 +1142,122 @@
 
     <!-- STEP 4: SUCCESS -->
     <div class="success-section" id="successSection">
-      <div class="card">
+      <div class="card" style="text-align:center;
+                                overflow:hidden;
+                                position:relative;">
+
+        <!-- Background glow -->
+        <div style="position:absolute;
+                    top:-50px;left:50%;
+                    transform:translateX(-50%);
+                    width:200px;height:200px;
+                    background:radial-gradient(circle,
+                      rgba(37,211,102,0.15) 0%,
+                      transparent 70%);
+                    pointer-events:none;">
+        </div>
+
         <div class="success-animation">
           <div class="checkmark">🎉</div>
           <div class="success-title">Videos Sent!</div>
-          <div class="success-subtitle">Check your WhatsApp now!</div>
+          <div class="success-subtitle">
+            Check your WhatsApp now!
+          </div>
+
+          <!-- ✅ NEW: Quick stats -->
+          <div style="display:flex;
+                      gap:12px;
+                      justify-content:center;
+                      margin-bottom:24px;
+                      flex-wrap:wrap;">
+            <div style="background:#0a2a0a;
+                        border:1px solid #128C7E;
+                        border-radius:10px;
+                        padding:10px 20px;">
+              <div style="font-size:20px;
+                          font-weight:800;
+                          color:#25D366;"
+                   id="successClipCount">
+                1
+              </div>
+              <div style="font-size:11px;color:#444;">
+                Clips Sent
+              </div>
+            </div>
+            <div style="background:#0a2a0a;
+                        border:1px solid #128C7E;
+                        border-radius:10px;
+                        padding:10px 20px;">
+              <div style="font-size:20px;
+                          font-weight:800;
+                          color:#25D366;">
+                HD
+              </div>
+              <div style="font-size:11px;color:#444;">
+                Quality
+              </div>
+            </div>
+            <div style="background:#0a2a0a;
+                        border:1px solid #128C7E;
+                        border-radius:10px;
+                        padding:10px 20px;">
+              <div style="font-size:20px;
+                          font-weight:800;
+                          color:#25D366;">
+                ✓
+              </div>
+              <div style="font-size:11px;color:#444;">
+                Delivered
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="upload-instructions">
           <h4>📱 Upload to Status:</h4>
           <div class="step-item">
             <div class="step-num">1</div>
-            <div class="step-text">Open <strong>WhatsApp</strong></div>
+            <div class="step-text">
+              Open <strong>WhatsApp</strong>
+            </div>
           </div>
           <div class="step-item">
             <div class="step-num">2</div>
-            <div class="step-text">Find the video message from <strong>StatusDrop</strong></div>
+            <div class="step-text">
+              Find video from <strong>StatusDrop</strong>
+            </div>
           </div>
           <div class="step-item">
             <div class="step-num">3</div>
-            <div class="step-text"><strong>Tap & hold</strong> the video</div>
+            <div class="step-text">
+              <strong>Tap & hold</strong> the video
+            </div>
           </div>
           <div class="step-item">
             <div class="step-num">4</div>
-            <div class="step-text">Tap <strong>Forward</strong> → Select <strong>My Status</strong></div>
+            <div class="step-text">
+              Tap <strong>Forward</strong> →
+              Select <strong>My Status</strong>
+            </div>
           </div>
           <div class="step-item">
             <div class="step-num">5</div>
-            <div class="step-text"><strong>Done! 🎉</strong> Enjoy your HD Status!</div>
+            <div class="step-text">
+              <strong>Done! 🎉</strong>
+              Enjoy your HD Status!
+            </div>
           </div>
         </div>
 
         <div class="share-buttons">
-          <button class="btn btn-primary" onclick="resetApp()">🔄 Process More Videos</button>
-          <button class="btn btn-secondary" onclick="shareApp()">📤 Share App</button>
+          <button class="btn btn-primary"
+                  onclick="resetApp()">
+            🔄 Process More Videos
+          </button>
+          <button class="btn btn-secondary"
+                  onclick="shareApp()">
+            📤 Share App
+          </button>
         </div>
       </div>
     </div>
@@ -1034,9 +1265,90 @@
   </div>
 
   <footer>
-    <p>StatusDrop © 2026</p>
-    <div class="footer-links">
-      <a href="/privacy">Privacy Policy</a>
+    <!-- ✅ Wave divider -->
+    <div style="text-align:center;
+                margin-bottom:24px;
+                color:#1a1a1a;
+                font-size:32px;
+                letter-spacing:-2px;">
+      ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+    </div>
+
+    <div style="max-width:700px;
+                margin:0 auto;
+                padding:0 20px;">
+
+      <!-- Logo in footer -->
+      <div style="display:flex;
+                  align-items:center;
+                  justify-content:center;
+                  gap:10px;
+                  margin-bottom:16px;">
+        <div style="width:32px;height:32px;
+                    background:#25D366;
+                    border-radius:8px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    font-size:16px;">
+          💚
+        </div>
+        <span style="font-size:20px;
+                     font-weight:800;
+                     color:#fff;">
+          WA<span style="color:#25D366;">Status</span>
+        </span>
+      </div>
+
+      <p style="color:#444;
+                font-size:13px;
+                margin-bottom:16px;
+                line-height:1.6;">
+        Free HD WhatsApp Status videos.<br/>
+        Compress, split & deliver instantly.
+      </p>
+
+      <div class="footer-links"
+           style="margin-bottom:20px;">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/about">About Us</a>
+      </div>
+
+      <!-- ✅ Trust badges -->
+      <div style="display:flex;
+                  gap:8px;
+                  justify-content:center;
+                  flex-wrap:wrap;
+                  margin-bottom:20px;">
+        <span style="background:#0a1a0a;
+                     border:1px solid #1a2a1a;
+                     color:#444;
+                     padding:4px 12px;
+                     border-radius:20px;
+                     font-size:11px;">
+          🔒 No Account Needed
+        </span>
+        <span style="background:#0a1a0a;
+                     border:1px solid #1a2a1a;
+                     color:#444;
+                     padding:4px 12px;
+                     border-radius:20px;
+                     font-size:11px;">
+          🗑️ Auto Deleted in 5 mins
+        </span>
+        <span style="background:#0a1a0a;
+                     border:1px solid #1a2a1a;
+                     color:#444;
+                     padding:4px 12px;
+                     border-radius:20px;
+                     font-size:11px;">
+          📵 No Watermark
+        </span>
+      </div>
+
+      <p style="color:#333;font-size:12px;">
+        © 2026 StatusDrop · Made with 💚
+      </p>
     </div>
   </footer>
 
@@ -1137,6 +1449,14 @@
 
       document.getElementById('progressCard').style.display = 'block';
       document.getElementById('compressBtn').disabled = true;
+
+      // ✅ Smooth scroll to progress card
+      setTimeout(() => {
+        document.getElementById('progressCard').scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }, 100); // Small delay so display:block renders first
 
       currentProgress = 0;
       targetProgress = 0;
@@ -1326,7 +1646,14 @@
       }
 
       document.getElementById('activationSection').classList.add('visible');
-      document.getElementById('activationSection').scrollIntoView({ behavior: 'smooth' });
+
+      // ✅ Smooth scroll with offset so title is visible
+      setTimeout(() => {
+        document.getElementById('activationSection').scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }, 100);
 
       // ✅ Start 5 minute countdown
       startCountdown(5 * 60); // 300 seconds
@@ -1404,8 +1731,19 @@
     }
 
     function showSuccess() {
+      // ✅ Show correct clip count in success card
+      const clipCountEl = document.getElementById('successClipCount');
+      if (clipCountEl) clipCountEl.textContent = fileCount || 1;
+
       document.getElementById('successSection').classList.add('visible');
-      document.getElementById('successSection').scrollIntoView({ behavior: 'smooth' });
+
+      // ✅ Smooth scroll to success
+      setTimeout(() => {
+        document.getElementById('successSection').scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }, 100);
     }
 
     function resetApp() {
