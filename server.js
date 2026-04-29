@@ -565,7 +565,11 @@ app.post('/webhook', async (req, res) => {
     console.log(`Message from ${from}: ${text}`);
 
     // Extract activation code
-    const codeMatch = text?.match(/Activation Code[:\s]+([A-Z0-9]{9})/i);
+    const codeMatch = text?.match(
+      /Activation Code[:\s]+([A-Z0-9]{9})/i
+    ) || text?.match(
+      /\b([A-Z0-9]{9})\b/i
+    );
 
     if (!codeMatch) {
       await sendWhatsAppMessage(
