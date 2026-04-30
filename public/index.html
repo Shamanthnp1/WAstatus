@@ -52,8 +52,8 @@
       --light-grey: #333333;
     }
 
-    /* ✅ Smooth scroll for entire page */
     html {
+      overflow-x: hidden;  /* ✅ Add this! */
       scroll-behavior: smooth;
     }
 
@@ -63,6 +63,9 @@
       font-family: 'Segoe UI', sans-serif;
       min-height: 100vh;
       overflow-x: hidden;
+      width: 100%;          /* ✅ Add this! */
+      max-width: 100vw;     /* ✅ Add this! */
+      position: relative;   /* ✅ Add this! */
     }
 
     /* ✅ Add scroll margin so cards
@@ -77,6 +80,8 @@
       text-align: center;
       padding: 60px 20px 40px;
       background: linear-gradient(180deg, #0a1f0a 0%, #000000 100%);
+      overflow-x: hidden; /* ✅ Add this */
+      width: 100%;        /* ✅ Add this */
     }
 
     .logo {
@@ -170,6 +175,8 @@
       max-width: 700px;
       margin: 0 auto;
       padding: 20px;
+      overflow-x: hidden; /* ✅ Add this */
+      width: 100%;        /* ✅ Add this */
     }
 
     .card {
