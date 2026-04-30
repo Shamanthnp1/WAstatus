@@ -594,10 +594,9 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (session.status === 'sent') {
-      await sendWhatsAppMessage(
-        from,
-        '✅ Videos already sent!\n\nCheck your WhatsApp messages!'
-      );
+      // ✅ Don't send any message!
+      // Videos already delivered — just silently ignore
+      console.log(`Duplicate webhook for code: ${code} — ignoring!`);
       return res.sendStatus(200);
     }
 
@@ -646,8 +645,18 @@ app.post('/webhook', async (req, res) => {
         console.error('R2 delete error:', err.message);
       }
     }
-    sessions.delete(code);
-    console.log(`Session ${code} cleaned up after delivery!`);
+
+    // ✅ Mark as sent but keep session for 5 mins
+    // Handles duplicate webhooks from Meta!
+    session.status = 'sent';
+    session.files = []; // Clear files (already deleted from R2)
+    sessions.set(code, session);
+
+    // Delete session after 5 minutes
+    setTimeout(() => {
+      sessions.delete(code);
+      console.log(`Session ${code} fully cleaned up!`);
+    }, 300000); // 5 minutes
 
     res.sendStatus(200);
 
