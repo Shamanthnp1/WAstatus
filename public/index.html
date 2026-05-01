@@ -1392,6 +1392,9 @@
   </footer>
 
   <script>
+    // ✅ Backend URL
+    const BACKEND_URL = 'https://wastatus-production.up.railway.app';
+
     let files = [];
     let waLink = '';
     let activationCode = '';
@@ -1512,10 +1515,10 @@
         const formData = new FormData();
         files.forEach(file => formData.append('videos', file));
 
-        const response = await fetch('/api/compress', {
-          method: 'POST',
-          body: formData
-        });
+const response = await fetch(`${BACKEND_URL}/api/compress`, {
+  method: 'POST',
+  body: formData
+});
 
         const data = await response.json();
 
