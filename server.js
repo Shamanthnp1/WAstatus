@@ -60,6 +60,7 @@ const r2Client = new S3Client({
 // SESSION STORAGE
 // ========================
 const sessions = new Map();
+const recentlySentCodes = new Set(); // ✅ Track recently sent codes for duplicate handling
 
 // Auto cleanup every 1 minute
 setInterval(async () => {
@@ -441,69 +442,69 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
     const activationCode = generateCode();
     const r2Files = [];
 
+    // ✅ FIX — use try/finally per file
     for (const file of req.files) {
-      console.log(`Processing: ${file.originalname} (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
+      try {
+        console.log(`Processing: ${file.originalname} (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
 
-      // Get video duration
-      const duration = await getVideoDuration(file.path);
+        // Get video duration
+        const duration = await getVideoDuration(file.path);
 
-      if (duration <= 29) {
-        // SHORT VIDEO — compress directly
-        console.log('Short video — compressing directly...');
-        const outputFileName = `compressed_${uuidv4()}.mp4`;
-        const outputPath = path.join('compressed', outputFileName);
+        if (duration <= 29) {
+          // SHORT VIDEO — compress directly
+          console.log('Short video — compressing directly...');
+          const outputFileName = `compressed_${uuidv4()}.mp4`;
+          const outputPath = path.join('compressed', outputFileName);
 
-        await compressVideo(file.path, outputPath);
+          await compressVideo(file.path, outputPath);
 
-        const publicUrl = await uploadToR2(outputPath, outputFileName);
-        r2Files.push({ fileName: outputFileName, url: publicUrl });
+          const publicUrl = await uploadToR2(outputPath, outputFileName);
+          r2Files.push({ fileName: outputFileName, url: publicUrl });
 
-        fs.unlinkSync(outputPath);
-      } else {
-        // LONG VIDEO — split into 29s chunks
-        console.log(`Long video (${duration.toFixed(1)}s) — splitting into chunks...`);
-        const chunkPaths = await splitVideo(file.path, 'compressed', 29);
+          fs.unlinkSync(outputPath);
+        } else {
+          // LONG VIDEO — split into 29s chunks
+          console.log(`Long video (${duration.toFixed(1)}s) — splitting into chunks...`);
+          const chunkPaths = await splitVideo(file.path, 'compressed', 29);
 
-        for (const chunkPath of chunkPaths) {
-          const chunkFileName = path.basename(chunkPath);
-          const publicUrl = await uploadToR2(chunkPath, chunkFileName);
-          r2Files.push({ fileName: chunkFileName, url: publicUrl });
-          fs.unlinkSync(chunkPath);
+          for (const chunkPath of chunkPaths) {
+            const chunkFileName = path.basename(chunkPath);
+            const publicUrl = await uploadToR2(chunkPath, chunkFileName);
+            r2Files.push({ fileName: chunkFileName, url: publicUrl });
+            fs.unlinkSync(chunkPath);
+          }
+        }
+      } finally {
+        // Always clean up original upload
+        if (fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
         }
       }
-
-      // Delete original upload
-      fs.unlinkSync(file.path);
     }
 
-    // Store session
-    sessions.set(activationCode, {
-      files: r2Files,
-      createdAt: Date.now(),
-      status: 'pending'
-    });
-
-    // ✅ Start 5 minute expiry timer immediately!
-    setTimeout(async () => {
+    // ✅ Store timer ID in session!
+    const expiryTimer = setTimeout(async () => {
       const session = sessions.get(activationCode);
       if (session) {
-        console.log(`Code ${activationCode} expired after 5 minutes`);
-
-        // Delete from R2
         for (const file of session.files) {
           try {
             await deleteFromR2(file.fileName);
-            console.log(`R2 deleted: ${file.fileName}`);
+            console.log(`R2 deleted (expired): ${file.fileName}`);
           } catch (err) {
             console.error('R2 delete error:', err.message);
           }
         }
-
-        // Delete session
         sessions.delete(activationCode);
-        console.log(`Session ${activationCode} removed!`);
+        console.log(`Session expired: ${activationCode}`);
       }
-    }, 300000); // 5 minutes
+    }, 300000);
+
+    sessions.set(activationCode, {
+      files: r2Files,
+      createdAt: Date.now(),
+      status: 'pending',
+      expiryTimer: expiryTimer  // ✅ Store timer ID!
+    });
 
     // WhatsApp link
     const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
@@ -582,6 +583,13 @@ app.post('/webhook', async (req, res) => {
     }
 
     const code = codeMatch[1].toUpperCase();
+
+    // ✅ Check for post-deletion duplicates BEFORE sessions.get()
+    if (recentlySentCodes.has(code)) {
+      console.log(`Duplicate for sent code: ${code} — ignored!`);
+      return res.sendStatus(200); // ✅ Silent ignore
+    }
+
     const session = sessions.get(code);
 
     if (!session) {
@@ -613,56 +621,69 @@ app.post('/webhook', async (req, res) => {
       'Please wait a moment! 🎬'
     );
 
-    // Send each video
-    for (let i = 0; i < session.files.length; i++) {
-      const file = session.files[i];
-      const isMultiple = session.files.length > 1;
+    // ✅ FIX — wrap send loop in try/finally
+    try {
+      for (let i = 0; i < session.files.length; i++) {
+        const file = session.files[i];
+        const isMultiple = session.files.length > 1;
 
-      await sendWhatsAppVideo(
-        from,
-        file.url,
-        `🎬 ${isMultiple ? `Status Part ${i + 1}/${session.files.length}` : 'HD Status Video'}\n\n` +
-        `✅ How to post as Status:\n` +
-        `1. Tap & hold this video\n` +
-        `2. Tap "Forward"\n` +
-        `3. Select "My Status"\n` +
-        `4. Done! 🎉\n\n` +
-        `Powered by StatusDrop 💚`
-      );
+        await sendWhatsAppVideo(
+          from,
+          file.url,
+          `🎬 ${isMultiple ? `Status Part ${i + 1}/${session.files.length}` : 'HD Status Video'}\n\n` +
+          `✅ How to post as Status:\n` +
+          `1. Tap & hold this video\n` +
+          `2. Tap "Forward"\n` +
+          `3. Select "My Status"\n` +
+          `4. Done! 🎉\n\n` +
+          `Powered by StatusDrop 💚`
+        );
 
-      // Delay between videos
-      if (i < session.files.length - 1) {
-        await new Promise(r => setTimeout(r, 1500));
+        if (i < session.files.length - 1) {
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+    } finally {
+      // ✅ ALWAYS clean R2, even if send fails
+      for (const file of session.files) {
+        try {
+          await deleteFromR2(file.fileName);
+          console.log(`R2 deleted after send: ${file.fileName}`);
+        } catch (err) {
+          console.error('R2 delete error:', err.message);
+        }
       }
     }
 
-    // ✅ Delete from R2 immediately after videos sent!
-    for (const file of session.files) {
-      try {
-        await deleteFromR2(file.fileName);
-        console.log(`R2 deleted after send: ${file.fileName}`);
-      } catch (err) {
-        console.error('R2 delete error:', err.message);
-      }
+    // ✅ Cancel original expiry timer!
+    if (session.expiryTimer) {
+      clearTimeout(session.expiryTimer);
+      console.log(`Original timer cancelled for: ${code}`);
     }
 
-    // ✅ Mark as sent but keep session for 5 mins
-    // Handles duplicate webhooks from Meta!
+    // ✅ Start NEW 5 min timer from send time
+    const newTimer = setTimeout(() => {
+      sessions.delete(code);
+      console.log(`Session cleaned after send: ${code}`);
+    }, 300000);
+
     session.status = 'sent';
-    session.files = []; // Clear files (already deleted from R2)
+    session.files = [];           // R2 already deleted
+    session.createdAt = Date.now(); // Reset for setInterval
+    session.expiryTimer = newTimer; // ✅ Store new timer
     sessions.set(code, session);
 
-    // Delete session after 5 minutes
+    // ✅ Track sent code to silently ignore post-deletion duplicates
+    recentlySentCodes.add(code);
     setTimeout(() => {
-      sessions.delete(code);
-      console.log(`Session ${code} fully cleaned up!`);
-    }, 300000); // 5 minutes
+      recentlySentCodes.delete(code);
+    }, 600000); // Keep for 10 mins
 
     res.sendStatus(200);
 
   } catch (error) {
     console.error('Webhook error:', error);
-    res.sendStatus(500);
+    res.sendStatus(200);
   }
 });
 
