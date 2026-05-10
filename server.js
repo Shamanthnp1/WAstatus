@@ -30,7 +30,16 @@ ffmpeg.setFfprobePath(ffprobePath);
 // ========================
 // MIDDLEWARE
 // ========================
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://wastatusvideo.com',
+    'https://www.wastatusvideo.com',
+    'https://wastatus-sigma.vercel.app',
+    'http://localhost:3000'
+  ],
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -577,7 +586,7 @@ app.post('/webhook', async (req, res) => {
         from,
         '👋 Welcome to StatusDrop!\n\n' +
         'Please visit our website to compress and receive your HD videos!\n\n' +
-        '🌐 wastatus-production.up.railway.app'
+        '🌐 https://wastatusvideo.com'
       );
       return res.sendStatus(200);
     }
