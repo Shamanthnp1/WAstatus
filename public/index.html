@@ -1602,7 +1602,7 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
     }
 
     function animateProgress() {
-      const hasLargeFile = files.some(f => f.size > LONG_VIDEO_THRESHOLD);
+      const hasLargeFile = false;
 
       // Stage 1: Uploading to server (0→15%)
       currentProgress = 0;
