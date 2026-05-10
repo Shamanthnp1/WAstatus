@@ -1625,7 +1625,7 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
         // Stage 3: Splitting (50→70%)
         setTimeout(() => {
           targetProgress = 70;
-          setStatus('✂️', 'Splitting into 29-second WhatsApp clips...');
+          setStatus('⚙️', 'Optimizing video for WhatsApp...');
           setStep(3);
           animateToTarget();
         }, 5000);
