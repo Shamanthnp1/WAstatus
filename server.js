@@ -549,12 +549,17 @@ app.post('/webhook', async (req, res) => {
     );
 
     if (!codeMatch) {
-      await sendWhatsAppMessage(
-        from,
-        '👋 Welcome to StatusDrop!\n\n' +
-        'Please visit our website to compress and receive your HD videos!\n\n' +
-        '🌐 https://wastatusvideo.com'
-      );
+      try {
+        await sendWhatsAppMessage(
+          from,
+          '👋 Welcome to StatusDrop!\n\n' +
+          'Please visit our website to compress and receive your HD videos!\n\n' +
+          '🌐 https://wastatusvideo.com'
+        );
+      } catch (err) {
+        console.error('Failed welcome message:', err.message);
+      }
+
       return res.sendStatus(200);
     }
 
@@ -569,11 +574,16 @@ app.post('/webhook', async (req, res) => {
     const session = sessions.get(code);
 
     if (!session) {
-      await sendWhatsAppMessage(
-        from,
-        '❌ Invalid or expired code!\n\n' +
-        'Please compress your video again at our website.'
-      );
+      try {
+        await sendWhatsAppMessage(
+          from,
+          '❌ Invalid or expired code!\n\n' +
+          'Please compress your video again at our website.'
+        );
+      } catch (err) {
+        console.error('Failed to send expired message:', err.message);
+      }
+
       return res.sendStatus(200);
     }
 
@@ -589,13 +599,17 @@ app.post('/webhook', async (req, res) => {
     sessions.set(code, session);
 
     // Send confirmation
-    await sendWhatsAppMessage(
-      from,
-      '✅ Code verified!\n\n' +
-      `Sending ${session.files.length} video${session.files.length > 1 ? 's' : ''} now...\n\n` +
-      (session.files.length > 1 ? `📱 Your video was split into ${session.files.length} parts for WhatsApp Status!\n\n` : '') +
-      'Please wait a moment! 🎬'
-    );
+    try {
+      await sendWhatsAppMessage(
+        from,
+        '✅ Code verified!\n\n' +
+        `Sending ${session.files.length} video${session.files.length > 1 ? 's' : ''} now...\n\n` +
+        (session.files.length > 1 ? `📱 Your video was split into ${session.files.length} parts for WhatsApp Status!\n\n` : '') +
+        'Please wait a moment! 🎬'
+      );
+    } catch (err) {
+      console.error('Failed code verified message:', err.message);
+    }
 
     // ✅ FIX — wrap send loop in try/finally
     try {
