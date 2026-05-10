@@ -1644,7 +1644,7 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
         // Stage 4b: Still uploading
         setTimeout(() => {
           if (currentProgress < 90) {
-            setStatus('☁️', 'Almost there... finalizing upload...');
+            setStatus('☁️', 'uploading... Usually Takes 5 mins.');
           }
         }, 14000);
 
@@ -1677,6 +1677,14 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
       targetProgress = 100;
       updateProgressBar(100);
       setStatus('✅', 'Done! Your videos are ready!');
+      if (fileCount > files.length) {
+        document.getElementById('step3Indicator')
+          .classList.remove('skipped');
+
+        document.getElementById('step3Indicator')
+          .classList.add('done');
+      }
+
       setStep(5);
 
       // Green glow on complete
