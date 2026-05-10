@@ -1439,7 +1439,7 @@
       for (const file of newFiles) {
         const totalSize = files.reduce((s, f) => s + f.size, 0);
         if (totalSize + file.size > MAX_SIZE) {
-          alert(`Cannot add ${file.name}!\nTotal size would exceed 200MB!`);
+          alert(`Cannot add ${file.name}!\nTotal size would exceed 300MB!`);
           break;
         }
         files.push(file);
