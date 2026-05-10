@@ -748,10 +748,6 @@
       opacity: 1;
     }
 
-    .step-indicator.skipped {
-      opacity: 0.15;  /* Very faded — clearly not relevant */
-    }
-
     .step-dot {
       width: 10px;
       height: 10px;
@@ -770,12 +766,6 @@
       background: #25D366;
     }
 
-    .step-indicator.skipped .step-dot {
-      background: #222;
-      box-shadow: none;
-      animation: none;
-    }
-
     .step-indicator span {
       font-size: 10px;
       color: #444;
@@ -788,10 +778,6 @@
 
     .step-indicator.done span {
       color: #128C7E;
-    }
-
-    .step-indicator.skipped span {
-      color: #333;
     }
 
     @keyframes dotPulse {
@@ -1038,7 +1024,7 @@
             </div>
             <div id="step3Indicator" class="step-indicator">
               <div class="step-dot"></div>
-              <span>Split</span>
+              <span>Optimize</span>
             </div>
             <div id="step4Indicator" class="step-indicator">
               <div class="step-dot"></div>
@@ -1579,18 +1565,10 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
     }
 
     function setStep(stepNum) {
-      const hasLargeFile = fileCount > files.length;
-
       for (let i = 1; i <= 5; i++) {
         const el = document.getElementById(`step${i}Indicator`);
         if (!el) continue;
         el.classList.remove('active', 'done', 'skipped');
-
-        // ✅ For short videos — step 3 (Split) is skipped
-        if (!hasLargeFile && i === 3) {
-          el.classList.add('skipped');
-          continue;
-        }
 
         if (i < stepNum) el.classList.add('done');
         if (i === stepNum) el.classList.add('active');
