@@ -345,6 +345,8 @@
       display: flex;
       align-items: center;
       gap: 12px;
+      flex-wrap: nowrap;
+      overflow: hidden;
       animation: slideIn 0.3s ease;
     }
 
@@ -365,21 +367,10 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 300px;
+      max-width: 140px;
     }
 
     .file-size { font-size: 12px; color: var(--grey); }
-
-    /* NEW — split hint badge on file */
-    .file-split-hint {
-      background: #0d3d0d;
-      border: 1px solid var(--dark-green);
-      color: var(--green);
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 10px;
-      white-space: nowrap;
-    }
 
     .file-remove {
       background: none;
@@ -390,6 +381,7 @@
       padding: 4px;
       border-radius: 4px;
       transition: color 0.2s;
+      flex-shrink: 0;
     }
 
     .file-remove:hover { color: #ff4444; }
@@ -732,6 +724,7 @@
       .hero h1 { font-size: 32px; }
       .code-value { font-size: 28px; letter-spacing: 4px; }
       .share-buttons { flex-direction: column; }
+      .file-name { max-width: 120px; }
     }
 
     /* Step indicators */
@@ -1469,7 +1462,6 @@
       compressBtn.disabled = false;
 
       container.innerHTML = files.map((file, index) => {
-        const isLarge = file.size > LONG_VIDEO_THRESHOLD;
         return `
           <div class="file-item">
             <div class="file-icon">🎬</div>
@@ -1477,7 +1469,6 @@
               <div class="file-name">${file.name}</div>
               <div class="file-size">${formatSize(file.size)}</div>
             </div>
-            ${isLarge ? `<span class="file-split-hint">✂️ Will be split</span>` : ''}
             <button class="file-remove" onclick="removeFile(${index})">✕</button>
           </div>
         `;
@@ -1585,7 +1576,7 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
     }
 
     function setStep(stepNum) {
-      const hasLargeFile = files.some(f => f.size > LONG_VIDEO_THRESHOLD);
+      const hasLargeFile = fileCount > files.length;
 
       for (let i = 1; i <= 5; i++) {
         const el = document.getElementById(`step${i}Indicator`);
