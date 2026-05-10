@@ -1568,7 +1568,7 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
       for (let i = 1; i <= 5; i++) {
         const el = document.getElementById(`step${i}Indicator`);
         if (!el) continue;
-        el.classList.remove('active', 'done', 'skipped');
+        el.classList.remove('active', 'done');
 
         if (i < stepNum) el.classList.add('done');
         if (i === stepNum) el.classList.add('active');
