@@ -226,86 +226,53 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
 // Compress single video (for short videos under 29s)
 function compressVideo(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
+
     ffmpeg.ffprobe(inputPath, (err, metadata) => {
       if (err) return reject(err);
 
       const duration = metadata.format.duration;
-      if (!duration || Number.isNaN(duration)) {
-        return reject(new Error('Could not read video duration'));
-      }
 
-      const targetSizeMB = 15; // 1MB buffer from WhatsApp's 16MB limit
-      const audioBitrateK = 192;
-      const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
-      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
-      const passLogBase = `ffmpeg2pass_${uuidv4()}`;
-      const nullOutput = process.platform === 'win32' ? 'NUL' : '/dev/null';
+      const targetSizeMB = 15;
+      const audioBitrateK = 128;
 
-      const cleanupPassLogs = () => {
-        [`${passLogBase}-0.log`, `${passLogBase}-0.log.mbtree`].forEach((file) => {
-          if (fs.existsSync(file)) fs.unlinkSync(file);
-        });
-      };
+      const totalBitrateK =
+        (targetSizeMB * 8 * 1024) / duration;
 
-      const videoOptions = [
-        '-c:v libx264',
-        `-b:v ${videoBitrateK}k`,
-        `-maxrate ${videoBitrateK}k`,
-        `-bufsize ${videoBitrateK * 2}k`,
-        '-profile:v high',
-        '-level 4.1',
-        '-pix_fmt yuv420p',
-        '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-        '-passlogfile',
-        passLogBase,
-      ];
-      const audioOptions = [
-        '-c:a aac',
-        `-b:a ${audioBitrateK}k`,
-        '-ar 44100',
-      ];
-
-      console.log(`Duration: ${duration.toFixed(1)}s`);
-      console.log(`Target size: ${targetSizeMB}MB`);
-      console.log(`Video bitrate: ${videoBitrateK}kbps`);
-      console.log(`Audio bitrate: ${audioBitrateK}kbps`);
+      const videoBitrateK =
+        Math.floor(totalBitrateK - audioBitrateK);
 
       ffmpeg(inputPath)
         .outputOptions([
-          ...videoOptions,
-          '-pass 1',
-          '-an',
-          '-f null',
+          '-c:v libx264',
+          `-b:v ${videoBitrateK}k`,
+          `-maxrate ${videoBitrateK}k`,
+          `-bufsize ${videoBitrateK * 2}k`,
+          '-preset veryfast',
+          '-profile:v high',
+          '-level 4.1',
+          '-pix_fmt yuv420p',
+          '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+
+          '-c:a aac',
+          `-b:a ${audioBitrateK}k`,
+          '-ar 44100',
+
+          '-movflags faststart'
         ])
-        .output(nullOutput)
-        .on('start', () => console.log('Compression pass 1 started...'))
+
+        .output(outputPath)
+
+        .on('start', () => {
+          console.log('Compression started...');
+        })
+
         .on('end', () => {
-          ffmpeg(inputPath)
-            .outputOptions([
-              ...videoOptions,
-              ...audioOptions,
-              '-movflags faststart',
-              '-pass 2',
-            ])
-            .output(outputPath)
-            .on('start', () => console.log('Compression pass 2 started...'))
-            .on('end', () => {
-              const outputStats = fs.statSync(outputPath);
-              const outputSizeMB = outputStats.size / (1024 * 1024);
-              console.log(`Final size: ${outputSizeMB.toFixed(2)}MB / 16MB`);
-              cleanupPassLogs();
-              resolve();
-            })
-            .on('error', (error) => {
-              cleanupPassLogs();
-              reject(error);
-            })
-            .run();
+          console.log('Compression complete!');
+          resolve();
         })
-        .on('error', (error) => {
-          cleanupPassLogs();
-          reject(error);
-        })
+
+        .on('error', reject)
+
         .run();
     });
   });
