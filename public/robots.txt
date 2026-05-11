@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://wastatusvideo.com/sitemap.xml
+Sitemap: https://www.wastatusvideo.com/sitemap.xml
