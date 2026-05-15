@@ -420,97 +420,84 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
     const activationCode = generateCode();
     const r2Files = [];
 
-    // STEP 1: Process all videos — collect local paths first
-    const pendingUploads = [];
+    // STEP 1 + 2 COMBINED: Compress AND upload in parallel pipeline
+    console.log(`Processing ${req.files.length} file(s) in parallel...`);
 
-    for (const file of req.files) {
-      try {
-        console.log(
-          `Processing: ${file.originalname} ` +
-          `(${(file.size / 1024 / 1024).toFixed(1)}MB)`
-        );
-
-        const duration = await getVideoDuration(file.path);
-
-        if (duration <= 29) {
-          // SHORT VIDEO — compress directly
-          console.log('Short video — compressing...');
-          const outputFileName = `compressed_${uuidv4()}.mp4`;
-          const outputPath = path.join('compressed', outputFileName);
-
-          const compressStart = Date.now();
-          await compressVideo(file.path, outputPath);
-          const compressDuration = ((Date.now() - compressStart) / 1000).toFixed(2);
-          console.log(`✅ Compression took ${compressDuration}s`);
-
-          // Queue for parallel upload
-          pendingUploads.push({
-            filePath: outputPath,
-            fileName: outputFileName
-          });
-
-        } else {
-          // LONG VIDEO — split into chunks
+    const allGroupResults = await Promise.all(
+      req.files.map(async (file) => {
+        try {
           console.log(
-            `Long video (${duration.toFixed(1)}s) — splitting into chunks...`
+            `Processing: ${file.originalname} ` +
+            `(${(file.size / 1024 / 1024).toFixed(1)}MB)`
           );
-          const splitStart = Date.now();
-          const chunkPaths = await splitVideo(file.path, 'compressed', 29);
-          const splitDuration = ((Date.now() - splitStart) / 1000).toFixed(2);
-          console.log(`✅ Split took ${splitDuration}s (${chunkPaths.length} chunks)`);
 
-          for (const chunkPath of chunkPaths) {
-            // Queue ALL chunks for parallel upload
-            pendingUploads.push({
-              filePath: chunkPath,
-              fileName: path.basename(chunkPath)
-            });
+          const duration = await getVideoDuration(file.path);
+
+          if (duration <= 29) {
+            // SHORT VIDEO — compress then upload immediately
+            console.log('Short video — compressing...');
+            const outputFileName = `compressed_${uuidv4()}.mp4`;
+            const outputPath = path.join('compressed', outputFileName);
+
+            await compressVideo(file.path, outputPath);
+
+            console.log(`Uploading ${outputFileName} to R2...`);
+
+            const url = await uploadToR2(outputPath, outputFileName);
+
+            if (fs.existsSync(outputPath)) {
+              fs.unlinkSync(outputPath);
+            }
+
+            console.log(`R2 upload done: ${outputFileName} ✅`);
+
+            return [{ fileName: outputFileName, url }];
+
+          } else {
+            // LONG VIDEO — split into chunks
+            console.log(
+              `Long video (${duration.toFixed(1)}s) — splitting into chunks...`
+            );
+            const chunkPaths = await splitVideo(file.path, 'compressed', 29);
+
+            console.log(
+              `Uploading ${chunkPaths.length} chunks to R2 in parallel...`
+            );
+
+            const chunkResults = await Promise.all(
+              chunkPaths.map(async (chunkPath) => {
+                const chunkFileName = path.basename(chunkPath);
+
+                const url = await uploadToR2(chunkPath, chunkFileName);
+
+                if (fs.existsSync(chunkPath)) {
+                  fs.unlinkSync(chunkPath);
+                }
+
+                console.log(`R2 chunk upload done: ${chunkFileName} ✅`);
+
+                return { fileName: chunkFileName, url };
+              })
+            );
+
+            return chunkResults;
+          }
+
+        } finally {
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
           }
         }
-
-      } finally {
-        // Always clean up original upload immediately
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      }
-    }
-
-    // STEP 2: Upload ALL files to R2 in parallel
-    console.log(
-      `Uploading ${pendingUploads.length} file(s) to R2 in parallel...`
+      })
     );
 
-    try {
-      const uploadResults = await Promise.all(
-        pendingUploads.map(({ filePath, fileName }) =>
-          uploadToR2(filePath, fileName).then(url => ({
-            fileName,
-            url
-          }))
-        )
-      );
-
-      // Order is preserved by Promise.all
-      for (const { fileName, url } of uploadResults) {
+    for (const group of allGroupResults) {
+      for (const { fileName, url } of group) {
         r2Files.push({ fileName, url });
-        console.log(`R2 upload done: ${fileName}`);
-      }
-
-      console.log(`All ${r2Files.length} file(s) uploaded! ✅`);
-
-    } finally {
-      // Clean up ALL local files regardless of upload success/failure
-      for (const { filePath } of pendingUploads) {
-        if (fs.existsSync(filePath)) {
-          try {
-            fs.unlinkSync(filePath);
-          } catch (err) {
-            console.error(`Failed to delete: ${filePath}`, err.message);
-          }
-        }
       }
     }
+
+    console.log(`All ${r2Files.length} file(s) uploaded to R2! ✅`);
 
     // ✅ Store timer ID in session!
     const expiryTimer = setTimeout(async () => {
