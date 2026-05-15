@@ -174,47 +174,59 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
       console.log(`Video bitrate: ${videoBitrateK}kbps`);
       console.log(`Audio bitrate: ${audioBitrateK}kbps`);
 
-      const chunkPaths = [];
-
+      // Build chunk list first
+      const chunks = [];
       for (let i = 0; i < totalChunks; i++) {
         const startTime = i * chunkDuration;
         const chunkFileName = `chunk_${uuidv4()}.mp4`;
         const chunkPath = path.join(outputDir, chunkFileName);
-
-        await new Promise((res, rej) => {
-          ffmpeg(inputPath)
-            .setStartTime(startTime)
-            .setDuration(chunkDuration)
-            .outputOptions([
-              '-c:v libx264',
-              `-b:v ${videoBitrateK}k`,
-              `-maxrate ${videoBitrateK}k`,
-              `-bufsize ${videoBitrateK * 2}k`,
-              '-profile:v high',
-              '-level 4.1',
-              '-c:a aac',
-              `-b:a ${audioBitrateK}k`,
-              '-ar 44100',
-              '-movflags faststart',
-              '-pix_fmt yuv420p',
-              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-            ])
-            .output(chunkPath)
-            .on('start', () => console.log(`Chunk ${i + 1}/${totalChunks} started...`))
-            .on('end', () => {
-              const stats = fs.statSync(chunkPath);
-              const sizeMB = stats.size / (1024 * 1024);
-              console.log(`Chunk ${i + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
-              chunkPaths.push(chunkPath);
-              res();
-            })
-            .on('error', (err) => {
-              console.error(`Chunk ${i + 1} error:`, err);
-              rej(err);
-            })
-            .run();
-        });
+        chunks.push({ index: i, startTime, chunkPath });
       }
+
+      // ✅ Encode ALL chunks in parallel
+      const chunkPaths = await Promise.all(
+        chunks.map(({ index, startTime, chunkPath }) =>
+          new Promise((res, rej) => {
+            ffmpeg(inputPath)
+              .setStartTime(startTime)
+              .setDuration(chunkDuration)
+              .outputOptions([
+                '-c:v libx264',
+                `-b:v ${videoBitrateK}k`,
+                `-maxrate ${videoBitrateK}k`,
+                `-bufsize ${videoBitrateK * 2}k`,
+                '-profile:v high',
+                '-level 4.1',
+                '-c:a aac',
+                `-b:a ${audioBitrateK}k`,
+                '-ar 44100',
+                '-movflags faststart',
+                '-pix_fmt yuv420p',
+                '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+              ])
+              .output(chunkPath)
+              .on('start', () =>
+                console.log(`Chunk ${index + 1}/${totalChunks} started...`)
+              )
+              .on('end', () => {
+                const stats = fs.statSync(chunkPath);
+                const sizeMB = stats.size / (1024 * 1024);
+                console.log(
+                  `Chunk ${index + 1}/${totalChunks} done! ` +
+                  `Size: ${sizeMB.toFixed(2)}MB`
+                );
+                res(chunkPath);
+              })
+              .on('error', (err) => {
+                console.error(`Chunk ${index + 1} error:`, err);
+                rej(err);
+              })
+              .run();
+          })
+        )
+      );
+      // ✅ Promise.all returns [chunk1path, chunk2path, chunk3path]
+      // Order is guaranteed — chunk 1 stays index 0 always
 
       resolve(chunkPaths);
     } catch (err) {
