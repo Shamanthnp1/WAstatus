@@ -1623,7 +1623,7 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
         // Stage 4b: Still uploading
         setTimeout(() => {
           if (currentProgress < 90) {
-            setStatus('☁️', 'uploading... Usually may Take 3 Mins.');
+            setStatus('☁️', 'uploading.. Usually less than 2 Mins.');
           }
         }, 14000);
 
@@ -1643,7 +1643,7 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
         setTimeout(() => {
           if (currentProgress < 88) {
             targetProgress = 88;
-            setStatus('☁️', 'uploading... Usually may Take 3 Mins.');
+            setStatus('☁️', 'uploading.. Usually less than 2 Mins.');
             animateToTarget();
           }
         }, 9000);
