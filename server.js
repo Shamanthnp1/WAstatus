@@ -281,6 +281,7 @@ function compressVideo(inputPath, outputPath) {
 // Upload to Cloudflare R2
 async function uploadToR2(filePath, fileName) {
   try {
+    const r2Start = Date.now();
     console.log(`Uploading to R2: ${fileName}`);
     const fileContent = fs.readFileSync(filePath);
     const command = new PutObjectCommand({
@@ -291,7 +292,8 @@ async function uploadToR2(filePath, fileName) {
     });
     await r2Client.send(command);
     const publicUrl = `${process.env.R2_PUBLIC_URL}/${fileName}`;
-    console.log('R2 Upload success! ✅', publicUrl);
+    const r2Duration = ((Date.now() - r2Start) / 1000).toFixed(2);
+    console.log(`R2 Upload success! ✅ (${r2Duration}s) ${publicUrl}`);
     return publicUrl;
   } catch (error) {
     console.error('R2 Upload Error:', error.message);
@@ -432,7 +434,10 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
           const outputFileName = `compressed_${uuidv4()}.mp4`;
           const outputPath = path.join('compressed', outputFileName);
 
+          const compressStart = Date.now();
           await compressVideo(file.path, outputPath);
+          const compressDuration = ((Date.now() - compressStart) / 1000).toFixed(2);
+          console.log(`✅ Compression took ${compressDuration}s`);
 
           const publicUrl = await uploadToR2(outputPath, outputFileName);
           r2Files.push({ fileName: outputFileName, url: publicUrl });
@@ -441,7 +446,10 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
         } else {
           // LONG VIDEO — split into 29s chunks
           console.log(`Long video (${duration.toFixed(1)}s) — splitting into chunks...`);
+          const splitStart = Date.now();
           const chunkPaths = await splitVideo(file.path, 'compressed', 29);
+          const splitDuration = ((Date.now() - splitStart) / 1000).toFixed(2);
+          console.log(`✅ Split took ${splitDuration}s (${chunkPaths.length} chunks)`);
 
           for (const chunkPath of chunkPaths) {
             const chunkFileName = path.basename(chunkPath);
@@ -612,10 +620,12 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ✅ FIX — wrap send loop in try/finally
+    const waStartTime = Date.now();
     try {
       for (let i = 0; i < session.files.length; i++) {
         const file = session.files[i];
         const isMultiple = session.files.length > 1;
+        const videoSendStart = Date.now();
 
         await sendWhatsAppVideo(
           from,
@@ -628,11 +638,16 @@ app.post('/webhook', async (req, res) => {
           `4. Done! 🎉\n\n` +
           `Powered by StatusDrop 💚`
         );
+        
+        const videoSendDuration = ((Date.now() - videoSendStart) / 1000).toFixed(2);
+        console.log(`✅ WhatsApp video ${i + 1}/${session.files.length} sent (${videoSendDuration}s)`);
 
         if (i < session.files.length - 1) {
           await new Promise(r => setTimeout(r, 1500));
         }
       }
+      const totalWaDuration = ((Date.now() - waStartTime) / 1000).toFixed(2);
+      console.log(`✅ All WhatsApp sends completed (${totalWaDuration}s total)`);
     } finally {
       // ✅ ALWAYS clean R2, even if send fails
       for (const file of session.files) {
