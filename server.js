@@ -195,6 +195,7 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
                 `-b:v ${videoBitrateK}k`,
                 `-maxrate ${videoBitrateK}k`,
                 `-bufsize ${videoBitrateK * 2}k`,
+                '-preset ultrafast',
                 '-profile:v high',
                 '-level 4.1',
                 '-c:a aac',
