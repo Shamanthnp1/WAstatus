@@ -111,13 +111,23 @@
   }
   </script>
 
-  <!-- Google Analytics -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-SFFCBRYRH1"></script>
+  <!-- ✅ Delayed GA — better page speed score -->
   <script>
     window.dataLayer = window.dataLayer || [];
     function gtag() { dataLayer.push(arguments); }
-    gtag('js', new Date());
-    gtag('config', 'G-SFFCBRYRH1');
+
+    setTimeout(() => {
+      const script = document.createElement('script');
+      script.src =
+        'https://www.googletagmanager.com/gtag/js?id=G-SFFCBRYRH1';
+      script.async = true;
+      document.head.appendChild(script);
+
+      script.onload = () => {
+        gtag('js', new Date());
+        gtag('config', 'G-SFFCBRYRH1');
+      };
+    }, 3000);
   </script>
 
   <style>
@@ -858,6 +868,10 @@
       100% { transform: translateX(200%); }
     }
   </style>
+  <!-- ✅ Preconnect — browser connects early -->
+  <link rel="preconnect" href="https://api.wastatusvideo.com"/>
+  <link rel="preconnect" href="https://www.googletagmanager.com"/>
+  <link rel="dns-prefetch" href="https://www.googletagmanager.com"/>
 </head>
 <body>
 
