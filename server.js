@@ -9,12 +9,14 @@ const ffmpegStatic = require('ffmpeg-static');
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const compression = require('compression');
 require('dotenv').config();
 
 // ========================
 // APP SETUP
 // ========================
 const app = express();
+app.use(compression());
 const PORT = process.env.PORT || 3000;
 
 app.set('trust proxy', 1);
