@@ -196,68 +196,14 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
         chunks.push({ index: i, startTime, chunkPath });
       }
 
-      // ✅ Smart parallel vs sequential based on file size
-      const inputSizeMB = fs.statSync(inputPath).size / (1024 * 1024);
-      const useParallel = inputSizeMB < 150; // parallel only under 150MB
-
+      // ✅ Always parallel — Railway 8GB RAM handles this easily
       console.log(
-        `File size: ${inputSizeMB.toFixed(1)}MB — ` +
-        `using ${useParallel ? 'PARALLEL' : 'SEQUENTIAL'} encoding`
+        `Encoding ${totalChunks} chunks in parallel...`
       );
 
-      let chunkPaths = [];
-
-      if (useParallel) {
-        // ── PARALLEL — small files only ──────────────
-        chunkPaths = await Promise.all(
-          chunks.map(({ index, startTime, chunkPath }) =>
-            new Promise((res, rej) => {
-              ffmpeg(inputPath)
-                .setStartTime(startTime)
-                .setDuration(chunkDuration)
-                .outputOptions([
-                  '-c:v libx264',
-                  `-b:v ${videoBitrateK}k`,
-                  `-maxrate ${videoBitrateK}k`,
-                  `-bufsize ${videoBitrateK * 2}k`,
-                  '-preset ultrafast',
-                  '-profile:v high',
-                  '-level 4.1',
-                  '-c:a aac',
-                  `-b:a ${audioBitrateK}k`,
-                  '-ar 44100',
-                  '-movflags faststart',
-                  '-pix_fmt yuv420p',
-                  '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                ])
-                .output(chunkPath)
-                .on('start', () =>
-                  console.log(
-                    `Chunk ${index + 1}/${totalChunks} started (parallel)...`
-                  )
-                )
-                .on('end', () => {
-                  const stats = fs.statSync(chunkPath);
-                  const sizeMB = stats.size / (1024 * 1024);
-                  console.log(
-                    `Chunk ${index + 1}/${totalChunks} done! ` +
-                    `Size: ${sizeMB.toFixed(2)}MB`
-                  );
-                  res(chunkPath);
-                })
-                .on('error', (err) => {
-                  console.error(`Chunk ${index + 1} error:`, err);
-                  rej(err);
-                })
-                .run();
-            })
-          )
-        );
-
-      } else {
-        // ── SEQUENTIAL — large files to save RAM ─────
-        for (const { index, startTime, chunkPath } of chunks) {
-          await new Promise((res, rej) => {
+      const chunkPaths = await Promise.all(
+        chunks.map(({ index, startTime, chunkPath }) =>
+          new Promise((res, rej) => {
             ffmpeg(inputPath)
               .setStartTime(startTime)
               .setDuration(chunkDuration)
@@ -279,7 +225,7 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
               .output(chunkPath)
               .on('start', () =>
                 console.log(
-                  `Chunk ${index + 1}/${totalChunks} started (sequential)...`
+                  `Chunk ${index + 1}/${totalChunks} started...`
                 )
               )
               .on('end', () => {
@@ -289,19 +235,16 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
                   `Chunk ${index + 1}/${totalChunks} done! ` +
                   `Size: ${sizeMB.toFixed(2)}MB`
                 );
-                chunkPaths.push(chunkPath);
-                res();
+                res(chunkPath);
               })
               .on('error', (err) => {
                 console.error(`Chunk ${index + 1} error:`, err);
                 rej(err);
               })
               .run();
-          });
-        }
-      }
-
-      resolve(chunkPaths);
+          })
+        )
+      );
     } catch (err) {
       reject(err);
     }
@@ -526,14 +469,11 @@ app.post('/api/compress', limiter, upload.array('videos', 3), async (req, res) =
     const activationCode = generateCode();
     const r2Files = [];
 
-    // STEP 1 + 2 COMBINED: Videos sequential, chunks upload parallel
-    console.log(`Processing ${req.files.length} file(s)...`);
+    // STEP 1 + 2: ALL videos in parallel — 8GB RAM allows this!
+    console.log(`Processing ${req.files.length} file(s) in parallel...`);
 
-    const allGroupResults = [];
-
-    // ✅ Process each video ONE AT A TIME — prevents RAM overload
-    for (const file of req.files) {
-      const groupResult = await (async () => {
+    const allGroupResults = await Promise.all(
+      req.files.map(async (file) => {
         try {
           console.log(
             `Processing: ${file.originalname} ` +
@@ -543,14 +483,13 @@ app.post('/api/compress', limiter, upload.array('videos', 3), async (req, res) =
           const duration = await getVideoDuration(file.path);
 
           if (duration <= 29) {
-            // SHORT VIDEO — compress then upload immediately
+            // SHORT VIDEO
             console.log('Short video — compressing...');
             const outputFileName = `compressed_${uuidv4()}.mp4`;
             const outputPath = path.join('compressed', outputFileName);
 
             await compressVideo(file.path, outputPath);
 
-            console.log(`Uploading ${outputFileName} to R2...`);
             const url = await uploadToR2(outputPath, outputFileName);
 
             if (fs.existsSync(outputPath)) {
@@ -573,8 +512,6 @@ app.post('/api/compress', limiter, upload.array('videos', 3), async (req, res) =
               `Uploading ${chunkPaths.length} chunks to R2 in parallel...`
             );
 
-            // ✅ Chunks upload in parallel — safe because
-            // chunks are small compressed files not raw video
             const chunkResults = await Promise.all(
               chunkPaths.map(async (chunkPath) => {
                 const chunkFileName = path.basename(chunkPath);
@@ -589,22 +526,18 @@ app.post('/api/compress', limiter, upload.array('videos', 3), async (req, res) =
               })
             );
 
-            // Order preserved by Promise.all ✅
             return chunkResults;
           }
 
         } finally {
-          // Always clean original upload
           if (fs.existsSync(file.path)) {
             fs.unlinkSync(file.path);
           }
         }
-      })();
+      })
+    );
 
-      allGroupResults.push(groupResult);
-    }
-
-    // Flatten keeping order within each video group
+    // Flatten keeping order
     for (const group of allGroupResults) {
       for (const { fileName, url } of group) {
         r2Files.push({ fileName, url });
