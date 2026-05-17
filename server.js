@@ -101,7 +101,7 @@ setInterval(async () => {
 // ========================
 const limiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 10,                         // ✅ 10 uploads per day
+  max: 50,                         // ✅ 50 uploads per day
   message: {
     error: 'Daily limit reached! Try again tomorrow.'
   },
