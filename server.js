@@ -100,9 +100,17 @@ setInterval(async () => {
 // RATE LIMITING
 // ========================
 const limiter = rateLimit({
-  windowMs: 24 * 60 * 60 * 1000,
-  max: 5,
-  message: { error: 'Daily limit reached!' }
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 10,                         // ✅ 10 uploads per day
+  message: {
+    error: 'Daily limit reached! Try again tomorrow.'
+  },
+  standardHeaders: true,  // ✅ Sends limit info in headers
+  legacyHeaders: false,   // ✅ Cleaner response
+  skip: (req) => {
+    // ✅ Skip rate limit for health checks
+    return req.path === '/api/health';
+  }
 });
 
 // ========================
