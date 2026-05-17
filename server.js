@@ -499,28 +499,38 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
       return res.status(400).json({ error: 'No files uploaded!' });
     }
 
-    // ✅ Check total size — prevent RAM overload
+    // ✅ Total size check across ALL files
     const totalSizeMB = req.files.reduce(
       (sum, f) => sum + f.size, 0
     ) / (1024 * 1024);
 
-    if (totalSizeMB > 280) {
+    console.log(
+      `Total upload: ${totalSizeMB.toFixed(1)}MB ` +
+      `across ${req.files.length} file(s)`
+    );
+
+    if (totalSizeMB > 300) {
       for (const file of req.files) {
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
       }
       return res.status(400).json({
-        error: 'Total file size too large! Please upload one video at a time for files over 200MB.'
+        error:
+          `Total size ${totalSizeMB.toFixed(0)}MB exceeds 300MB! ` +
+          `Please upload fewer or smaller videos.`
       });
     }
 
     const activationCode = generateCode();
     const r2Files = [];
 
-    // STEP 1 + 2 COMBINED: Compress AND upload in parallel pipeline
-    console.log(`Processing ${req.files.length} file(s) in parallel...`);
+    // STEP 1 + 2 COMBINED: Videos sequential, chunks upload parallel
+    console.log(`Processing ${req.files.length} file(s)...`);
 
-    const allGroupResults = await Promise.all(
-      req.files.map(async (file) => {
+    const allGroupResults = [];
+
+    // ✅ Process each video ONE AT A TIME — prevents RAM overload
+    for (const file of req.files) {
+      const groupResult = await (async () => {
         try {
           console.log(
             `Processing: ${file.originalname} ` +
@@ -538,7 +548,6 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
             await compressVideo(file.path, outputPath);
 
             console.log(`Uploading ${outputFileName} to R2...`);
-
             const url = await uploadToR2(outputPath, outputFileName);
 
             if (fs.existsSync(outputPath)) {
@@ -546,24 +555,26 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
             }
 
             console.log(`R2 upload done: ${outputFileName} ✅`);
-
             return [{ fileName: outputFileName, url }];
 
           } else {
             // LONG VIDEO — split into chunks
             console.log(
-              `Long video (${duration.toFixed(1)}s) — splitting into chunks...`
+              `Long video (${duration.toFixed(1)}s) — splitting...`
             );
-            const chunkPaths = await splitVideo(file.path, 'compressed', 29);
+            const chunkPaths = await splitVideo(
+              file.path, 'compressed', 29
+            );
 
             console.log(
               `Uploading ${chunkPaths.length} chunks to R2 in parallel...`
             );
 
+            // ✅ Chunks upload in parallel — safe because
+            // chunks are small compressed files not raw video
             const chunkResults = await Promise.all(
               chunkPaths.map(async (chunkPath) => {
                 const chunkFileName = path.basename(chunkPath);
-
                 const url = await uploadToR2(chunkPath, chunkFileName);
 
                 if (fs.existsSync(chunkPath)) {
@@ -571,22 +582,26 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
                 }
 
                 console.log(`R2 chunk upload done: ${chunkFileName} ✅`);
-
                 return { fileName: chunkFileName, url };
               })
             );
 
+            // Order preserved by Promise.all ✅
             return chunkResults;
           }
 
         } finally {
+          // Always clean original upload
           if (fs.existsSync(file.path)) {
             fs.unlinkSync(file.path);
           }
         }
-      })
-    );
+      })();
 
+      allGroupResults.push(groupResult);
+    }
+
+    // Flatten keeping order within each video group
     for (const group of allGroupResults) {
       for (const { fileName, url } of group) {
         r2Files.push({ fileName, url });
