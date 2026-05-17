@@ -193,10 +193,68 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
         chunks.push({ index: i, startTime, chunkPath });
       }
 
-      // ✅ Encode ALL chunks in parallel
-      const chunkPaths = await Promise.all(
-        chunks.map(({ index, startTime, chunkPath }) =>
-          new Promise((res, rej) => {
+      // ✅ Smart parallel vs sequential based on file size
+      const inputSizeMB = fs.statSync(inputPath).size / (1024 * 1024);
+      const useParallel = inputSizeMB < 150; // parallel only under 150MB
+
+      console.log(
+        `File size: ${inputSizeMB.toFixed(1)}MB — ` +
+        `using ${useParallel ? 'PARALLEL' : 'SEQUENTIAL'} encoding`
+      );
+
+      let chunkPaths = [];
+
+      if (useParallel) {
+        // ── PARALLEL — small files only ──────────────
+        chunkPaths = await Promise.all(
+          chunks.map(({ index, startTime, chunkPath }) =>
+            new Promise((res, rej) => {
+              ffmpeg(inputPath)
+                .setStartTime(startTime)
+                .setDuration(chunkDuration)
+                .outputOptions([
+                  '-c:v libx264',
+                  `-b:v ${videoBitrateK}k`,
+                  `-maxrate ${videoBitrateK}k`,
+                  `-bufsize ${videoBitrateK * 2}k`,
+                  '-preset ultrafast',
+                  '-profile:v high',
+                  '-level 4.1',
+                  '-c:a aac',
+                  `-b:a ${audioBitrateK}k`,
+                  '-ar 44100',
+                  '-movflags faststart',
+                  '-pix_fmt yuv420p',
+                  '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                ])
+                .output(chunkPath)
+                .on('start', () =>
+                  console.log(
+                    `Chunk ${index + 1}/${totalChunks} started (parallel)...`
+                  )
+                )
+                .on('end', () => {
+                  const stats = fs.statSync(chunkPath);
+                  const sizeMB = stats.size / (1024 * 1024);
+                  console.log(
+                    `Chunk ${index + 1}/${totalChunks} done! ` +
+                    `Size: ${sizeMB.toFixed(2)}MB`
+                  );
+                  res(chunkPath);
+                })
+                .on('error', (err) => {
+                  console.error(`Chunk ${index + 1} error:`, err);
+                  rej(err);
+                })
+                .run();
+            })
+          )
+        );
+
+      } else {
+        // ── SEQUENTIAL — large files to save RAM ─────
+        for (const { index, startTime, chunkPath } of chunks) {
+          await new Promise((res, rej) => {
             ffmpeg(inputPath)
               .setStartTime(startTime)
               .setDuration(chunkDuration)
@@ -217,7 +275,9 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
               ])
               .output(chunkPath)
               .on('start', () =>
-                console.log(`Chunk ${index + 1}/${totalChunks} started...`)
+                console.log(
+                  `Chunk ${index + 1}/${totalChunks} started (sequential)...`
+                )
               )
               .on('end', () => {
                 const stats = fs.statSync(chunkPath);
@@ -226,18 +286,17 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
                   `Chunk ${index + 1}/${totalChunks} done! ` +
                   `Size: ${sizeMB.toFixed(2)}MB`
                 );
-                res(chunkPath);
+                chunkPaths.push(chunkPath);
+                res();
               })
               .on('error', (err) => {
                 console.error(`Chunk ${index + 1} error:`, err);
                 rej(err);
               })
               .run();
-          })
-        )
-      );
-      // ✅ Promise.all returns [chunk1path, chunk2path, chunk3path]
-      // Order is guaranteed — chunk 1 stays index 0 always
+          });
+        }
+      }
 
       resolve(chunkPaths);
     } catch (err) {
@@ -438,6 +497,20 @@ app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) 
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded!' });
+    }
+
+    // ✅ Check total size — prevent RAM overload
+    const totalSizeMB = req.files.reduce(
+      (sum, f) => sum + f.size, 0
+    ) / (1024 * 1024);
+
+    if (totalSizeMB > 280) {
+      for (const file of req.files) {
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      }
+      return res.status(400).json({
+        error: 'Total file size too large! Please upload one video at a time for files over 200MB.'
+      });
     }
 
     const activationCode = generateCode();
