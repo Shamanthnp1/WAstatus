@@ -986,7 +986,7 @@
         <h3>Drop Videos Here</h3>
         <p>or click to browse files</p>
         <p style="color:#888;font-size:13px;">
-          Up to 300MB · Long videos auto-split into 29s clips!
+          Max 3 videos · 300MB total · Auto-split into 29s clips!
         </p>
         <div class="upload-formats">
           <span class="format-tag">MP4</span>
@@ -1595,6 +1595,7 @@
     let activationCode = '';
     let fileCount = 0;
     const MAX_SIZE = 300 * 1024 * 1024;
+    const MAX_FILES = 3; // ✅ Add this
     const LONG_VIDEO_THRESHOLD = 30 * 1024 * 1024; // 30MB — show split hint
 
     const uploadZone = document.getElementById('uploadZone');
@@ -1623,11 +1624,26 @@
 
     function addFiles(newFiles) {
       for (const file of newFiles) {
-        const totalSize = files.reduce((s, f) => s + f.size, 0);
-        if (totalSize + file.size > MAX_SIZE) {
-          alert(`Cannot add ${file.name}!\nTotal size would exceed 300MB!`);
+
+        // ✅ Check file count
+        if (files.length >= MAX_FILES) {
+          alert(
+            `Maximum ${MAX_FILES} videos allowed!\n\n` +
+            `Remove a video first to add more.`
+          );
           break;
         }
+
+        // ✅ Check total size
+        const totalSize = files.reduce((s, f) => s + f.size, 0);
+        if (totalSize + file.size > MAX_SIZE) {
+          alert(
+            `Cannot add ${file.name}!\n` +
+            `Total size would exceed 300MB!`
+          );
+          break;
+        }
+
         files.push(file);
       }
       renderFiles();
