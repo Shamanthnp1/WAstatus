@@ -245,6 +245,8 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
           })
         )
       );
+
+      resolve(chunkPaths);
     } catch (err) {
       reject(err);
     }
