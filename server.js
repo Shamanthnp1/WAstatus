@@ -137,7 +137,10 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 300 * 1024 * 1024 }, // 300MB max
+  limits: {
+    fileSize: 300 * 1024 * 1024,  // 300MB per file
+    files: 3                        // ✅ Max 3 files
+  },
   fileFilter: fileFilter
 });
 
@@ -493,7 +496,7 @@ app.get('/privacy', (req, res) => {
 });
 
 // Upload & Compress Videos
-app.post('/api/compress', limiter, upload.array('videos', 10), async (req, res) => {
+app.post('/api/compress', limiter, upload.array('videos', 3), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded!' });
