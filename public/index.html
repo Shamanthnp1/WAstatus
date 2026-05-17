@@ -1708,10 +1708,10 @@
         const formData = new FormData();
         files.forEach(file => formData.append('videos', file));
 
-const response = await fetch(`${BACKEND_URL}/api/compress`, {
-  method: 'POST',
-  body: formData
-});
+        const response = await fetch(`${BACKEND_URL}/api/compress`, {
+          method: 'POST',
+          body: formData
+        });
 
         const data = await response.json();
 
@@ -1727,7 +1727,23 @@ const response = await fetch(`${BACKEND_URL}/api/compress`, {
 
       } catch (error) {
         clearInterval(progressInterval);
-        alert('Error: ' + error.message);
+
+        // ✅ Friendly error messages
+        if (error.message.includes('Daily limit')) {
+          alert(
+            '⚠️ Daily limit reached!\n\n' +
+            'You have used all your free uploads for today.\n' +
+            'Come back tomorrow for more! 🙏'
+          );
+        } else if (error.message.includes('429')) {
+          alert(
+            '⚠️ Too many requests!\n\n' +
+            'Please wait a moment and try again.'
+          );
+        } else {
+          alert('❌ Error: ' + error.message);
+        }
+
         document.getElementById('progressCard').style.display = 'none';
         document.getElementById('compressBtn').disabled = false;
       }
