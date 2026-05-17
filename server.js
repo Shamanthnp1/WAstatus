@@ -277,7 +277,7 @@ function compressVideo(inputPath, outputPath) {
           `-b:v ${videoBitrateK}k`,
           `-maxrate ${videoBitrateK}k`,
           `-bufsize ${videoBitrateK * 2}k`,
-          '-preset veryfast',
+          '-preset ultrafast',
           '-profile:v high',
           '-level 4.1',
           '-pix_fmt yuv420p',
