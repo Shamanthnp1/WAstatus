@@ -196,55 +196,72 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
         chunks.push({ index: i, startTime, chunkPath });
       }
 
-      // ✅ Always parallel — Railway 8GB RAM handles this easily
+      // ✅ Process chunks in batches of 4
+      // Prevents disk IO overload for long videos
+      const BATCH_SIZE = 4;
       console.log(
-        `Encoding ${totalChunks} chunks in parallel...`
+        `Encoding ${totalChunks} chunks ` +
+        `in batches of ${BATCH_SIZE}...`
       );
 
-      const chunkPaths = await Promise.all(
-        chunks.map(({ index, startTime, chunkPath }) =>
-          new Promise((res, rej) => {
-            ffmpeg(inputPath)
-              .setStartTime(startTime)
-              .setDuration(chunkDuration)
-              .outputOptions([
-                '-c:v libx264',
-                `-b:v ${videoBitrateK}k`,
-                `-maxrate ${videoBitrateK}k`,
-                `-bufsize ${videoBitrateK * 2}k`,
-                '-preset ultrafast',
-                '-profile:v high',
-                '-level 4.1',
-                '-c:a aac',
-                `-b:a ${audioBitrateK}k`,
-                '-ar 44100',
-                '-movflags faststart',
-                '-pix_fmt yuv420p',
-                '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-              ])
-              .output(chunkPath)
-              .on('start', () =>
-                console.log(
-                  `Chunk ${index + 1}/${totalChunks} started...`
+      const chunkPaths = [];
+
+      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        const batch = chunks.slice(i, i + BATCH_SIZE);
+        console.log(
+          `Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/` +
+          `${Math.ceil(chunks.length / BATCH_SIZE)} ` +
+          `(chunks ${i + 1}-${Math.min(i + BATCH_SIZE, chunks.length)})`
+        );
+
+        const batchResults = await Promise.all(
+          batch.map(({ index, startTime, chunkPath }) =>
+            new Promise((res, rej) => {
+              ffmpeg(inputPath)
+                .setStartTime(startTime)
+                .setDuration(chunkDuration)
+                .outputOptions([
+                  '-c:v libx264',
+                  `-b:v ${videoBitrateK}k`,
+                  `-maxrate ${videoBitrateK}k`,
+                  `-bufsize ${videoBitrateK * 2}k`,
+                  '-preset ultrafast',
+                  '-profile:v high',
+                  '-level 4.1',
+                  '-c:a aac',
+                  `-b:a ${audioBitrateK}k`,
+                  '-ar 44100',
+                  '-movflags faststart',
+                  '-pix_fmt yuv420p',
+                  '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                ])
+                .output(chunkPath)
+                .on('start', () =>
+                  console.log(
+                    `Chunk ${index + 1}/${totalChunks} started...`
+                  )
                 )
-              )
-              .on('end', () => {
-                const stats = fs.statSync(chunkPath);
-                const sizeMB = stats.size / (1024 * 1024);
-                console.log(
-                  `Chunk ${index + 1}/${totalChunks} done! ` +
-                  `Size: ${sizeMB.toFixed(2)}MB`
-                );
-                res(chunkPath);
-              })
-              .on('error', (err) => {
-                console.error(`Chunk ${index + 1} error:`, err);
-                rej(err);
-              })
-              .run();
-          })
-        )
-      );
+                .on('end', () => {
+                  const stats = fs.statSync(chunkPath);
+                  const sizeMB = stats.size / (1024 * 1024);
+                  console.log(
+                    `Chunk ${index + 1}/${totalChunks} done! ` +
+                    `Size: ${sizeMB.toFixed(2)}MB`
+                  );
+                  res(chunkPath);
+                })
+                .on('error', (err) => {
+                  console.error(`Chunk ${index + 1} error:`, err);
+                  rej(err);
+                })
+                .run();
+            })
+          )
+        );
+
+        // ✅ Push results in order
+        chunkPaths.push(...batchResults);
+      }
 
       resolve(chunkPaths);
     } catch (err) {
