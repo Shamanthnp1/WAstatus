@@ -1587,6 +1587,27 @@
   </footer>
 
   <script>
+  let wakeLock = null;
+
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('Screen wake lock active ✅');
+      }
+    } catch (err) {
+      console.log('Wake lock not available:', err.message);
+    }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) {
+      wakeLock.release();
+      wakeLock = null;
+      console.log('Wake lock released');
+    }
+  }
+
   // ✅ Backend URL
   const BACKEND_URL = 'https://api.wastatusvideo.com';
 
@@ -1762,7 +1783,8 @@
 
       console.log(`Uploading part ${partNumber}/${totalChunks}...`);
 
-      const etag = await uploadChunkWithProgress(
+      // ✅ Retry failed chunks up to 3 times
+      const etag = await retryChunk(
         key, uploadId, partNumber, chunk,
         (chunkPct) => {
           const baseProgress = (uploadedBytes / file.size) * 100;
@@ -1798,6 +1820,39 @@
     }
 
     console.log('Multipart upload complete ✅');
+  }
+
+  // Retry a chunk up to 3 times
+  async function retryChunk(key, uploadId, partNumber, chunk, onProgress, maxRetries = 3) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 1) {
+          console.log(`Retrying chunk ${partNumber} attempt ${attempt}/${maxRetries}...`);
+          setStatus('📤', `Retrying part ${partNumber}... (attempt ${attempt})`);
+
+          // Wait before retry: 2s, 4s, 8s
+          await new Promise(r => setTimeout(r, attempt * 2000));
+        }
+
+        const etag = await uploadChunkWithProgress(
+          key, uploadId, partNumber, chunk, onProgress
+        );
+
+        if (attempt > 1) {
+          console.log(`Chunk ${partNumber} succeeded on attempt ${attempt} ✅`);
+        }
+
+        return etag;
+
+      } catch (err) {
+        lastError = err;
+        console.warn(`Chunk ${partNumber} attempt ${attempt} failed:`, err.message);
+      }
+    }
+
+    throw new Error(`Chunk ${partNumber} failed after ${maxRetries} attempts: ${lastError.message}`);
   }
 
   function uploadChunkWithProgress(key, uploadId, partNumber, chunk, onProgress) {
@@ -1855,6 +1910,7 @@
     setStatus('\u{1F4E4}', 'Preparing upload...');
 
     try {
+      await requestWakeLock();
       const data = await uploadAndProcess(files);
 
       activationCode = data.activationCode;
@@ -1881,96 +1937,106 @@
 
       document.getElementById('progressCard').style.display = 'none';
       document.getElementById('compressBtn').disabled = false;
+    } finally {
+      releaseWakeLock();
     }
   }
 
   async function uploadAndProcess(filesToProcess) {
-    const totalFiles = filesToProcess.length;
+    // ✅ Keep screen awake during upload
+    await requestWakeLock();
 
-    setStatus('📤', 'Uploading all videos...');
-    setStep(1);
+    try {
+      const totalFiles = filesToProcess.length;
 
-    // Track progress per file
-    const progressPerFile = new Array(totalFiles).fill(0);
+      setStatus('📤', 'Uploading all videos...');
+      setStep(1);
 
-    // ── Upload ALL files in PARALLEL ──
-    const allFileInfos = await Promise.all(
-      filesToProcess.map(async (file, i) => {
+      // Track progress per file
+      const progressPerFile = new Array(totalFiles).fill(0);
 
-        showCurrentFile(file.name);
+      // ── Upload ALL files in PARALLEL ──
+      const allFileInfos = await Promise.all(
+        filesToProcess.map(async (file, i) => {
 
-        // Get upload URL
-        const urlRes = await fetch(`${BACKEND_URL}/api/upload-url`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: file.name,
-            contentType: file.type,
-            fileSize: file.size
-          })
-        });
+          showCurrentFile(file.name);
 
-        if (!urlRes.ok) {
-          const err = await urlRes.json();
-          throw new Error(err.error || 'Failed to get upload URL');
-        }
+          // Get upload URL
+          const urlRes = await fetch(`${BACKEND_URL}/api/upload-url`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: file.name,
+              contentType: file.type,
+              fileSize: file.size
+            })
+          });
 
-        const { uploadUrl, key } = await urlRes.json();
+          if (!urlRes.ok) {
+            const err = await urlRes.json();
+            throw new Error(err.error || 'Failed to get upload URL');
+          }
 
-        // Upload with progress tracking per file
-        await uploadToWorkerWithProgress(uploadUrl, file, (pct) => {
-          progressPerFile[i] = pct;
+          const { uploadUrl, key } = await urlRes.json();
 
-          // Overall = average of all files progress
-          const overall = progressPerFile.reduce((a, b) => a + b, 0) 
-            / totalFiles;
+          // Upload with progress tracking per file
+          await uploadToWorkerWithProgress(uploadUrl, file, (pct) => {
+            progressPerFile[i] = pct;
 
-          // Map 0-100% into 0-50% of total bar
-          updateProgressBar(overall * 0.5);
-          setStatus('📤', 
-            `Uploading ${totalFiles} videos... ${Math.round(overall)}%`
-          );
-        });
+            // Overall = average of all files progress
+            const overall = progressPerFile.reduce((a, b) => a + b, 0) 
+              / totalFiles;
 
-        console.log(`✅ Uploaded ${file.name}`);
+            // Map 0-100% into 0-50% of total bar
+            updateProgressBar(overall * 0.5);
+            setStatus('📤', 
+              `Uploading ${totalFiles} videos... ${Math.round(overall)}%`
+            );
+          });
 
-        return {
-          key,
-          originalName: file.name,
-          size: file.size
-        };
-      })
-    );
+          console.log(`✅ Uploaded ${file.name}`);
 
-    // ── PHASE 2: Process on server ──
-    setStatus('⚙️', 'Compressing videos...');
-    setStep(2);
-    updateProgressBar(50);
+          return {
+            key,
+            originalName: file.name,
+            size: file.size
+          };
+        })
+      );
 
-    const totalSizeMB = filesToProcess.reduce(
-      (s, f) => s + f.size, 0
-    ) / (1024 * 1024);
+      // ── PHASE 2: Process on server ──
+      setStatus('⚙️', 'Compressing videos...');
+      setStep(2);
+      updateProgressBar(50);
 
-    startProcessingSimulation(totalSizeMB);
+      const totalSizeMB = filesToProcess.reduce(
+        (s, f) => s + f.size, 0
+      ) / (1024 * 1024);
 
-    const processRes = await fetch(`${BACKEND_URL}/api/process`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: allFileInfos })
-    });
+      startProcessingSimulation(totalSizeMB);
 
-    stopProcessingSimulation();
+      const processRes = await fetch(`${BACKEND_URL}/api/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: allFileInfos })
+      });
 
-    if (!processRes.ok) {
-      const err = await processRes.json();
-      throw new Error(err.error || 'Processing failed');
+      stopProcessingSimulation();
+
+      if (!processRes.ok) {
+        const err = await processRes.json();
+        throw new Error(err.error || 'Processing failed');
+      }
+
+      const result = await processRes.json();
+      updateProgressBar(98);
+      setStatus('✅', 'Almost done...');
+
+      return result;
+    } finally {
+      // ✅ Always release when done
+      releaseWakeLock();
     }
-
-    const result = await processRes.json();
-    updateProgressBar(98);
-    setStatus('✅', 'Almost done...');
-
-    return result;
   }
 
   // ========================
