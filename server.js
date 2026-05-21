@@ -9,7 +9,8 @@ const ffmpegStatic = require('ffmpeg-static');
 const ffprobePath = require('ffprobe-static').path;
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const compression = require('compression');
 require('dotenv').config();
 
@@ -196,10 +197,9 @@ function getVideoDuration(filePath) {
 }
 
 // Split video into chunks of maxDuration seconds
-function splitVideo(inputPath, outputDir, chunkDuration = 29) {
+function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   return new Promise(async (resolve, reject) => {
     try {
-      const duration = await getVideoDuration(inputPath);
       const totalChunks = Math.ceil(duration / chunkDuration);
       console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
@@ -338,7 +338,7 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
 }
 
 // Compress single video (for short videos under 29s)
-function compressVideo(inputPath, outputPath) {
+function compressVideo(inputPath, outputPath, knownDuration) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let ffmpegCommand = null;
@@ -368,7 +368,11 @@ function compressVideo(inputPath, outputPath) {
       finish(new Error('compressVideo timeout after 10 minutes'));
     }, 600000);
 
-    getVideoDuration(inputPath)
+    const durationPromise = Number.isFinite(knownDuration)
+      ? Promise.resolve(knownDuration)
+      : getVideoDuration(inputPath);
+
+    durationPromise
       .then((duration) => {
         if (settled) return;
 
@@ -577,72 +581,132 @@ app.get('/privacy', (req, res) => {
     'public', 'privacy.html'));
 });
 
-// Upload & Compress Videos
-app.post('/api/compress', limiter, (req, res, next) => {
-  req.on('aborted', () => {
-    const uploadPaths = new Set(req.uploadFilePaths || []);
-
-    if (req.files) {
-      for (const file of req.files) {
-        if (file.path) {
-          uploadPaths.add(file.path);
-        }
-      }
-    }
-
-    for (const filePath of uploadPaths) {
-      try {
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (err) {
-        console.error('Aborted upload cleanup error:', err.message);
-      }
-    }
-  });
-  next();
-}, upload.array('videos', 3), async (req, res) => {
+// Generate presigned URL for direct browser -> R2 upload
+app.post('/api/presign', limiter, async (req, res) => {
   try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'No files uploaded!' });
+    const { filename, contentType, fileSize } = req.body;
+    const numericFileSize = Number(fileSize);
+
+    if (!filename || !contentType || !Number.isFinite(numericFileSize)) {
+      return res.status(400).json({
+        error: 'Missing filename, contentType or fileSize'
+      });
     }
 
-    // ✅ Total size check across ALL files
-    const totalSizeMB = req.files.reduce(
-      (sum, f) => sum + f.size, 0
-    ) / (1024 * 1024);
+    if (numericFileSize > 300 * 1024 * 1024) {
+      return res.status(400).json({
+        error: 'File too large! Max 300MB per file.'
+      });
+    }
 
-    console.log(
-      `Total upload: ${totalSizeMB.toFixed(1)}MB ` +
-      `across ${req.files.length} file(s)`
-    );
+    const allowedTypes = [
+      'video/mp4',
+      'video/quicktime',
+      'video/x-msvideo',
+      'video/x-matroska',
+      'video/3gpp',
+      'video/x-ms-wmv'
+    ];
+
+    if (!allowedTypes.includes(contentType)) {
+      return res.status(400).json({ error: 'Only video files allowed!' });
+    }
+
+    const ext = path.extname(filename).toLowerCase();
+    const key = `uploads/${uuidv4()}${ext}`;
+
+    const command = new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: key,
+      ContentType: contentType,
+      ContentLength: numericFileSize,
+    });
+
+    const presignedUrl = await getSignedUrl(r2Client, command, {
+      expiresIn: 3600
+    });
+
+    console.log(`Presigned URL generated for: ${key}`);
+
+    res.json({
+      presignedUrl,
+      key,
+      publicUrl: `${process.env.R2_PUBLIC_URL}/${key}`
+    });
+
+  } catch (error) {
+    console.error('Presign error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Process already-uploaded videos from R2
+// Process already-uploaded videos from R2
+app.post('/api/process', limiter, async (req, res) => {
+  try {
+    const { files } = req.body;
+    // files = [{ key, originalName, size }, ...]
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'No files provided!' });
+    }
+
+    if (files.length > 3) {
+      return res.status(400).json({ error: 'Max 3 files allowed!' });
+    }
+
+    // Total size check
+    const totalSizeMB = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
+    console.log(`Total size: ${totalSizeMB.toFixed(1)}MB across ${files.length} file(s)`);
 
     if (totalSizeMB > 300) {
-      for (const file of req.files) {
-        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      }
       return res.status(400).json({
-        error:
-          `Total size ${totalSizeMB.toFixed(0)}MB exceeds 300MB! ` +
-          `Please upload fewer or smaller videos.`
+        error: `Total size ${totalSizeMB.toFixed(0)}MB exceeds 300MB!`
       });
     }
 
     const activationCode = generateCode();
     const r2Files = [];
 
-    // STEP 1 + 2: ALL videos in parallel — 8GB RAM allows this!
-    console.log(`Processing ${req.files.length} file(s) in parallel...`);
+    console.log(`Processing ${files.length} file(s)...`);
 
     const allGroupResults = await Promise.all(
-      req.files.map(async (file) => {
-        try {
-          console.log(
-            `Processing: ${file.originalname} ` +
-            `(${(file.size / 1024 / 1024).toFixed(1)}MB)`
-          );
+      files.map(async (fileInfo) => {
+        const { key, originalName, size } = fileInfo;
+        const inputUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
-          const duration = await getVideoDuration(file.path);
+        console.log(`Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+
+        // Download from R2 to local temp file for ffmpeg
+        const localInputPath = path.join('uploads', `input_${uuidv4()}${path.extname(originalName)}`);
+
+        try {
+          // Download the uploaded file from R2
+          console.log(`Downloading from R2: ${key}`);
+          const downloadStart = Date.now();
+
+          const response = await axios.get(inputUrl, {
+            responseType: 'stream',
+            timeout: 300000, // 5 min download timeout
+          });
+
+          await new Promise((resolve, reject) => {
+            const writer = fs.createWriteStream(localInputPath);
+            response.data.pipe(writer);
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+            response.data.on('error', reject);
+          });
+
+          const downloadDuration = ((Date.now() - downloadStart) / 1000).toFixed(2);
+          console.log(`Downloaded in ${downloadDuration}s → ${localInputPath}`);
+
+          // Delete the original uploaded file from R2 (we have local copy now)
+          await deleteFromR2(key);
+          console.log(`Deleted original from R2: ${key}`);
+
+          // Get duration
+          const duration = await getVideoDuration(localInputPath);
 
           if (duration <= 29) {
             // SHORT VIDEO
@@ -650,40 +714,26 @@ app.post('/api/compress', limiter, (req, res, next) => {
             const outputFileName = `compressed_${uuidv4()}.mp4`;
             const outputPath = path.join('compressed', outputFileName);
 
-            await compressVideo(file.path, outputPath);
+            await compressVideo(localInputPath, outputPath, duration);
 
             const url = await uploadToR2(outputPath, outputFileName);
-
-            if (fs.existsSync(outputPath)) {
-              fs.unlinkSync(outputPath);
-            }
+            await fs.promises.unlink(outputPath).catch(() => {});
 
             console.log(`R2 upload done: ${outputFileName} ✅`);
             return [{ fileName: outputFileName, url }];
 
           } else {
-            // LONG VIDEO — split into chunks
-            console.log(
-              `Long video (${duration.toFixed(1)}s) — splitting...`
-            );
-            const chunkPaths = await splitVideo(
-              file.path, 'compressed', 29
-            );
+            // LONG VIDEO — split
+            console.log(`Long video (${duration.toFixed(1)}s) — splitting...`);
+            const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29);
 
-            console.log(
-              `Uploading ${chunkPaths.length} chunks to R2 in parallel...`
-            );
-
+            console.log(`Uploading ${chunkPaths.length} chunks to R2...`);
             const chunkResults = await Promise.all(
               chunkPaths.map(async (chunkPath) => {
                 const chunkFileName = path.basename(chunkPath);
                 const url = await uploadToR2(chunkPath, chunkFileName);
-
-                if (fs.existsSync(chunkPath)) {
-                  fs.unlinkSync(chunkPath);
-                }
-
-                console.log(`R2 chunk upload done: ${chunkFileName} ✅`);
+                await fs.promises.unlink(chunkPath).catch(() => {});
+                console.log(`R2 chunk done: ${chunkFileName} ✅`);
                 return { fileName: chunkFileName, url };
               })
             );
@@ -692,23 +742,22 @@ app.post('/api/compress', limiter, (req, res, next) => {
           }
 
         } finally {
-          if (fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-          }
+          // Always clean local temp file
+          await fs.promises.unlink(localInputPath).catch(() => {});
         }
       })
     );
 
-    // Flatten keeping order
+    // Flatten results
     for (const group of allGroupResults) {
       for (const { fileName, url } of group) {
         r2Files.push({ fileName, url });
       }
     }
 
-    console.log(`All ${r2Files.length} file(s) uploaded to R2! ✅`);
+    console.log(`All ${r2Files.length} file(s) ready! ✅`);
 
-    // ✅ Store timer ID in session!
+    // Store session
     const expiryTimer = setTimeout(async () => {
       const session = sessions.get(activationCode);
       if (session) {
@@ -717,7 +766,7 @@ app.post('/api/compress', limiter, (req, res, next) => {
             await deleteFromR2(file.fileName);
             console.log(`R2 deleted (expired): ${file.fileName}`);
           } catch (err) {
-            console.error('R2 delete error:', err.message);
+            console.error('R2 cleanup error:', err.message);
           }
         }
         sessions.delete(activationCode);
@@ -729,7 +778,7 @@ app.post('/api/compress', limiter, (req, res, next) => {
       files: r2Files,
       createdAt: Date.now(),
       status: 'pending',
-      expiryTimer: expiryTimer  // ✅ Store timer ID!
+      expiryTimer: expiryTimer
     });
 
     // WhatsApp link
@@ -738,13 +787,13 @@ app.post('/api/compress', limiter, (req, res, next) => {
 
     res.json({
       success: true,
-      activationCode: activationCode,
-      waLink: waLink,
+      activationCode,
+      waLink,
       fileCount: r2Files.length
     });
 
   } catch (error) {
-    console.error('Compress error:', error);
+    console.error('Process error:', error);
     res.status(500).json({ error: error.message });
   }
 });
