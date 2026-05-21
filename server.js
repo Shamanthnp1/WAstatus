@@ -6,6 +6,7 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
+const ffprobePath = require('ffprobe-static').path;
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -21,12 +22,18 @@ const PORT = process.env.PORT || 3000;
 
 app.set('trust proxy', 1);
 
-// Set FFmpeg path
+if (!ffmpegStatic) {
+  console.error('ffmpeg-static path is null!');
+  process.exit(1);
+}
 
+console.log('FFmpeg path:', ffmpegStatic);
+console.log('FFprobe path:', ffprobePath);
+
+// Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
 // Set ffprobe path
-const ffprobePath = require('ffprobe-static').path;
 ffmpeg.setFfprobePath(ffprobePath);
 
 // ========================
@@ -170,7 +177,16 @@ function generateCode() {
 // Get video duration in seconds
 function getVideoDuration(filePath) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error('ffprobe timeout after 30s'));
+    }, 30000);
+
     ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (err) return reject(err);
       const duration = metadata.format.duration;
       console.log(`Video duration: ${duration} seconds`);
@@ -226,7 +242,40 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
         const batchResults = await Promise.all(
           batch.map(({ index, startTime, chunkPath }) =>
             new Promise((res, rej) => {
-              ffmpeg(inputPath)
+              let settled = false;
+              let chunkCommand = null;
+
+              const finishChunk = (err, result) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(chunkTimer);
+
+                if (err) {
+                  rej(err);
+                  return;
+                }
+
+                res(result);
+              };
+
+              const chunkTimer = setTimeout(() => {
+                if (chunkCommand) {
+                  try {
+                    chunkCommand.kill('SIGKILL');
+                  } catch (err) {
+                    console.error(
+                      `Failed to kill timed out chunk ${index + 1}:`,
+                      err.message
+                    );
+                  }
+                }
+
+                finishChunk(
+                  new Error(`Chunk ${index + 1} timeout after 5 minutes`)
+                );
+              }, 300000);
+
+              chunkCommand = ffmpeg(inputPath)
                 .setStartTime(startTime)
                 .setDuration(chunkDuration)
                 .outputOptions([
@@ -250,6 +299,14 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
                     `Chunk ${index + 1}/${totalChunks} started...`
                   )
                 )
+                .on('progress', (progress) => {
+                  if (progress.percent) {
+                    console.log(
+                      `Chunk ${index + 1} progress: ` +
+                      `${progress.percent.toFixed(1)}%`
+                    );
+                  }
+                })
                 .on('end', () => {
                   const stats = fs.statSync(chunkPath);
                   const sizeMB = stats.size / (1024 * 1024);
@@ -257,13 +314,14 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
                     `Chunk ${index + 1}/${totalChunks} done! ` +
                     `Size: ${sizeMB.toFixed(2)}MB`
                   );
-                  res(chunkPath);
+                  finishChunk(null, chunkPath);
                 })
                 .on('error', (err) => {
                   console.error(`Chunk ${index + 1} error:`, err);
-                  rej(err);
-                })
-                .run();
+                  finishChunk(err);
+                });
+
+              chunkCommand.run();
             })
           )
         );
@@ -282,55 +340,86 @@ function splitVideo(inputPath, outputDir, chunkDuration = 29) {
 // Compress single video (for short videos under 29s)
 function compressVideo(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let ffmpegCommand = null;
 
-    ffmpeg.ffprobe(inputPath, (err, metadata) => {
-      if (err) return reject(err);
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
 
-      const duration = metadata.format.duration;
+      if (err) {
+        reject(err);
+        return;
+      }
 
-      const targetSizeMB = 15;
-      const audioBitrateK = 128;
+      resolve();
+    };
 
-      const totalBitrateK =
-        (targetSizeMB * 8 * 1024) / duration;
+    const timeoutId = setTimeout(() => {
+      if (ffmpegCommand) {
+        try {
+          ffmpegCommand.kill('SIGKILL');
+        } catch (err) {
+          console.error('Failed to kill timed out FFmpeg process:', err.message);
+        }
+      }
 
-      const videoBitrateK =
-        Math.floor(totalBitrateK - audioBitrateK);
+      finish(new Error('compressVideo timeout after 10 minutes'));
+    }, 600000);
 
-      ffmpeg(inputPath)
-        .outputOptions([
-          '-c:v libx264',
-          `-b:v ${videoBitrateK}k`,
-          `-maxrate ${videoBitrateK}k`,
-          `-bufsize ${videoBitrateK * 2}k`,
-          '-preset ultrafast',
-          '-profile:v high',
-          '-level 4.1',
-          '-pix_fmt yuv420p',
-          '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+    getVideoDuration(inputPath)
+      .then((duration) => {
+        if (settled) return;
 
-          '-c:a aac',
-          `-b:a ${audioBitrateK}k`,
-          '-ar 44100',
+        const targetSizeMB = 15;
+        const audioBitrateK = 128;
 
-          '-movflags faststart'
-        ])
+        const totalBitrateK =
+          (targetSizeMB * 8 * 1024) / duration;
 
-        .output(outputPath)
+        const videoBitrateK =
+          Math.floor(totalBitrateK - audioBitrateK);
 
-        .on('start', () => {
-          console.log('Compression started...');
-        })
+        ffmpegCommand = ffmpeg(inputPath)
+          .outputOptions([
+            '-c:v libx264',
+            `-b:v ${videoBitrateK}k`,
+            `-maxrate ${videoBitrateK}k`,
+            `-bufsize ${videoBitrateK * 2}k`,
+            '-preset ultrafast',
+            '-profile:v high',
+            '-level 4.1',
+            '-pix_fmt yuv420p',
+            '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
 
-        .on('end', () => {
-          console.log('Compression complete!');
-          resolve();
-        })
+            '-c:a aac',
+            `-b:a ${audioBitrateK}k`,
+            '-ar 44100',
 
-        .on('error', reject)
+            '-movflags faststart'
+          ])
 
-        .run();
-    });
+          .output(outputPath)
+
+          .on('start', (cmd) => {
+            console.log('FFmpeg command:', cmd);
+          })
+
+          .on('progress', (progress) => {
+            console.log(`Progress: ${JSON.stringify(progress)}`);
+          })
+
+          .on('end', () => {
+            console.log('Compression complete!');
+            finish();
+          })
+
+          .on('error', finish);
+
+        ffmpegCommand.run();
+      })
+      .catch(finish);
   });
 }
 
@@ -348,7 +437,26 @@ async function uploadToR2(filePath, fileName) {
       ContentLength: stats.size,
       ContentType: 'video/mp4',
     });
-    await r2Client.send(command);
+
+    const abortController = new AbortController();
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        abortController.abort();
+        fileStream.destroy();
+        reject(new Error('R2 upload timeout after 5 minutes'));
+      }, 300000);
+    });
+
+    try {
+      await Promise.race([
+        r2Client.send(command, { abortSignal: abortController.signal }),
+        timeoutPromise
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
     const publicUrl = `${process.env.R2_PUBLIC_URL}/${fileName}`;
     const r2Duration = ((Date.now() - r2Start) / 1000).toFixed(2);
     console.log(`R2 Upload success! ✅ (${r2Duration}s) ${publicUrl}`);
