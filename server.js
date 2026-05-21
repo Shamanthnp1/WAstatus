@@ -581,61 +581,40 @@ app.get('/privacy', (req, res) => {
     'public', 'privacy.html'));
 });
 
-// Generate presigned URL for direct browser -> R2 upload
-app.post('/api/presign', limiter, async (req, res) => {
+// Replace /api/presign with this simpler endpoint
+app.post('/api/upload-url', limiter, async (req, res) => {
   try {
     const { filename, contentType, fileSize } = req.body;
     const numericFileSize = Number(fileSize);
 
     if (!filename || !contentType || !Number.isFinite(numericFileSize)) {
-      return res.status(400).json({
-        error: 'Missing filename, contentType or fileSize'
-      });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
     if (numericFileSize > 300 * 1024 * 1024) {
-      return res.status(400).json({
-        error: 'File too large! Max 300MB per file.'
-      });
+      return res.status(400).json({ error: 'File too large! Max 300MB.' });
     }
 
-    const allowedTypes = [
-      'video/mp4',
-      'video/quicktime',
-      'video/x-msvideo',
-      'video/x-matroska',
-      'video/3gpp',
-      'video/x-ms-wmv'
+    const allowed = [
+      'video/mp4', 'video/quicktime', 'video/x-msvideo',
+      'video/x-matroska', 'video/3gpp', 'video/x-ms-wmv'
     ];
 
-    if (!allowedTypes.includes(contentType)) {
+    if (!allowed.includes(contentType)) {
       return res.status(400).json({ error: 'Only video files allowed!' });
     }
 
     const ext = path.extname(filename).toLowerCase();
     const key = `uploads/${uuidv4()}${ext}`;
 
-    const command = new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: key,
-      ContentType: contentType,
-      ContentLength: numericFileSize,
-    });
-
-    const presignedUrl = await getSignedUrl(r2Client, command, {
-      expiresIn: 3600
-    });
-
-    console.log(`Presigned URL generated for: ${key}`);
-
+    // Return the Worker URL — no signing needed
     res.json({
-      presignedUrl,
+      uploadUrl: `https://upload.wastatusvideo.com/upload/${key}`,
       key,
-      publicUrl: `${process.env.R2_PUBLIC_URL}/${key}`
     });
 
   } catch (error) {
-    console.error('Presign error:', error);
+    console.error('Upload URL error:', error);
     res.status(500).json({ error: error.message });
   }
 });
