@@ -1692,17 +1692,15 @@
   const WORKER_URL = 'https://upload.wastatusvideo.com';
 
   async function uploadToWorkerWithProgress(uploadUrl, file, onProgress) {
-    // Small files — use simple upload
+    // Small files — simple upload
     if (file.size <= 90 * 1024 * 1024) {
       return simpleUpload(uploadUrl, file, onProgress);
     }
-
-    // Large files — use multipart
+    // Large files — multipart
     const key = uploadUrl.replace(`${WORKER_URL}/upload/`, '');
     return multipartUpload(key, file, onProgress);
   }
 
-  // Simple upload for files under 90MB
   function simpleUpload(uploadUrl, file, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -1721,10 +1719,10 @@
         }
       });
 
-      xhr.addEventListener('error', () => 
+      xhr.addEventListener('error', () =>
         reject(new Error('Network error during upload'))
       );
-      xhr.addEventListener('abort', () => 
+      xhr.addEventListener('abort', () =>
         reject(new Error('Upload cancelled'))
       );
 
@@ -1734,10 +1732,9 @@
     });
   }
 
-  // Multipart upload for large files
   async function multipartUpload(key, file, onProgress) {
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    console.log(`Multipart upload: ${totalChunks} chunks for ${key}`);
+    console.log(`Multipart: ${totalChunks} chunks for ${key}`);
 
     // Step 1: Create multipart upload
     const createRes = await fetch(
@@ -1752,9 +1749,8 @@
     }
 
     const { uploadId } = await createRes.json();
-    console.log(`Multipart uploadId: ${uploadId}`);
 
-    // Step 2: Upload each chunk
+    // Step 2: Upload chunks
     const parts = [];
     let uploadedBytes = 0;
 
@@ -1766,7 +1762,6 @@
 
       console.log(`Uploading part ${partNumber}/${totalChunks}...`);
 
-      // Upload chunk with progress
       const etag = await uploadChunkWithProgress(
         key, uploadId, partNumber, chunk,
         (chunkPct) => {
@@ -1779,12 +1774,10 @@
       parts.push({ partNumber, etag });
       uploadedBytes += (end - start);
       onProgress((uploadedBytes / file.size) * 100);
-
       console.log(`Part ${partNumber} done ✅`);
     }
 
-    // Step 3: Complete multipart upload
-    console.log('Completing multipart upload...');
+    // Step 3: Complete
     const completeRes = await fetch(
       `${WORKER_URL}/multipart/complete/${encodeURIComponent(key)}`,
       {
@@ -1796,7 +1789,6 @@
 
     if (!completeRes.ok) {
       const err = await completeRes.json();
-      // Abort on failure
       await fetch(
         `${WORKER_URL}/multipart/abort/${encodeURIComponent(key)}` +
         `?uploadId=${uploadId}`,
@@ -1831,8 +1823,8 @@
         reject(new Error(`Network error on chunk ${partNumber}`))
       );
 
-      const url = `${WORKER_URL}/multipart/part/` +
-        `${encodeURIComponent(key)}` +
+      const url =
+        `${WORKER_URL}/multipart/part/${encodeURIComponent(key)}` +
         `?uploadId=${encodeURIComponent(uploadId)}` +
         `&partNumber=${partNumber}`;
 
@@ -1893,59 +1885,64 @@
   }
 
   async function uploadAndProcess(filesToProcess) {
-    const allFileInfos = [];
     const totalFiles = filesToProcess.length;
 
-    // ── PHASE 1: Upload via Cloudflare Worker (global edge) ──
-    for (let i = 0; i < totalFiles; i++) {
-      const file = filesToProcess[i];
-      const fileLabel = `${file.name} (${i + 1}/${totalFiles})`;
+    setStatus('📤', 'Uploading all videos...');
+    setStep(1);
 
-      showCurrentFile(file.name);
-      setStatus('📤', `Uploading ${fileLabel}...`);
-      setStep(1);
+    // Track progress per file
+    const progressPerFile = new Array(totalFiles).fill(0);
 
-      // Get upload URL from your server
-      const urlRes = await fetch(`${BACKEND_URL}/api/upload-url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: file.name,
-          contentType: file.type,
-          fileSize: file.size
-        })
-      });
+    // ── Upload ALL files in PARALLEL ──
+    const allFileInfos = await Promise.all(
+      filesToProcess.map(async (file, i) => {
 
-      if (!urlRes.ok) {
-        const err = await urlRes.json();
-        throw new Error(err.error || 'Failed to get upload URL');
-      }
+        showCurrentFile(file.name);
 
-      const { uploadUrl, key } = await urlRes.json();
+        // Get upload URL
+        const urlRes = await fetch(`${BACKEND_URL}/api/upload-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: file.type,
+            fileSize: file.size
+          })
+        });
 
-      // Upload to Cloudflare Worker (nearest edge to user)
-      const fileStartPct = (i / totalFiles) * 50;
-      const fileEndPct = ((i + 1) / totalFiles) * 50;
+        if (!urlRes.ok) {
+          const err = await urlRes.json();
+          throw new Error(err.error || 'Failed to get upload URL');
+        }
 
-      await uploadToWorkerWithProgress(uploadUrl, file, (uploadPct) => {
-        const overall = fileStartPct + 
-          (uploadPct / 100) * (fileEndPct - fileStartPct);
-        updateProgressBar(overall);
-        setStatus('📤',
-          `Uploading ${fileLabel}... ${Math.round(uploadPct)}%`
-        );
-      });
+        const { uploadUrl, key } = await urlRes.json();
 
-      console.log(`✅ Uploaded ${file.name} via CF Worker`);
+        // Upload with progress tracking per file
+        await uploadToWorkerWithProgress(uploadUrl, file, (pct) => {
+          progressPerFile[i] = pct;
 
-      allFileInfos.push({
-        key,
-        originalName: file.name,
-        size: file.size
-      });
-    }
+          // Overall = average of all files progress
+          const overall = progressPerFile.reduce((a, b) => a + b, 0) 
+            / totalFiles;
 
-    // ── PHASE 2: Process on server (50% → 95%) ──
+          // Map 0-100% into 0-50% of total bar
+          updateProgressBar(overall * 0.5);
+          setStatus('📤', 
+            `Uploading ${totalFiles} videos... ${Math.round(overall)}%`
+          );
+        });
+
+        console.log(`✅ Uploaded ${file.name}`);
+
+        return {
+          key,
+          originalName: file.name,
+          size: file.size
+        };
+      })
+    );
+
+    // ── PHASE 2: Process on server ──
     setStatus('⚙️', 'Compressing videos...');
     setStep(2);
     updateProgressBar(50);
