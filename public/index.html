@@ -1687,14 +1687,14 @@
   // ========================
   // REAL UPLOAD WITH PROGRESS
   // ========================
-  function uploadToR2WithProgress(presignedUrl, file, onProgress) {
+  // Upload to CF Worker with real progress
+  function uploadToWorkerWithProgress(uploadUrl, file, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
 
       xhr.upload.addEventListener('progress', (e) => {
         if (e.lengthComputable) {
-          const pct = (e.loaded / e.total) * 100;
-          onProgress(pct);
+          onProgress((e.loaded / e.total) * 100);
         }
       });
 
@@ -1702,18 +1702,23 @@
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve();
         } else {
-          reject(new Error(`R2 upload failed: ${xhr.status}`));
+          let errMsg = `Upload failed: ${xhr.status}`;
+          try {
+            const resp = JSON.parse(xhr.responseText);
+            if (resp.error) errMsg = resp.error;
+          } catch (e) {}
+          reject(new Error(errMsg));
         }
       });
 
-      xhr.addEventListener('error', () => 
+      xhr.addEventListener('error', () =>
         reject(new Error('Network error during upload'))
       );
-      xhr.addEventListener('abort', () => 
+      xhr.addEventListener('abort', () =>
         reject(new Error('Upload cancelled'))
       );
 
-      xhr.open('PUT', presignedUrl);
+      xhr.open('PUT', uploadUrl);
       xhr.setRequestHeader('Content-Type', file.type);
       xhr.send(file);
     });
@@ -1773,17 +1778,17 @@
     const allFileInfos = [];
     const totalFiles = filesToProcess.length;
 
-    // ── PHASE 1: Upload each file directly to R2 (0% → 50%) ──
+    // ── PHASE 1: Upload via Cloudflare Worker (global edge) ──
     for (let i = 0; i < totalFiles; i++) {
       const file = filesToProcess[i];
       const fileLabel = `${file.name} (${i + 1}/${totalFiles})`;
 
       showCurrentFile(file.name);
-      setStatus('\u{1F4E4}', `Uploading ${fileLabel}...`);
+      setStatus('📤', `Uploading ${fileLabel}...`);
       setStep(1);
 
-      // Get presigned URL
-      const presignRes = await fetch(`${BACKEND_URL}/api/presign`, {
+      // Get upload URL from your server
+      const urlRes = await fetch(`${BACKEND_URL}/api/upload-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1793,27 +1798,27 @@
         })
       });
 
-      if (!presignRes.ok) {
-        const err = await presignRes.json();
+      if (!urlRes.ok) {
+        const err = await urlRes.json();
         throw new Error(err.error || 'Failed to get upload URL');
       }
 
-      const { presignedUrl, key } = await presignRes.json();
+      const { uploadUrl, key } = await urlRes.json();
 
-      // Upload directly to R2 with real progress
-      const fileStartPct = (i / totalFiles) * 50;       // e.g. 0% for file 1
-      const fileEndPct = ((i + 1) / totalFiles) * 50;   // e.g. 50% for file 1
+      // Upload to Cloudflare Worker (nearest edge to user)
+      const fileStartPct = (i / totalFiles) * 50;
+      const fileEndPct = ((i + 1) / totalFiles) * 50;
 
-      await uploadToR2WithProgress(presignedUrl, file, (uploadPct) => {
-        // Map this file's 0-100% into its slice of 0-50%
-        const overall = fileStartPct + (uploadPct / 100) * (fileEndPct - fileStartPct);
+      await uploadToWorkerWithProgress(uploadUrl, file, (uploadPct) => {
+        const overall = fileStartPct + 
+          (uploadPct / 100) * (fileEndPct - fileStartPct);
         updateProgressBar(overall);
-        setStatus('\u{1F4E4}', 
+        setStatus('📤',
           `Uploading ${fileLabel}... ${Math.round(uploadPct)}%`
         );
       });
 
-      console.log(`\u{2705} Uploaded ${file.name} directly to R2`);
+      console.log(`✅ Uploaded ${file.name} via CF Worker`);
 
       allFileInfos.push({
         key,
@@ -1822,13 +1827,15 @@
       });
     }
 
-    // ── PHASE 2: Tell server to process (50% → 95%) ──
-    setStatus('\u{2699}\u{FE0F}', 'Compressing videos...');
+    // ── PHASE 2: Process on server (50% → 95%) ──
+    setStatus('⚙️', 'Compressing videos...');
     setStep(2);
     updateProgressBar(50);
 
-    // Start simulation scaled to file size
-    const totalSizeMB = filesToProcess.reduce((s, f) => s + f.size, 0) / (1024 * 1024);
+    const totalSizeMB = filesToProcess.reduce(
+      (s, f) => s + f.size, 0
+    ) / (1024 * 1024);
+
     startProcessingSimulation(totalSizeMB);
 
     const processRes = await fetch(`${BACKEND_URL}/api/process`, {
@@ -1846,7 +1853,7 @@
 
     const result = await processRes.json();
     updateProgressBar(98);
-    setStatus('\u{2705}', 'Almost done...');
+    setStatus('✅', 'Almost done...');
 
     return result;
   }
