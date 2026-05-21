@@ -197,144 +197,104 @@ function getVideoDuration(filePath) {
 }
 
 // Split video into chunks of maxDuration seconds
-function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const totalChunks = Math.ceil(duration / chunkDuration);
-      console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
+async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
+  const totalChunks = Math.ceil(duration / chunkDuration);
+  console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
-      const targetSizeMB = 15; // 1MB buffer from WhatsApp's 16MB limit
-      const audioBitrateK = 192;
-      const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
-      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
+  const targetSizeMB = 15;
+  const audioBitrateK = 128;                              // ✅ was 192
+  const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
+  const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
 
-      console.log(`Target size per chunk: ${targetSizeMB}MB`);
-      console.log(`Video bitrate: ${videoBitrateK}kbps`);
-      console.log(`Audio bitrate: ${audioBitrateK}kbps`);
+  console.log(`Chunk video bitrate ceiling: ${videoBitrateK}kbps`);
 
-      // Build chunk list first
-      const chunks = [];
-      for (let i = 0; i < totalChunks; i++) {
-        const startTime = i * chunkDuration;
-        const chunkFileName = `chunk_${uuidv4()}.mp4`;
-        const chunkPath = path.join(outputDir, chunkFileName);
-        chunks.push({ index: i, startTime, chunkPath });
-      }
+  const chunks = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const startTime = i * chunkDuration;
+    const chunkFileName = `chunk_${uuidv4()}.mp4`;
+    const chunkPath = path.join(outputDir, chunkFileName);
+    chunks.push({ index: i, startTime, chunkPath });
+  }
 
-      // ✅ Process chunks in batches of 4
-      // Prevents disk IO overload for long videos
-      const BATCH_SIZE = 4;
-      console.log(
-        `Encoding ${totalChunks} chunks ` +
-        `in batches of ${BATCH_SIZE}...`
-      );
+  const BATCH_SIZE = 2;                                   // ✅ was 4
+  const chunkPaths = [];
 
-      const chunkPaths = [];
+  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    const batch = chunks.slice(i, i + BATCH_SIZE);
+    console.log(
+      `Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/` +
+      `${Math.ceil(chunks.length / BATCH_SIZE)} ` +
+      `(chunks ${i + 1}-${Math.min(i + BATCH_SIZE, chunks.length)})`
+    );
 
-      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-        const batch = chunks.slice(i, i + BATCH_SIZE);
-        console.log(
-          `Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/` +
-          `${Math.ceil(chunks.length / BATCH_SIZE)} ` +
-          `(chunks ${i + 1}-${Math.min(i + BATCH_SIZE, chunks.length)})`
-        );
+    const batchResults = await Promise.all(
+      batch.map(({ index, startTime, chunkPath }) =>
+        new Promise((res, rej) => {
+          let settled = false;
+          let chunkCommand = null;
 
-        const batchResults = await Promise.all(
-          batch.map(({ index, startTime, chunkPath }) =>
-            new Promise((res, rej) => {
-              let settled = false;
-              let chunkCommand = null;
+          const finishChunk = (err, result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(chunkTimer);
+            if (err) { rej(err); return; }
+            res(result);
+          };
 
-              const finishChunk = (err, result) => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(chunkTimer);
+          const chunkTimer = setTimeout(() => {
+            if (chunkCommand) {
+              try { chunkCommand.kill('SIGKILL'); } catch (e) {}
+            }
+            finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
+          }, 300000);
 
-                if (err) {
-                  rej(err);
-                  return;
-                }
-
-                res(result);
-              };
-
-              const chunkTimer = setTimeout(() => {
-                if (chunkCommand) {
-                  try {
-                    chunkCommand.kill('SIGKILL');
-                  } catch (err) {
-                    console.error(
-                      `Failed to kill timed out chunk ${index + 1}:`,
-                      err.message
-                    );
-                  }
-                }
-
-                finishChunk(
-                  new Error(`Chunk ${index + 1} timeout after 5 minutes`)
-                );
-              }, 300000);
-
-              chunkCommand = ffmpeg(inputPath)
-                .setStartTime(startTime)
-                .setDuration(chunkDuration)
-                .outputOptions([
-                  '-c:v libx264',
-                  `-b:v ${videoBitrateK}k`,
-                  `-maxrate ${videoBitrateK}k`,
-                  `-bufsize ${videoBitrateK * 2}k`,
-                  '-preset ultrafast',
-                  '-profile:v high',
-                  '-level 4.1',
-                  '-c:a aac',
-                  `-b:a ${audioBitrateK}k`,
-                  '-ar 44100',
-                  '-movflags faststart',
-                  '-pix_fmt yuv420p',
-                  '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                ])
-                .output(chunkPath)
-                .on('start', () =>
-                  console.log(
-                    `Chunk ${index + 1}/${totalChunks} started...`
-                  )
-                )
-                .on('progress', (progress) => {
-                  if (progress.percent) {
-                    console.log(
-                      `Chunk ${index + 1} progress: ` +
-                      `${progress.percent.toFixed(1)}%`
-                    );
-                  }
-                })
-                .on('end', () => {
-                  const stats = fs.statSync(chunkPath);
-                  const sizeMB = stats.size / (1024 * 1024);
-                  console.log(
-                    `Chunk ${index + 1}/${totalChunks} done! ` +
-                    `Size: ${sizeMB.toFixed(2)}MB`
-                  );
-                  finishChunk(null, chunkPath);
-                })
-                .on('error', (err) => {
-                  console.error(`Chunk ${index + 1} error:`, err);
-                  finishChunk(err);
-                });
-
-              chunkCommand.run();
+          chunkCommand = ffmpeg(inputPath)
+            .setStartTime(startTime)
+            .setDuration(chunkDuration)
+            .outputOptions([
+              '-c:v libx264',
+              '-crf 23',                        // ✅ quality control
+              `-maxrate ${videoBitrateK}k`,      // ✅ hard size ceiling
+              `-bufsize ${videoBitrateK}k`,      // ✅ tight buffer
+              '-preset medium',                 // ✅ better quality
+              '-profile:v high',
+              '-level 4.1',
+              '-c:a aac',
+              `-b:a ${audioBitrateK}k`,
+              '-ar 44100',
+              '-movflags faststart',
+              '-pix_fmt yuv420p',
+              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            ])
+            .output(chunkPath)
+            .on('start', () =>
+              console.log(`Chunk ${index + 1}/${totalChunks} started...`)
+            )
+            .on('progress', (progress) => {
+              if (progress.percent) {
+                console.log(`Chunk ${index + 1}: ${progress.percent.toFixed(1)}%`);
+              }
             })
-          )
-        );
+            .on('end', () => {
+              const stats = fs.statSync(chunkPath);
+              const sizeMB = stats.size / (1024 * 1024);
+              console.log(`Chunk ${index + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
+              finishChunk(null, chunkPath);
+            })
+            .on('error', (err) => {
+              console.error(`Chunk ${index + 1} error:`, err);
+              finishChunk(err);
+            });
 
-        // ✅ Push results in order
-        chunkPaths.push(...batchResults);
-      }
+          chunkCommand.run();
+        })
+      )
+    );
 
-      resolve(chunkPaths);
-    } catch (err) {
-      reject(err);
-    }
-  });
+    chunkPaths.push(...batchResults);
+  }
+
+  return chunkPaths;
 }
 
 // Compress single video (for short videos under 29s)
@@ -347,24 +307,14 @@ function compressVideo(inputPath, outputPath, knownDuration) {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutId);
-
-      if (err) {
-        reject(err);
-        return;
-      }
-
+      if (err) { reject(err); return; }
       resolve();
     };
 
     const timeoutId = setTimeout(() => {
       if (ffmpegCommand) {
-        try {
-          ffmpegCommand.kill('SIGKILL');
-        } catch (err) {
-          console.error('Failed to kill timed out FFmpeg process:', err.message);
-        }
+        try { ffmpegCommand.kill('SIGKILL'); } catch (e) {}
       }
-
       finish(new Error('compressVideo timeout after 10 minutes'));
     }, 600000);
 
@@ -372,58 +322,46 @@ function compressVideo(inputPath, outputPath, knownDuration) {
       ? Promise.resolve(knownDuration)
       : getVideoDuration(inputPath);
 
-    durationPromise
-      .then((duration) => {
-        if (settled) return;
+    durationPromise.then((duration) => {
+      if (settled) return;
 
-        const targetSizeMB = 15;
-        const audioBitrateK = 128;
+      const targetSizeMB = 15;
+      const audioBitrateK = 128;
+      const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
+      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
 
-        const totalBitrateK =
-          (targetSizeMB * 8 * 1024) / duration;
+      console.log(`compressVideo → duration:${duration.toFixed(1)}s videoBitrate:${videoBitrateK}k`);
 
-        const videoBitrateK =
-          Math.floor(totalBitrateK - audioBitrateK);
+      ffmpegCommand = ffmpeg(inputPath)
+        .outputOptions([
+          '-c:v libx264',
+          '-crf 23',                          // ✅ quality control
+          `-maxrate ${videoBitrateK}k`,        // ✅ hard size ceiling
+          `-bufsize ${videoBitrateK}k`,        // ✅ tight buffer
+          '-preset medium',                   // ✅ better quality
+          '-profile:v high',
+          '-level 4.1',
+          '-pix_fmt yuv420p',
+          '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+          '-c:a aac',
+          `-b:a ${audioBitrateK}k`,
+          '-ar 44100',
+          '-movflags faststart'
+        ])
+        .output(outputPath)
+        .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
+        .on('progress', (p) => {
+          if (p.percent) console.log(`Compress progress: ${p.percent.toFixed(1)}%`);
+        })
+        .on('end', () => {
+          const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
+          console.log(`Compression done! Size: ${sizeMB.toFixed(2)}MB`);
+          finish();
+        })
+        .on('error', finish);
 
-        ffmpegCommand = ffmpeg(inputPath)
-          .outputOptions([
-            '-c:v libx264',
-            `-b:v ${videoBitrateK}k`,
-            `-maxrate ${videoBitrateK}k`,
-            `-bufsize ${videoBitrateK * 2}k`,
-            '-preset ultrafast',
-            '-profile:v high',
-            '-level 4.1',
-            '-pix_fmt yuv420p',
-            '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-
-            '-c:a aac',
-            `-b:a ${audioBitrateK}k`,
-            '-ar 44100',
-
-            '-movflags faststart'
-          ])
-
-          .output(outputPath)
-
-          .on('start', (cmd) => {
-            console.log('FFmpeg command:', cmd);
-          })
-
-          .on('progress', (progress) => {
-            console.log(`Progress: ${JSON.stringify(progress)}`);
-          })
-
-          .on('end', () => {
-            console.log('Compression complete!');
-            finish();
-          })
-
-          .on('error', finish);
-
-        ffmpegCommand.run();
-      })
-      .catch(finish);
+      ffmpegCommand.run();
+    }).catch(finish);
   });
 }
 
