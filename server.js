@@ -216,7 +216,15 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
     chunks.push({ index: i, startTime, chunkPath });
   }
 
-  const BATCH_SIZE = 2;                                   // ✅ was 4
+  let BATCH_SIZE;
+  if (totalChunks <= 4) {
+    BATCH_SIZE = 2;
+  } else if (totalChunks <= 10) {
+    BATCH_SIZE = 3;
+  } else {
+    BATCH_SIZE = 4;
+  }
+  console.log(`Total chunks: ${totalChunks} → BATCH_SIZE: ${BATCH_SIZE}`);
   const chunkPaths = [];
 
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
