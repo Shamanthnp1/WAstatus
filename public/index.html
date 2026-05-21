@@ -1688,7 +1688,22 @@
   // REAL UPLOAD WITH PROGRESS
   // ========================
   // Upload to CF Worker with real progress
-  function uploadToWorkerWithProgress(uploadUrl, file, onProgress) {
+  const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB chunks
+  const WORKER_URL = 'https://upload.wastatusvideo.com';
+
+  async function uploadToWorkerWithProgress(uploadUrl, file, onProgress) {
+    // Small files — use simple upload
+    if (file.size <= 90 * 1024 * 1024) {
+      return simpleUpload(uploadUrl, file, onProgress);
+    }
+
+    // Large files — use multipart
+    const key = uploadUrl.replace(`${WORKER_URL}/upload/`, '');
+    return multipartUpload(key, file, onProgress);
+  }
+
+  // Simple upload for files under 90MB
+  function simpleUpload(uploadUrl, file, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
 
@@ -1702,25 +1717,128 @@
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve();
         } else {
-          let errMsg = `Upload failed: ${xhr.status}`;
-          try {
-            const resp = JSON.parse(xhr.responseText);
-            if (resp.error) errMsg = resp.error;
-          } catch (e) {}
-          reject(new Error(errMsg));
+          reject(new Error(`Upload failed: ${xhr.status}`));
         }
       });
 
-      xhr.addEventListener('error', () =>
+      xhr.addEventListener('error', () => 
         reject(new Error('Network error during upload'))
       );
-      xhr.addEventListener('abort', () =>
+      xhr.addEventListener('abort', () => 
         reject(new Error('Upload cancelled'))
       );
 
       xhr.open('PUT', uploadUrl);
       xhr.setRequestHeader('Content-Type', file.type);
       xhr.send(file);
+    });
+  }
+
+  // Multipart upload for large files
+  async function multipartUpload(key, file, onProgress) {
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    console.log(`Multipart upload: ${totalChunks} chunks for ${key}`);
+
+    // Step 1: Create multipart upload
+    const createRes = await fetch(
+      `${WORKER_URL}/multipart/create/${encodeURIComponent(key)}` +
+      `?contentType=${encodeURIComponent(file.type)}`,
+      { method: 'POST' }
+    );
+
+    if (!createRes.ok) {
+      const err = await createRes.json();
+      throw new Error(err.error || 'Failed to start upload');
+    }
+
+    const { uploadId } = await createRes.json();
+    console.log(`Multipart uploadId: ${uploadId}`);
+
+    // Step 2: Upload each chunk
+    const parts = [];
+    let uploadedBytes = 0;
+
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end);
+      const partNumber = i + 1;
+
+      console.log(`Uploading part ${partNumber}/${totalChunks}...`);
+
+      // Upload chunk with progress
+      const etag = await uploadChunkWithProgress(
+        key, uploadId, partNumber, chunk,
+        (chunkPct) => {
+          const baseProgress = (uploadedBytes / file.size) * 100;
+          const chunkContrib = ((end - start) / file.size) * chunkPct;
+          onProgress(baseProgress + chunkContrib);
+        }
+      );
+
+      parts.push({ partNumber, etag });
+      uploadedBytes += (end - start);
+      onProgress((uploadedBytes / file.size) * 100);
+
+      console.log(`Part ${partNumber} done ✅`);
+    }
+
+    // Step 3: Complete multipart upload
+    console.log('Completing multipart upload...');
+    const completeRes = await fetch(
+      `${WORKER_URL}/multipart/complete/${encodeURIComponent(key)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadId, parts })
+      }
+    );
+
+    if (!completeRes.ok) {
+      const err = await completeRes.json();
+      // Abort on failure
+      await fetch(
+        `${WORKER_URL}/multipart/abort/${encodeURIComponent(key)}` +
+        `?uploadId=${uploadId}`,
+        { method: 'DELETE' }
+      ).catch(() => {});
+      throw new Error(err.error || 'Failed to complete upload');
+    }
+
+    console.log('Multipart upload complete ✅');
+  }
+
+  function uploadChunkWithProgress(key, uploadId, partNumber, chunk, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          onProgress((e.loaded / e.total) * 100);
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const response = JSON.parse(xhr.responseText);
+          resolve(response.etag);
+        } else {
+          reject(new Error(`Chunk ${partNumber} failed: ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener('error', () =>
+        reject(new Error(`Network error on chunk ${partNumber}`))
+      );
+
+      const url = `${WORKER_URL}/multipart/part/` +
+        `${encodeURIComponent(key)}` +
+        `?uploadId=${encodeURIComponent(uploadId)}` +
+        `&partNumber=${partNumber}`;
+
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.send(chunk);
     });
   }
 
