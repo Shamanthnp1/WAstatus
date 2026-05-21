@@ -44,6 +44,12 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.static('public'));
+app.use((req, res, next) => {
+  req.on('aborted', () => {
+    console.warn(`Request aborted by client: ${req.path}`);
+  });
+  next();
+});
 
 // ========================
 // CREATE REQUIRED FOLDERS
@@ -119,7 +125,10 @@ const limiter = rateLimit({
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => {
-    cb(null, uuidv4() + path.extname(file.originalname));
+    const filename = uuidv4() + path.extname(file.originalname);
+    req.uploadFilePaths = req.uploadFilePaths || [];
+    req.uploadFilePaths.push(path.join('uploads', filename));
+    cb(null, filename);
   }
 });
 
@@ -330,11 +339,13 @@ async function uploadToR2(filePath, fileName) {
   try {
     const r2Start = Date.now();
     console.log(`Uploading to R2: ${fileName}`);
-    const fileContent = fs.readFileSync(filePath);
+    const stats = await fs.promises.stat(filePath);
+    const fileStream = fs.createReadStream(filePath);
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
       Key: fileName,
-      Body: fileContent,
+      Body: fileStream,
+      ContentLength: stats.size,
       ContentType: 'video/mp4',
     });
     await r2Client.send(command);
@@ -386,15 +397,14 @@ async function sendWhatsAppMessage(to, message) {
 // Upload video to WhatsApp Media
 async function uploadToWhatsAppMedia(videoUrl) {
   // Download from R2 first
-  const response = await axios.get(videoUrl, { 
-    responseType: 'arraybuffer' 
+  const response = await axios.get(videoUrl, {
+    responseType: 'stream'
   });
-  const buffer = Buffer.from(response.data);
 
   // Upload to WhatsApp
   const FormData = require('form-data');
   const form = new FormData();
-  form.append('file', buffer, {
+  form.append('file', response.data, {
     filename: 'video.mp4',
     contentType: 'video/mp4'
   });
@@ -408,7 +418,9 @@ async function uploadToWhatsAppMedia(videoUrl) {
       headers: {
         'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
         ...form.getHeaders()
-      }
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
     }
   );
 
@@ -458,7 +470,30 @@ app.get('/privacy', (req, res) => {
 });
 
 // Upload & Compress Videos
-app.post('/api/compress', limiter, upload.array('videos', 3), async (req, res) => {
+app.post('/api/compress', limiter, (req, res, next) => {
+  req.on('aborted', () => {
+    const uploadPaths = new Set(req.uploadFilePaths || []);
+
+    if (req.files) {
+      for (const file of req.files) {
+        if (file.path) {
+          uploadPaths.add(file.path);
+        }
+      }
+    }
+
+    for (const filePath of uploadPaths) {
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (err) {
+        console.error('Aborted upload cleanup error:', err.message);
+      }
+    }
+  });
+  next();
+}, upload.array('videos', 3), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded!' });
@@ -701,8 +736,27 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
+    if (session.status === 'processing') {
+      console.log(`Duplicate webhook for code: ${code} while processing - ignoring!`);
+      return res.sendStatus(200);
+    }
+
+    if (session.status === 'failed') {
+      try {
+        await sendWhatsAppMessage(
+          from,
+          'Failed to send your video.\n\n' +
+          'Please compress your video again and try with a new code.'
+        );
+      } catch (err) {
+        console.error('Failed retry message:', err.message);
+      }
+
+      return res.sendStatus(200);
+    }
+
     // Mark as processing
-    session.status = 'sent';
+    session.status = 'processing';
     sessions.set(code, session);
 
     // Send confirmation
@@ -747,6 +801,21 @@ app.post('/webhook', async (req, res) => {
       }
       const totalWaDuration = ((Date.now() - waStartTime) / 1000).toFixed(2);
       console.log(`✅ All WhatsApp sends completed (${totalWaDuration}s total)`);
+      session.status = 'sent';
+    } catch (err) {
+      session.status = 'failed';
+      sessions.set(code, session);
+      console.error('WhatsApp video send failed:', err.message);
+
+      try {
+        await sendWhatsAppMessage(
+          from,
+          'Failed to send your video.\n\n' +
+          'Please compress your video again and try with a new code.'
+        );
+      } catch (messageErr) {
+        console.error('Failed send-failure message:', messageErr.message);
+      }
     } finally {
       // ✅ ALWAYS clean R2, even if send fails
       for (const file of session.files) {
@@ -768,20 +837,21 @@ app.post('/webhook', async (req, res) => {
     // ✅ Start NEW 5 min timer from send time
     const newTimer = setTimeout(() => {
       sessions.delete(code);
-      console.log(`Session cleaned after send: ${code}`);
+      console.log(`Session cleaned after ${session.status}: ${code}`);
     }, 300000);
 
-    session.status = 'sent';
     session.files = [];           // R2 already deleted
     session.createdAt = Date.now(); // Reset for setInterval
     session.expiryTimer = newTimer; // ✅ Store new timer
     sessions.set(code, session);
 
     // ✅ Track sent code to silently ignore post-deletion duplicates
-    recentlySentCodes.add(code);
-    setTimeout(() => {
-      recentlySentCodes.delete(code);
-    }, 600000); // Keep for 10 mins
+    if (session.status === 'sent') {
+      recentlySentCodes.add(code);
+      setTimeout(() => {
+        recentlySentCodes.delete(code);
+      }, 600000); // Keep for 10 mins
+    }
 
     res.sendStatus(200);
 
@@ -792,9 +862,31 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ========================
+// ERROR HANDLER
+// ========================
+app.use((err, req, res, next) => {
+  if (
+    err?.message === 'Request aborted' ||
+    err?.code === 'ECONNABORTED' ||
+    err?.type === 'request.aborted'
+  ) {
+    console.warn('Client aborted upload - cleaning up');
+    if (!res.headersSent) {
+      res.status(499).end();
+    }
+    return;
+  }
+
+  console.error('Unhandled error:', err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ========================
 // START SERVER
 // ========================
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
 ================================
 🚀 StatusDrop Server Running!
@@ -803,3 +895,7 @@ Local: http://localhost:${PORT}
 ================================
   `);
 });
+
+server.requestTimeout = 0;
+server.headersTimeout = 620000;
+server.keepAliveTimeout = 610000;
