@@ -251,7 +251,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
 
           const chunkTimer = setTimeout(() => {
             if (chunkCommand) {
-              try { chunkCommand.kill('SIGKILL'); } catch (e) {}
+              try { chunkCommand.kill('SIGKILL'); } catch (e) { }
             }
             finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
           }, 300000);
@@ -261,7 +261,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setDuration(chunkDuration)
             .outputOptions([
               '-c:v libx264',
-              '-crf 23',                        // ✅ quality control
+              '-crf 20',                        // ✅ quality control
               `-maxrate ${videoBitrateK}k`,      // ✅ hard size ceiling
               `-bufsize ${videoBitrateK}k`,      // ✅ tight buffer
               '-preset medium',                 // ✅ better quality
@@ -321,7 +321,7 @@ function compressVideo(inputPath, outputPath, knownDuration) {
 
     const timeoutId = setTimeout(() => {
       if (ffmpegCommand) {
-        try { ffmpegCommand.kill('SIGKILL'); } catch (e) {}
+        try { ffmpegCommand.kill('SIGKILL'); } catch (e) { }
       }
       finish(new Error('compressVideo timeout after 10 minutes'));
     }, 600000);
@@ -343,7 +343,7 @@ function compressVideo(inputPath, outputPath, knownDuration) {
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
           '-c:v libx264',
-          '-crf 23',                          // ✅ quality control
+          '-crf 20',                          // ✅ quality control
           `-maxrate ${videoBitrateK}k`,        // ✅ hard size ceiling
           `-bufsize ${videoBitrateK}k`,        // ✅ tight buffer
           '-preset medium',                   // ✅ better quality
@@ -642,7 +642,7 @@ app.post('/api/process', limiter, async (req, res) => {
             await compressVideo(localInputPath, outputPath, duration);
 
             const url = await uploadToR2(outputPath, outputFileName);
-            await fs.promises.unlink(outputPath).catch(() => {});
+            await fs.promises.unlink(outputPath).catch(() => { });
 
             console.log(`R2 upload done: ${outputFileName} ✅`);
             return [{ fileName: outputFileName, url }];
@@ -657,7 +657,7 @@ app.post('/api/process', limiter, async (req, res) => {
               chunkPaths.map(async (chunkPath) => {
                 const chunkFileName = path.basename(chunkPath);
                 const url = await uploadToR2(chunkPath, chunkFileName);
-                await fs.promises.unlink(chunkPath).catch(() => {});
+                await fs.promises.unlink(chunkPath).catch(() => { });
                 console.log(`R2 chunk done: ${chunkFileName} ✅`);
                 return { fileName: chunkFileName, url };
               })
@@ -668,7 +668,7 @@ app.post('/api/process', limiter, async (req, res) => {
 
         } finally {
           // Always clean local temp file
-          await fs.promises.unlink(localInputPath).catch(() => {});
+          await fs.promises.unlink(localInputPath).catch(() => { });
         }
       })
     );
@@ -873,7 +873,7 @@ app.post('/webhook', async (req, res) => {
           `4. Done! 🎉\n\n` +
           `Powered by StatusDrop 💚`
         );
-        
+
         const videoSendDuration = ((Date.now() - videoSendStart) / 1000).toFixed(2);
         console.log(`✅ WhatsApp video ${i + 1}/${session.files.length} sent (${videoSendDuration}s)`);
 
