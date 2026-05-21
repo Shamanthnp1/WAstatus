@@ -1714,24 +1714,9 @@
       updateProgressBar(0);
       setStep(1);
       setStatus('📤', 'Uploading video to server...');
-      // Show current file being processed
-      if (files.length > 0) {
-        showCurrentFile(files[0].name);
-      }
-      animateProgress();
-
+      
       try {
-        const formData = new FormData();
-        files.forEach(file => formData.append('videos', file));
-
-        const response = await fetch(`${BACKEND_URL}/api/compress`, {
-          method: 'POST',
-          body: formData
-        });
-
-        const data = await response.json();
-
-        if (!data.success) throw new Error(data.error || 'Compression failed!');
+        const data = await uploadAndProcess(files);
 
         activationCode = data.activationCode;
         waLink = data.waLink;
@@ -1742,6 +1727,7 @@
         setTimeout(() => showActivation(), 1000);
 
       } catch (error) {
+        stopProcessingSimulation();
         clearInterval(progressInterval);
 
         // ✅ Friendly error messages
@@ -1765,21 +1751,139 @@
       }
     }
 
+    async function uploadAndProcess(files) {
+      const allFileInfos = [];
+
+      // ── PHASE 1: Upload each file directly to R2 ──
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        showCurrentFile(file.name);
+        updateStatus(`Uploading ${file.name}... (${i + 1}/${files.length})`);
+
+        // 1a. Get presigned URL from your server
+        const presignRes = await fetch(`${BACKEND_URL}/api/presign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: file.type,
+            fileSize: file.size
+          })
+        });
+
+        if (!presignRes.ok) {
+          const err = await presignRes.json();
+          throw new Error(err.error || 'Failed to get upload URL');
+        }
+
+        const { presignedUrl, key } = await presignRes.json();
+
+        // 1b. Upload directly to R2 (bypasses Railway!)
+        const uploadRes = await fetch(presignedUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type },
+          body: file
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error(`R2 upload failed: ${uploadRes.status}`);
+        }
+
+        console.log(`✅ Uploaded ${file.name} directly to R2`);
+
+        allFileInfos.push({
+          key,
+          originalName: file.name,
+          size: file.size
+        });
+
+        updateProgress(((i + 1) / files.length) * 50); // 0-50% = upload phase
+      }
+
+      // ── PHASE 2: Tell server to process the uploaded files ──
+      updateStatus('Processing videos...');
+
+      // Start the smooth simulation from 50% to 90%
+      startProcessingSimulation();
+
+      const processRes = await fetch(`${BACKEND_URL}/api/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: allFileInfos })
+      });
+
+      // Stop the simulation as we got a response or error
+      stopProcessingSimulation();
+
+      if (!processRes.ok) {
+        const err = await processRes.json();
+        throw new Error(err.error || 'Processing failed');
+      }
+
+      const result = await processRes.json();
+      updateProgress(100);
+
+      return result; // { activationCode, waLink, fileCount }
+    }
+
+    function updateStatus(text) {
+      let icon = '⚙️';
+      if (text.startsWith('Uploading')) {
+        icon = '📤';
+        setStep(1);
+      } else if (text.startsWith('Processing')) {
+        icon = '⚙️';
+        setStep(2);
+      }
+      setStatus(icon, text);
+    }
+
+    function updateProgress(value) {
+      updateProgressBar(value);
+    }
+
+    let processingInterval;
+    function startProcessingSimulation() {
+      let currentVal = 50;
+      // We want to go from 50 to 90 over, say, 30 seconds
+      const totalDuration = 30000; // 30s
+      const intervalTime = 100; // every 100ms
+      const step = (40 / (totalDuration / intervalTime));
+
+      setStep(2);
+      setStatus('⚙️', 'Compressing for maximum quality...');
+
+      processingInterval = setInterval(() => {
+        currentVal += step;
+        if (currentVal >= 90) {
+          currentVal = 90;
+          clearInterval(processingInterval);
+        }
+        updateProgressBar(currentVal);
+
+        // Advance step indicators based on simulated progress
+        if (currentVal > 50 && currentVal <= 65) {
+          setStep(2);
+        } else if (currentVal > 65 && currentVal <= 80) {
+          setStep(3);
+          setStatus('✂️', 'Optimizing video chunks...');
+        } else if (currentVal > 80 && currentVal < 90) {
+          setStep(4);
+          setStatus('☁️', 'Uploading processed clips to cloud...');
+        }
+      }, intervalTime);
+    }
+
+    function stopProcessingSimulation() {
+      if (processingInterval) {
+        clearInterval(processingInterval);
+      }
+    }
+
     let progressInterval;
     let currentProgress = 0;
     let targetProgress = 0;
-
-    // Smooth progress animation
-    function animateToTarget() {
-      if (progressInterval) clearInterval(progressInterval);
-      progressInterval = setInterval(() => {
-        if (currentProgress < targetProgress) {
-          currentProgress += 0.5;
-          if (currentProgress > targetProgress) currentProgress = targetProgress;
-          updateProgressBar(currentProgress);
-        }
-      }, 30);
-    }
 
     function updateProgressBar(pct) {
       const fill = document.getElementById('mainProgressFill');
@@ -1811,132 +1915,8 @@
       if (nameEl) nameEl.textContent = name;
     }
 
-    function animateProgress() {
-      // Detect if any file is large (likely needs splitting)
-      const hasLargeFile = files.some(f => f.size > 30 * 1024 * 1024);
-      const totalSizeMB = files.reduce((s, f) => s + f.size, 0) / (1024 * 1024);
-
-      // Estimate total time based on file size
-      // ~0.25s per MB for ultrafast encoding (rough estimate)
-      const estimatedEncodeSecs = Math.min(
-        Math.max(totalSizeMB * 0.25, 15),
-        120
-      );
-
-      console.log(
-        `Estimated encode time: ${estimatedEncodeSecs}s ` +
-        `for ${totalSizeMB.toFixed(1)}MB`
-      );
-
-      // Stage 1: Uploading to server (0→10%)
-      // Real upload time depends on file size + connection
-      currentProgress = 0;
-      targetProgress = 10;
-      setStatus('📤', 'Uploading video to server...');
-      setStep(1);
-      animateToTarget();
-
-      if (hasLargeFile) {
-        // ── LONG VIDEO PATH ──────────────────────────
-
-        // Stage 2: Compressing/splitting (10→55%)
-        // Starts after ~2s upload buffer
-        setTimeout(() => {
-          targetProgress = 55;
-          setStatus('⚙️', 'Splitting & compressing into 29s clips...');
-          setStep(2);
-          animateToTarget();
-        }, 2000);
-
-        // Stage 3: Still encoding halfway through estimated time
-        setTimeout(() => {
-          if (currentProgress < 60) {
-            targetProgress = 60;
-            setStatus('✂️', 'Encoding chunks in parallel...');
-            setStep(3);
-            animateToTarget();
-          }
-        }, (estimatedEncodeSecs * 0.4) * 1000);
-
-        // Stage 4: R2 upload (75→88%)
-        // Starts near end of estimated encode time
-        setTimeout(() => {
-          if (currentProgress < 80) {
-            targetProgress = 80;
-            setStatus('☁️', 'Uploading clips to cloud...');
-            setStep(4);
-            animateToTarget();
-          }
-        }, (estimatedEncodeSecs * 0.75) * 1000);
-
-        // Stage 4b: Almost done — hold at 88% until server responds
-        setTimeout(() => {
-          if (currentProgress < 88) {
-            targetProgress = 88;
-            setStatus('☁️', 'Almost ready...');
-            animateToTarget();
-          }
-        }, (estimatedEncodeSecs * 0.9) * 1000);
-
-      } else {
-        // ── SHORT VIDEO PATH ─────────────────────────
-
-        // Stage 2: Compressing (10→60%)
-        setTimeout(() => {
-          targetProgress = 60;
-          setStatus('⚙️', 'Compressing for maximum quality...');
-          setStep(2);
-          animateToTarget();
-        }, 2000);
-
-        // Stage 3+4: R2 upload (60→88%)
-        setTimeout(() => {
-          if (currentProgress < 75) {
-            targetProgress = 75;
-            setStatus('☁️', 'Uploading to cloud storage...');
-            setStep(3);
-            setStep(4);
-            animateToTarget();
-          }
-        }, (estimatedEncodeSecs * 0.6) * 1000);
-
-        // Stage 4b: Hold at 88%
-        setTimeout(() => {
-          if (currentProgress < 88) {
-            targetProgress = 88;
-            setStatus('☁️', 'Almost ready...');
-            animateToTarget();
-          }
-        }, (estimatedEncodeSecs * 0.85) * 1000);
-      }
-
-      // ── BOTH PATHS: Reassurance messages ─────────
-      // Show reassurance if taking longer than 30s
-      setTimeout(() => {
-        if (currentProgress < 90) {
-          setStatus(
-            '⏳',
-            `Still working... Large videos take ~${Math.round(estimatedEncodeSecs)}s`
-          );
-        }
-      }, 30000);
-
-      // Extra reassurance at 60s
-      setTimeout(() => {
-        if (currentProgress < 90) {
-          setStatus('💪', 'Almost there! Hang tight...');
-        }
-      }, 60000);
-
-      // Extra reassurance at 90s
-      setTimeout(() => {
-        if (currentProgress < 90) {
-          setStatus('🔄', 'Final steps... Nearly done!');
-        }
-      }, 90000);
-    }
-
     function completeProgress() {
+      stopProcessingSimulation();
       clearInterval(progressInterval);
       currentProgress = 100;
       targetProgress = 100;
@@ -2091,6 +2071,7 @@
       // ✅ Clear countdown timer
       if (countdownInterval) clearInterval(countdownInterval);
       if (progressInterval) clearInterval(progressInterval);
+      stopProcessingSimulation();
 
       // ✅ Reset timer UI
       document.getElementById('timerDisplay').textContent = '05:00';
