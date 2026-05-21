@@ -1587,538 +1587,530 @@
   </footer>
 
   <script>
-    // ✅ Backend URL
-    const BACKEND_URL = 'https://api.wastatusvideo.com';
+  // ✅ Backend URL
+  const BACKEND_URL = 'https://api.wastatusvideo.com';
 
-    let files = [];
-    let waLink = '';
-    let activationCode = '';
-    let fileCount = 0;
-    const MAX_SIZE = 300 * 1024 * 1024;
-    const MAX_FILES = 3; // ✅ Add this
-    const LONG_VIDEO_THRESHOLD = 30 * 1024 * 1024; // 30MB — show split hint
+  let files = [];
+  let waLink = '';
+  let activationCode = '';
+  let fileCount = 0;
+  const MAX_SIZE = 300 * 1024 * 1024;
+  const MAX_FILES = 3;
 
-    const uploadZone = document.getElementById('uploadZone');
-    const fileInput = document.getElementById('fileInput');
+  const uploadZone = document.getElementById('uploadZone');
+  const fileInput = document.getElementById('fileInput');
 
-    uploadZone.addEventListener('click', () => fileInput.click());
+  uploadZone.addEventListener('click', () => fileInput.click());
 
-    uploadZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      uploadZone.classList.add('dragover');
-    });
+  uploadZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadZone.classList.add('dragover');
+  });
 
-    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+  uploadZone.addEventListener('dragleave', () => 
+    uploadZone.classList.remove('dragover')
+  );
 
-    uploadZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      uploadZone.classList.remove('dragover');
-      const dropped = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/'));
-      addFiles(dropped);
-    });
+  uploadZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragover');
+    const dropped = Array.from(e.dataTransfer.files)
+      .filter(f => f.type.startsWith('video/'));
+    addFiles(dropped);
+  });
 
-    fileInput.addEventListener('change', (e) => {
-      addFiles(Array.from(e.target.files));
-      fileInput.value = '';
-    });
+  fileInput.addEventListener('change', (e) => {
+    addFiles(Array.from(e.target.files));
+    fileInput.value = '';
+  });
 
-    function addFiles(newFiles) {
-      for (const file of newFiles) {
-
-        // ✅ Check file count
-        if (files.length >= MAX_FILES) {
-          alert(
-            `Maximum ${MAX_FILES} videos allowed!\n\n` +
-            `Remove a video first to add more.`
-          );
-          break;
-        }
-
-        // ✅ Check total size
-        const totalSize = files.reduce((s, f) => s + f.size, 0);
-        if (totalSize + file.size > MAX_SIZE) {
-          alert(
-            `Cannot add ${file.name}!\n` +
-            `Total size would exceed 300MB!`
-          );
-          break;
-        }
-
-        files.push(file);
+  function addFiles(newFiles) {
+    for (const file of newFiles) {
+      if (files.length >= MAX_FILES) {
+        alert(`Maximum ${MAX_FILES} videos allowed!\n\nRemove a video first.`);
+        break;
       }
-      renderFiles();
-    }
-
-    function renderFiles() {
-      const container = document.getElementById('filesContainer');
-      const filesList = document.getElementById('filesList');
-      const compressBtn = document.getElementById('compressBtn');
-
-      if (files.length === 0) {
-        filesList.classList.remove('visible');
-        compressBtn.disabled = true;
-        return;
-      }
-
-      filesList.classList.add('visible');
-      compressBtn.disabled = false;
-
-      container.innerHTML = files.map((file, index) => {
-        return `
-          <div class="file-item">
-            <div class="file-icon">🎬</div>
-            <div class="file-info">
-              <div class="file-name">${file.name}</div>
-              <div class="file-size">${formatSize(file.size)}</div>
-            </div>
-            <button class="file-remove" onclick="removeFile(${index})">✕</button>
-          </div>
-        `;
-      }).join('');
-
       const totalSize = files.reduce((s, f) => s + f.size, 0);
-      document.getElementById('totalSize').textContent = formatSize(totalSize);
-    }
-
-    function removeFile(index) {
-      files.splice(index, 1);
-      renderFiles();
-    }
-
-    function clearFiles() {
-      files = [];
-      renderFiles();
-    }
-
-    function formatSize(bytes) {
-      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    }
-
-    async function startCompression() {
-      if (files.length === 0) return;
-
-      document.getElementById('progressCard').style.display = 'block';
-      document.getElementById('compressBtn').disabled = true;
-
-      // ✅ Smooth scroll to progress card
-      setTimeout(() => {
-        document.getElementById('progressCard').scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        });
-      }, 100); // Small delay so display:block renders first
-
-      currentProgress = 0;
-      targetProgress = 0;
-      updateProgressBar(0);
-      setStep(1);
-      setStatus('📤', 'Uploading video to server...');
-      
-      try {
-        const data = await uploadAndProcess(files);
-
-        activationCode = data.activationCode;
-        waLink = data.waLink;
-        fileCount = data.fileCount;
-
-        completeProgress();
-
-        setTimeout(() => showActivation(), 1000);
-
-      } catch (error) {
-        stopProcessingSimulation();
-        clearInterval(progressInterval);
-
-        // ✅ Friendly error messages
-        if (error.message.includes('Daily limit')) {
-          alert(
-            '⚠️ Daily limit reached!\n\n' +
-            'You have used all your free uploads for today.\n' +
-            'Come back tomorrow for more! 🙏'
-          );
-        } else if (error.message.includes('429')) {
-          alert(
-            '⚠️ Too many requests!\n\n' +
-            'Please wait a moment and try again.'
-          );
-        } else {
-          alert('❌ Error: ' + error.message);
-        }
-
-        document.getElementById('progressCard').style.display = 'none';
-        document.getElementById('compressBtn').disabled = false;
+      if (totalSize + file.size > MAX_SIZE) {
+        alert(`Cannot add ${file.name}!\nTotal size would exceed 300MB!`);
+        break;
       }
+      files.push(file);
+    }
+    renderFiles();
+  }
+
+  function renderFiles() {
+    const container = document.getElementById('filesContainer');
+    const filesList = document.getElementById('filesList');
+    const compressBtn = document.getElementById('compressBtn');
+
+    if (files.length === 0) {
+      filesList.classList.remove('visible');
+      compressBtn.disabled = true;
+      return;
     }
 
-    async function uploadAndProcess(files) {
-      const allFileInfos = [];
+    filesList.classList.add('visible');
+    compressBtn.disabled = false;
 
-      // ── PHASE 1: Upload each file directly to R2 ──
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+    container.innerHTML = files.map((file, index) => `
+      <div class="file-item">
+        <div class="file-icon">\u{1F3AC}</div>
+        <div class="file-info">
+          <div class="file-name">${file.name}</div>
+          <div class="file-size">${formatSize(file.size)}</div>
+        </div>
+        <button class="file-remove" onclick="removeFile(${index})">\u{2715}</button>
+      </div>
+    `).join('');
 
-        showCurrentFile(file.name);
-        updateStatus(`Uploading ${file.name}... (${i + 1}/${files.length})`);
+    const totalSize = files.reduce((s, f) => s + f.size, 0);
+    document.getElementById('totalSize').textContent = formatSize(totalSize);
+  }
 
-        // 1a. Get presigned URL from your server
-        const presignRes = await fetch(`${BACKEND_URL}/api/presign`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: file.name,
-            contentType: file.type,
-            fileSize: file.size
-          })
-        });
+  function removeFile(index) {
+    files.splice(index, 1);
+    renderFiles();
+  }
 
-        if (!presignRes.ok) {
-          const err = await presignRes.json();
-          throw new Error(err.error || 'Failed to get upload URL');
+  function clearFiles() {
+    files = [];
+    renderFiles();
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // ========================
+  // REAL UPLOAD WITH PROGRESS
+  // ========================
+  function uploadToR2WithProgress(presignedUrl, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const pct = (e.loaded / e.total) * 100;
+          onProgress(pct);
         }
-
-        const { presignedUrl, key } = await presignRes.json();
-
-        // 1b. Upload directly to R2 (bypasses Railway!)
-        const uploadRes = await fetch(presignedUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': file.type },
-          body: file
-        });
-
-        if (!uploadRes.ok) {
-          throw new Error(`R2 upload failed: ${uploadRes.status}`);
-        }
-
-        console.log(`✅ Uploaded ${file.name} directly to R2`);
-
-        allFileInfos.push({
-          key,
-          originalName: file.name,
-          size: file.size
-        });
-
-        updateProgress(((i + 1) / files.length) * 50); // 0-50% = upload phase
-      }
-
-      // ── PHASE 2: Tell server to process the uploaded files ──
-      updateStatus('Processing videos...');
-
-      // Start the smooth simulation from 50% to 90%
-      startProcessingSimulation();
-
-      const processRes = await fetch(`${BACKEND_URL}/api/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: allFileInfos })
       });
 
-      // Stop the simulation as we got a response or error
-      stopProcessingSimulation();
-
-      if (!processRes.ok) {
-        const err = await processRes.json();
-        throw new Error(err.error || 'Processing failed');
-      }
-
-      const result = await processRes.json();
-      updateProgress(100);
-
-      return result; // { activationCode, waLink, fileCount }
-    }
-
-    function updateStatus(text) {
-      let icon = '⚙️';
-      if (text.startsWith('Uploading')) {
-        icon = '📤';
-        setStep(1);
-      } else if (text.startsWith('Processing')) {
-        icon = '⚙️';
-        setStep(2);
-      }
-      setStatus(icon, text);
-    }
-
-    function updateProgress(value) {
-      updateProgressBar(value);
-    }
-
-    let processingInterval;
-    function startProcessingSimulation() {
-      let currentVal = 50;
-      // We want to go from 50 to 90 over, say, 30 seconds
-      const totalDuration = 30000; // 30s
-      const intervalTime = 100; // every 100ms
-      const step = (40 / (totalDuration / intervalTime));
-
-      setStep(2);
-      setStatus('⚙️', 'Compressing for maximum quality...');
-
-      processingInterval = setInterval(() => {
-        currentVal += step;
-        if (currentVal >= 90) {
-          currentVal = 90;
-          clearInterval(processingInterval);
-        }
-        updateProgressBar(currentVal);
-
-        // Advance step indicators based on simulated progress
-        if (currentVal > 50 && currentVal <= 65) {
-          setStep(2);
-        } else if (currentVal > 65 && currentVal <= 80) {
-          setStep(3);
-          setStatus('✂️', 'Optimizing video chunks...');
-        } else if (currentVal > 80 && currentVal < 90) {
-          setStep(4);
-          setStatus('☁️', 'Uploading processed clips to cloud...');
-        }
-      }, intervalTime);
-    }
-
-    function stopProcessingSimulation() {
-      if (processingInterval) {
-        clearInterval(processingInterval);
-      }
-    }
-
-    let progressInterval;
-    let currentProgress = 0;
-    let targetProgress = 0;
-
-    function updateProgressBar(pct) {
-      const fill = document.getElementById('mainProgressFill');
-      const pctEl = document.getElementById('progressPct');
-      if (fill) fill.style.width = pct + '%';
-      if (pctEl) pctEl.textContent = Math.round(pct) + '%';
-    }
-
-    function setStatus(icon, text) {
-      document.getElementById('statusIcon').textContent = icon;
-      document.getElementById('statusText').textContent = text;
-    }
-
-    function setStep(stepNum) {
-      for (let i = 1; i <= 5; i++) {
-        const el = document.getElementById(`step${i}Indicator`);
-        if (!el) continue;
-        el.classList.remove('active', 'done');
-
-        if (i < stepNum) el.classList.add('done');
-        if (i === stepNum) el.classList.add('active');
-      }
-    }
-
-    function showCurrentFile(name) {
-      const box = document.getElementById('currentFileBox');
-      const nameEl = document.getElementById('currentFileName');
-      if (box) box.style.display = 'block';
-      if (nameEl) nameEl.textContent = name;
-    }
-
-    function completeProgress() {
-      stopProcessingSimulation();
-      clearInterval(progressInterval);
-      currentProgress = 100;
-      targetProgress = 100;
-      updateProgressBar(100);
-      setStatus('✅', 'Done! Your videos are ready!');
-      if (fileCount > files.length) {
-        document.getElementById('step3Indicator')
-          .classList.remove('skipped');
-
-        document.getElementById('step3Indicator')
-          .classList.add('done');
-      }
-
-      setStep(5);
-
-      // Green glow on complete
-      const fill = document.getElementById('mainProgressFill');
-      if (fill) {
-        fill.style.boxShadow = '0 0 20px rgba(37,211,102,0.5)';
-      }
-    }
-
-    let countdownInterval;
-
-    function showActivation() {
-      document.getElementById('activationCode').textContent = activationCode;
-
-      // Show clip count if video was split
-      if (fileCount > files.length) {
-        document.getElementById('clipCount').textContent = fileCount;
-        document.getElementById('fileCountInfo').style.display = 'block';
-      }
-
-      document.getElementById('activationSection').classList.add('visible');
-
-      // ✅ Smooth scroll with offset so title is visible
-      setTimeout(() => {
-        document.getElementById('activationSection').scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        });
-      }, 100);
-
-      // ✅ Start 5 minute countdown
-      startCountdown(5 * 60); // 300 seconds
-    }
-
-    function startCountdown(seconds) {
-      let remaining = seconds;
-      const timerDisplay = document.getElementById('timerDisplay');
-      const timerBox = document.getElementById('timerBox');
-      const expiredBox = document.getElementById('expiredBox');
-      const waButton = document.getElementById('waButton');
-      const urgencyWarning = document.getElementById('urgencyWarning');
-
-      // Clear any existing countdown
-      if (countdownInterval) clearInterval(countdownInterval);
-
-      const mins = Math.floor(remaining / 60);
-      const secs = remaining % 60;
-      timerDisplay.textContent = `0${mins}:${secs < 10 ? '0' : ''}${secs}`;
-      timerDisplay.style.color = '#25D366';
-      timerBox.style.display = 'block';
-      expiredBox.style.display = 'none';
-      waButton.disabled = false;
-      waButton.style.opacity = '';
-      waButton.style.cursor = '';
-      urgencyWarning.style.display = 'flex';
-      urgencyWarning.style.borderColor = '#856404';
-      urgencyWarning.style.background = '#1a1500';
-      urgencyWarning.style.color = '#ffc107';
-
-      countdownInterval = setInterval(() => {
-        remaining--;
-
-        const mins = Math.floor(remaining / 60);
-        const secs = remaining % 60;
-        const display = `0${mins}:${secs < 10 ? '0' : ''}${secs}`;
-        timerDisplay.textContent = display;
-
-        // Turn red in last 60 seconds
-        if (remaining <= 60) {
-          timerDisplay.style.color = '#ff4444';
-          urgencyWarning.style.borderColor = '#ff4444';
-          urgencyWarning.style.background = '#1a0000';
-          urgencyWarning.style.color = '#ff4444';
-        }
-
-        // Turn orange at 2 minutes
-        if (remaining <= 120 && remaining > 60) {
-          timerDisplay.style.color = '#ffc107';
-        }
-
-        // Expired!
-        if (remaining <= 0) {
-          clearInterval(countdownInterval);
-          timerBox.style.display = 'none';
-          expiredBox.style.display = 'block';
-          waButton.disabled = true;
-          waButton.style.opacity = '0.4';
-          waButton.style.cursor = 'not-allowed';
-          urgencyWarning.style.display = 'none';
-        }
-      }, 1000);
-    }
-
-    function openWhatsApp() {
-      window.open(waLink, '_blank');
-      setTimeout(() => showSuccess(), 3000);
-    }
-
-    function copyCode() {
-      navigator.clipboard.writeText(activationCode);
-      const btn = document.querySelector('.code-copy');
-      btn.textContent = '✅ Copied!';
-      setTimeout(() => { btn.textContent = '📋 Copy Code'; }, 2000);
-    }
-
-    function showSuccess() {
-      const clipCountEl = document.getElementById('successClipCount');
-      const clipLabelEl = document.getElementById('successClipLabel');
-
-      if (clipCountEl) {
-        clipCountEl.textContent = fileCount || 1;
-      }
-
-      if (clipLabelEl) {
-        if (!fileCount || fileCount <= 1) {
-          // ✅ Short video — single video
-          clipLabelEl.textContent = 'Video Sent';
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
         } else {
-          // ✅ Long video — multiple clips
-          clipLabelEl.textContent = 'Clips Sent';
+          reject(new Error(`R2 upload failed: ${xhr.status}`));
         }
-      }
+      });
 
-      document.getElementById('successSection').classList.add('visible');
-      setTimeout(() => {
-        document.getElementById('successSection').scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        });
-      }, 100);
-    }
+      xhr.addEventListener('error', () => 
+        reject(new Error('Network error during upload'))
+      );
+      xhr.addEventListener('abort', () => 
+        reject(new Error('Upload cancelled'))
+      );
 
-    function resetApp() {
-      files = [];
-      waLink = '';
-      activationCode = '';
-      fileCount = 0;
+      xhr.open('PUT', presignedUrl);
+      xhr.setRequestHeader('Content-Type', file.type);
+      xhr.send(file);
+    });
+  }
 
-      // ✅ Clear countdown timer
-      if (countdownInterval) clearInterval(countdownInterval);
-      if (progressInterval) clearInterval(progressInterval);
+  // ========================
+  // MAIN FLOW
+  // ========================
+  async function startCompression() {
+    if (files.length === 0) return;
+
+    document.getElementById('progressCard').style.display = 'block';
+    document.getElementById('compressBtn').disabled = true;
+
+    setTimeout(() => {
+      document.getElementById('progressCard').scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }, 100);
+
+    updateProgressBar(0);
+    setStep(1);
+    setStatus('\u{1F4E4}', 'Preparing upload...');
+
+    try {
+      const data = await uploadAndProcess(files);
+
+      activationCode = data.activationCode;
+      waLink = data.waLink;
+      fileCount = data.fileCount;
+
+      completeProgress();
+      setTimeout(() => showActivation(), 1000);
+
+    } catch (error) {
       stopProcessingSimulation();
 
-      // ✅ Reset timer UI
-      document.getElementById('timerDisplay').textContent = '05:00';
-      document.getElementById('timerDisplay').style.color = '#25D366';
-      document.getElementById('timerBox').style.display = 'block';
-      document.getElementById('expiredBox').style.display = 'none';
-
-      const waBtn = document.getElementById('waButton');
-      waBtn.disabled = false;
-      waBtn.style.opacity = '1';
-      waBtn.style.cursor = 'pointer';
-
-      const urgency = document.getElementById('urgencyWarning');
-      urgency.style.display = 'flex';
-      urgency.style.borderColor = '#856404';
-      urgency.style.background = '#1a1500';
-      urgency.style.color = '#ffc107';
-
-      renderFiles();
+      if (error.message.includes('Daily limit')) {
+        alert(
+          '\u{26A0}\u{FE0F} Daily limit reached!\n\n' +
+          'You have used all your free uploads for today.\n' +
+          'Come back tomorrow! \u{1F64F}'
+        );
+      } else if (error.message.includes('429')) {
+        alert('\u{26A0}\u{FE0F} Too many requests!\n\nPlease wait and try again.');
+      } else {
+        alert('\u{274C} Error: ' + error.message);
+      }
 
       document.getElementById('progressCard').style.display = 'none';
-      document.getElementById('fileCountInfo').style.display = 'none';
-      document.getElementById('activationSection').classList.remove('visible');
-      document.getElementById('successSection').classList.remove('visible');
-      currentProgress = 0;
-      targetProgress = 0;
-      updateProgressBar(0);
+      document.getElementById('compressBtn').disabled = false;
+    }
+  }
+
+  async function uploadAndProcess(filesToProcess) {
+    const allFileInfos = [];
+    const totalFiles = filesToProcess.length;
+
+    // ── PHASE 1: Upload each file directly to R2 (0% → 50%) ──
+    for (let i = 0; i < totalFiles; i++) {
+      const file = filesToProcess[i];
+      const fileLabel = `${file.name} (${i + 1}/${totalFiles})`;
+
+      showCurrentFile(file.name);
+      setStatus('\u{1F4E4}', `Uploading ${fileLabel}...`);
       setStep(1);
-      setStatus('⚙️', 'Starting...');
-      document.getElementById('currentFileBox').style.display = 'none';
-      document.getElementById('mainProgressFill').style.boxShadow = '';
 
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+      // Get presigned URL
+      const presignRes = await fetch(`${BACKEND_URL}/api/presign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          contentType: file.type,
+          fileSize: file.size
+        })
+      });
 
-    function shareApp() {
-      if (navigator.share) {
-        navigator.share({
-          title: 'StatusDrop',
-          text: 'Send HD videos to WhatsApp Status for FREE! Auto-splits long videos!',
-          url: window.location.href
-        });
-      } else {
-        navigator.clipboard.writeText(window.location.href);
-        alert('Link copied! Share it! 🔗');
+      if (!presignRes.ok) {
+        const err = await presignRes.json();
+        throw new Error(err.error || 'Failed to get upload URL');
       }
+
+      const { presignedUrl, key } = await presignRes.json();
+
+      // Upload directly to R2 with real progress
+      const fileStartPct = (i / totalFiles) * 50;       // e.g. 0% for file 1
+      const fileEndPct = ((i + 1) / totalFiles) * 50;   // e.g. 50% for file 1
+
+      await uploadToR2WithProgress(presignedUrl, file, (uploadPct) => {
+        // Map this file's 0-100% into its slice of 0-50%
+        const overall = fileStartPct + (uploadPct / 100) * (fileEndPct - fileStartPct);
+        updateProgressBar(overall);
+        setStatus('\u{1F4E4}', 
+          `Uploading ${fileLabel}... ${Math.round(uploadPct)}%`
+        );
+      });
+
+      console.log(`\u{2705} Uploaded ${file.name} directly to R2`);
+
+      allFileInfos.push({
+        key,
+        originalName: file.name,
+        size: file.size
+      });
     }
-  </script>
+
+    // ── PHASE 2: Tell server to process (50% → 95%) ──
+    setStatus('\u{2699}\u{FE0F}', 'Compressing videos...');
+    setStep(2);
+    updateProgressBar(50);
+
+    // Start simulation scaled to file size
+    const totalSizeMB = filesToProcess.reduce((s, f) => s + f.size, 0) / (1024 * 1024);
+    startProcessingSimulation(totalSizeMB);
+
+    const processRes = await fetch(`${BACKEND_URL}/api/process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: allFileInfos })
+    });
+
+    stopProcessingSimulation();
+
+    if (!processRes.ok) {
+      const err = await processRes.json();
+      throw new Error(err.error || 'Processing failed');
+    }
+
+    const result = await processRes.json();
+    updateProgressBar(98);
+    setStatus('\u{2705}', 'Almost done...');
+
+    return result;
+  }
+
+  // ========================
+  // PROGRESS SIMULATION
+  // Scales with file size so it doesn't freeze
+  // ========================
+  let processingInterval = null;
+
+  function startProcessingSimulation(totalSizeMB) {
+    let current = 50;
+
+    // Estimate processing time: ~1 min per 50MB (rough)
+    // We animate from 50% to 93% over estimated time
+    const estimatedMs = Math.max(30000, (totalSizeMB / 50) * 60000);
+    const targetPct = 93;
+    const range = targetPct - 50; // 43%
+    const intervalMs = 200;
+    const steps = estimatedMs / intervalMs;
+    const stepSize = range / steps;
+
+    console.log(`Processing simulation: ${estimatedMs / 1000}s estimated for ${totalSizeMB.toFixed(0)}MB`);
+
+    processingInterval = setInterval(() => {
+      current += stepSize;
+
+      if (current >= targetPct) {
+        current = targetPct;
+        clearInterval(processingInterval);
+      }
+
+      updateProgressBar(current);
+
+      // Update step indicators based on progress
+      if (current < 65) {
+        setStep(2);
+        setStatus('\u{2699}\u{FE0F}', 'Compressing for maximum quality...');
+      } else if (current < 78) {
+        setStep(3);
+        setStatus('\u{2702}\u{FE0F}', 'Optimizing video chunks...');
+      } else if (current < 93) {
+        setStep(4);
+        setStatus('\u{2601}\u{FE0F}', 'Final steps... Nearly done!');
+      }
+    }, intervalMs);
+  }
+
+  function stopProcessingSimulation() {
+    if (processingInterval) {
+      clearInterval(processingInterval);
+      processingInterval = null;
+    }
+  }
+
+  // ========================
+  // UI HELPERS
+  // ========================
+  function updateProgressBar(pct) {
+    const fill = document.getElementById('mainProgressFill');
+    const pctEl = document.getElementById('progressPct');
+    if (fill) fill.style.width = Math.min(100, pct) + '%';
+    if (pctEl) pctEl.textContent = Math.round(Math.min(100, pct)) + '%';
+  }
+
+  function setStatus(icon, text) {
+    document.getElementById('statusIcon').textContent = icon;
+    document.getElementById('statusText').textContent = text;
+  }
+
+  function setStep(stepNum) {
+    for (let i = 1; i <= 5; i++) {
+      const el = document.getElementById(`step${i}Indicator`);
+      if (!el) continue;
+      el.classList.remove('active', 'done');
+      if (i < stepNum) el.classList.add('done');
+      if (i === stepNum) el.classList.add('active');
+    }
+  }
+
+  function showCurrentFile(name) {
+    const box = document.getElementById('currentFileBox');
+    const nameEl = document.getElementById('currentFileName');
+    if (box) box.style.display = 'block';
+    if (nameEl) nameEl.textContent = name;
+  }
+
+  function completeProgress() {
+    stopProcessingSimulation();
+    updateProgressBar(100);
+    setStatus('\u{2705}', 'Done! Your videos are ready!');
+    setStep(5);
+    const fill = document.getElementById('mainProgressFill');
+    if (fill) fill.style.boxShadow = '0 0 20px rgba(37,211,102,0.5)';
+  }
+
+  // ========================
+  // COUNTDOWN TIMER
+  // ========================
+  let countdownInterval;
+
+  function showActivation() {
+    document.getElementById('activationCode').textContent = activationCode;
+
+    if (fileCount > files.length) {
+      document.getElementById('clipCount').textContent = fileCount;
+      document.getElementById('fileCountInfo').style.display = 'block';
+    }
+
+    document.getElementById('activationSection').classList.add('visible');
+
+    setTimeout(() => {
+      document.getElementById('activationSection').scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }, 100);
+
+    startCountdown(5 * 60);
+  }
+
+  function startCountdown(seconds) {
+    let remaining = seconds;
+    const timerDisplay = document.getElementById('timerDisplay');
+    const timerBox = document.getElementById('timerBox');
+    const expiredBox = document.getElementById('expiredBox');
+    const waButton = document.getElementById('waButton');
+    const urgencyWarning = document.getElementById('urgencyWarning');
+
+    if (countdownInterval) clearInterval(countdownInterval);
+
+    const fmt = (s) => {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `0${m}:${sec < 10 ? '0' : ''}${sec}`;
+    };
+
+    timerDisplay.textContent = fmt(remaining);
+    timerDisplay.style.color = '#25D366';
+    timerBox.style.display = 'block';
+    expiredBox.style.display = 'none';
+    waButton.disabled = false;
+    waButton.style.opacity = '';
+    waButton.style.cursor = '';
+    urgencyWarning.style.display = 'flex';
+    urgencyWarning.style.borderColor = '#856404';
+    urgencyWarning.style.background = '#1a1500';
+    urgencyWarning.style.color = '#ffc107';
+
+    countdownInterval = setInterval(() => {
+      remaining--;
+      timerDisplay.textContent = fmt(remaining);
+
+      if (remaining <= 60) {
+        timerDisplay.style.color = '#ff4444';
+        urgencyWarning.style.borderColor = '#ff4444';
+        urgencyWarning.style.background = '#1a0000';
+        urgencyWarning.style.color = '#ff4444';
+      } else if (remaining <= 120) {
+        timerDisplay.style.color = '#ffc107';
+      }
+
+      if (remaining <= 0) {
+        clearInterval(countdownInterval);
+        timerBox.style.display = 'none';
+        expiredBox.style.display = 'block';
+        waButton.disabled = true;
+        waButton.style.opacity = '0.4';
+        waButton.style.cursor = 'not-allowed';
+        urgencyWarning.style.display = 'none';
+      }
+    }, 1000);
+  }
+
+  // ========================
+  // ACTIONS
+  // ========================
+  function openWhatsApp() {
+    window.open(waLink, '_blank');
+    setTimeout(() => showSuccess(), 3000);
+  }
+
+  // Keep copyCode helper from previous implementation
+  function copyCode() {
+    navigator.clipboard.writeText(activationCode);
+    const btn = document.querySelector('.code-copy');
+    btn.textContent = '\u{2705} Copied!';
+    setTimeout(() => { btn.textContent = '\u{1F4CB} Copy Code'; }, 2000);
+  }
+
+  function showSuccess() {
+    const clipCountEl = document.getElementById('successClipCount');
+    const clipLabelEl = document.getElementById('successClipLabel');
+
+    if (clipCountEl) clipCountEl.textContent = fileCount || 1;
+    if (clipLabelEl) {
+      clipLabelEl.textContent = (!fileCount || fileCount <= 1) 
+        ? 'Video Sent' 
+        : 'Clips Sent';
+    }
+
+    document.getElementById('successSection').classList.add('visible');
+    setTimeout(() => {
+      document.getElementById('successSection').scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }, 100);
+  }
+
+  function resetApp() {
+    files = [];
+    waLink = '';
+    activationCode = '';
+    fileCount = 0;
+
+    if (countdownInterval) clearInterval(countdownInterval);
+    stopProcessingSimulation();
+
+    document.getElementById('timerDisplay').textContent = '05:00';
+    document.getElementById('timerDisplay').style.color = '#25D366';
+    document.getElementById('timerBox').style.display = 'block';
+    document.getElementById('expiredBox').style.display = 'none';
+
+    const waBtn = document.getElementById('waButton');
+    waBtn.disabled = false;
+    waBtn.style.opacity = '1';
+    waBtn.style.cursor = 'pointer';
+
+    const urgency = document.getElementById('urgencyWarning');
+    urgency.style.display = 'flex';
+    urgency.style.borderColor = '#856404';
+    urgency.style.background = '#1a1500';
+    urgency.style.color = '#ffc107';
+
+    renderFiles();
+
+    document.getElementById('progressCard').style.display = 'none';
+    document.getElementById('fileCountInfo').style.display = 'none';
+    document.getElementById('activationSection').classList.remove('visible');
+    document.getElementById('successSection').classList.remove('visible');
+    updateProgressBar(0);
+    setStep(1);
+    setStatus('\u{2699}\u{FE0F}', 'Starting...');
+    document.getElementById('currentFileBox').style.display = 'none';
+
+    const fill = document.getElementById('mainProgressFill');
+    if (fill) fill.style.boxShadow = '';
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function shareApp() {
+    if (navigator.share) {
+      navigator.share({
+        title: 'StatusDrop',
+        text: 'Send HD videos to WhatsApp Status FREE! Auto-splits long videos!',
+        url: window.location.href
+      });
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+      alert('Link copied! Share it! \u{1F517}');
+    }
+  }
+</script>
 </body>
 </html>
