@@ -512,6 +512,16 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
   console.log('Video sent via media ID! ✅');
 }
 
+// ✅ Increase server timeout for long processing
+app.use((req, res, next) => {
+  // Set timeout to 15 minutes for /api/process
+  if (req.path === '/api/process') {
+    req.setTimeout(900000); // 15 minutes
+    res.setTimeout(900000);
+  }
+  next();
+});
+
 // ========================
 // ROUTES
 // ========================
@@ -566,11 +576,9 @@ app.post('/api/upload-url', limiter, async (req, res) => {
 });
 
 // Process already-uploaded videos from R2
-// Process already-uploaded videos from R2
 app.post('/api/process', limiter, async (req, res) => {
   try {
     const { files } = req.body;
-    // files = [{ key, originalName, size }, ...]
 
     if (!files || files.length === 0) {
       return res.status(400).json({ error: 'No files provided!' });
@@ -582,7 +590,7 @@ app.post('/api/process', limiter, async (req, res) => {
 
     // Total size check
     const totalSizeMB = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
-    console.log(`Total size: ${totalSizeMB.toFixed(1)}MB across ${files.length} file(s)`);
+    console.log(`📥 Processing ${files.length} file(s) — Total: ${totalSizeMB.toFixed(1)}MB`);
 
     if (totalSizeMB > 300) {
       return res.status(400).json({
@@ -592,133 +600,155 @@ app.post('/api/process', limiter, async (req, res) => {
 
     const activationCode = generateCode();
     const r2Files = [];
+    const uploadedKeys = files.map(f => f.key);
 
-    console.log(`Processing ${files.length} file(s)...`);
+    console.log(`🔧 Processing ${files.length} file(s) in parallel...`);
 
-    const allGroupResults = await Promise.all(
-      files.map(async (fileInfo) => {
-        const { key, originalName, size } = fileInfo;
-        const inputUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
+    try {
+      // ✅ Process ALL files in parallel
+      const allGroupResults = await Promise.all(
+        files.map(async (fileInfo, index) => {
+          const { key, originalName, size } = fileInfo;
+          const inputUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
-        console.log(`Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+          console.log(`📹 [${index + 1}/${files.length}] Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
 
-        // Download from R2 to local temp file for ffmpeg
-        const localInputPath = path.join('uploads', `input_${uuidv4()}${path.extname(originalName)}`);
+          const localInputPath = path.join('uploads', `input_${uuidv4()}${path.extname(originalName)}`);
 
-        try {
-          // Download the uploaded file from R2
-          console.log(`Downloading from R2: ${key}`);
-          const downloadStart = Date.now();
+          try {
+            // ── STEP 1: Download from R2 ──
+            console.log(`⬇️  [${index + 1}] Downloading from R2: ${key}`);
+            const downloadStart = Date.now();
 
-          const response = await axios.get(inputUrl, {
-            responseType: 'stream',
-            timeout: 300000, // 5 min download timeout
-          });
+            const response = await axios.get(inputUrl, {
+              responseType: 'stream',
+              timeout: 300000,
+            });
 
-          await new Promise((resolve, reject) => {
-            const writer = fs.createWriteStream(localInputPath);
-            response.data.pipe(writer);
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-            response.data.on('error', reject);
-          });
+            await new Promise((resolve, reject) => {
+              const writer = fs.createWriteStream(localInputPath);
+              response.data.pipe(writer);
+              writer.on('finish', resolve);
+              writer.on('error', reject);
+              response.data.on('error', reject);
+            });
 
-          const downloadDuration = ((Date.now() - downloadStart) / 1000).toFixed(2);
-          console.log(`Downloaded in ${downloadDuration}s → ${localInputPath}`);
+            const downloadDuration = ((Date.now() - downloadStart) / 1000).toFixed(2);
+            console.log(`✅ [${index + 1}] Downloaded in ${downloadDuration}s`);
 
-          // Delete the original uploaded file from R2 (we have local copy now)
-          await deleteFromR2(key);
-          console.log(`Deleted original from R2: ${key}`);
+            // ── STEP 2: Delete original from R2 ──
+            await deleteFromR2(key);
+            console.log(`🗑️  [${index + 1}] Deleted original from R2: ${key}`);
 
-          // Get duration
-          const duration = await getVideoDuration(localInputPath);
+            // ── STEP 3: Get duration ──
+            const duration = await getVideoDuration(localInputPath);
+            console.log(`⏱️  [${index + 1}] Duration: ${duration.toFixed(1)}s`);
 
-          if (duration <= 29) {
-            // SHORT VIDEO
-            console.log('Short video — compressing...');
-            const outputFileName = `compressed_${uuidv4()}.mp4`;
-            const outputPath = path.join('compressed', outputFileName);
+            // ── STEP 4: Compress or Split ──
+            if (duration <= 29) {
+              // SHORT VIDEO
+              console.log(`🎬 [${index + 1}] Short video — compressing...`);
+              const outputFileName = `compressed_${uuidv4()}.mp4`;
+              const outputPath = path.join('compressed', outputFileName);
 
-            await compressVideo(localInputPath, outputPath, duration);
+              await compressVideo(localInputPath, outputPath, duration);
 
-            const url = await uploadToR2(outputPath, outputFileName);
-            await fs.promises.unlink(outputPath).catch(() => { });
+              const url = await uploadToR2(outputPath, outputFileName);
+              await fs.promises.unlink(outputPath).catch(() => {});
 
-            console.log(`R2 upload done: ${outputFileName} ✅`);
-            return [{ fileName: outputFileName, url }];
+              console.log(`✅ [${index + 1}] R2 upload done: ${outputFileName}`);
+              return [{ fileName: outputFileName, url }];
 
-          } else {
-            // LONG VIDEO — split
-            console.log(`Long video (${duration.toFixed(1)}s) — splitting...`);
-            const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29);
+            } else {
+              // LONG VIDEO
+              console.log(`✂️  [${index + 1}] Long video (${duration.toFixed(1)}s) — splitting...`);
+              const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29);
 
-            console.log(`Uploading ${chunkPaths.length} chunks to R2...`);
-            const chunkResults = await Promise.all(
-              chunkPaths.map(async (chunkPath) => {
+              console.log(`☁️  [${index + 1}] Uploading ${chunkPaths.length} chunks to R2...`);
+
+              // ✅ Upload chunks sequentially to avoid overwhelming R2
+              const chunkResults = [];
+              for (let i = 0; i < chunkPaths.length; i++) {
+                const chunkPath = chunkPaths[i];
                 const chunkFileName = path.basename(chunkPath);
+                
                 const url = await uploadToR2(chunkPath, chunkFileName);
-                await fs.promises.unlink(chunkPath).catch(() => { });
-                console.log(`R2 chunk done: ${chunkFileName} ✅`);
-                return { fileName: chunkFileName, url };
-              })
-            );
+                await fs.promises.unlink(chunkPath).catch(() => {});
+                
+                console.log(`✅ [${index + 1}] Chunk ${i + 1}/${chunkPaths.length} uploaded: ${chunkFileName}`);
+                chunkResults.push({ fileName: chunkFileName, url });
+              }
 
-            return chunkResults;
+              return chunkResults;
+            }
+
+          } finally {
+            // ✅ Always clean local temp file
+            await fs.promises.unlink(localInputPath).catch(() => {});
           }
+        })
+      );
 
-        } finally {
-          // Always clean local temp file
-          await fs.promises.unlink(localInputPath).catch(() => { });
+      // ── STEP 5: Flatten results ──
+      for (const group of allGroupResults) {
+        for (const { fileName, url } of group) {
+          r2Files.push({ fileName, url });
         }
-      })
-    );
-
-    // Flatten results
-    for (const group of allGroupResults) {
-      for (const { fileName, url } of group) {
-        r2Files.push({ fileName, url });
       }
+
+      console.log(`🎉 All ${r2Files.length} file(s) ready!`);
+
+      // ── STEP 6: Store session ──
+      const expiryTimer = setTimeout(async () => {
+        const session = sessions.get(activationCode);
+        if (session) {
+          for (const file of session.files) {
+            try {
+              await deleteFromR2(file.fileName);
+              console.log(`🗑️  R2 deleted (expired): ${file.fileName}`);
+            } catch (err) {
+              console.error('R2 cleanup error:', err.message);
+            }
+          }
+          sessions.delete(activationCode);
+          console.log(`⏰ Session expired: ${activationCode}`);
+        }
+      }, 300000);
+
+      sessions.set(activationCode, {
+        files: r2Files,
+        createdAt: Date.now(),
+        status: 'pending',
+        expiryTimer: expiryTimer
+      });
+
+      // ── STEP 7: Return success ──
+      const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
+      const waLink = `https://wa.me/${cleanNumber}?text=Activation%20Code%3A%20${activationCode}`;
+
+      res.json({
+        success: true,
+        activationCode,
+        waLink,
+        fileCount: r2Files.length
+      });
+
+    } catch (processingError) {
+      // ✅ Cleanup uploaded files on error
+      console.error('❌ Processing error, cleaning up R2 uploads...');
+      for (const key of uploadedKeys) {
+        try {
+          await deleteFromR2(key);
+          console.log(`🗑️  Cleaned up: ${key}`);
+        } catch (cleanupErr) {
+          console.error(`Failed to cleanup ${key}:`, cleanupErr.message);
+        }
+      }
+      throw processingError;
     }
 
-    console.log(`All ${r2Files.length} file(s) ready! ✅`);
-
-    // Store session
-    const expiryTimer = setTimeout(async () => {
-      const session = sessions.get(activationCode);
-      if (session) {
-        for (const file of session.files) {
-          try {
-            await deleteFromR2(file.fileName);
-            console.log(`R2 deleted (expired): ${file.fileName}`);
-          } catch (err) {
-            console.error('R2 cleanup error:', err.message);
-          }
-        }
-        sessions.delete(activationCode);
-        console.log(`Session expired: ${activationCode}`);
-      }
-    }, 300000);
-
-    sessions.set(activationCode, {
-      files: r2Files,
-      createdAt: Date.now(),
-      status: 'pending',
-      expiryTimer: expiryTimer
-    });
-
-    // WhatsApp link
-    const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
-    const waLink = `https://wa.me/${cleanNumber}?text=Activation%20Code%3A%20${activationCode}`;
-
-    res.json({
-      success: true,
-      activationCode,
-      waLink,
-      fileCount: r2Files.length
-    });
-
   } catch (error) {
-    console.error('Process error:', error);
+    console.error('❌ Process error:', error);
     res.status(500).json({ error: error.message });
   }
 });
