@@ -1952,89 +1952,97 @@
       setStatus('📤', 'Uploading all videos...');
       setStep(1);
 
-      // Track progress per file
       const progressPerFile = new Array(totalFiles).fill(0);
 
       // ── Upload ALL files in PARALLEL ──
       const allFileInfos = await Promise.all(
         filesToProcess.map(async (file, i) => {
-
           showCurrentFile(file.name);
 
-          // Get upload URL
-          const urlRes = await fetch(`${BACKEND_URL}/api/upload-url`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              contentType: file.type,
-              fileSize: file.size
-            })
-          });
+          // ✅ Add timeout to upload URL request
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 60000); // 1 min timeout
 
-          if (!urlRes.ok) {
-            const err = await urlRes.json();
-            throw new Error(err.error || 'Failed to get upload URL');
+          try {
+            const urlRes = await fetch(`${BACKEND_URL}/api/upload-url`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                filename: file.name,
+                contentType: file.type,
+                fileSize: file.size
+              }),
+              signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!urlRes.ok) {
+              const err = await urlRes.json();
+              throw new Error(err.error || 'Failed to get upload URL');
+            }
+
+            const { uploadUrl, key } = await urlRes.json();
+
+            // Upload with progress tracking
+            await uploadToWorkerWithProgress(uploadUrl, file, (pct) => {
+              progressPerFile[i] = pct;
+              const overall = progressPerFile.reduce((a, b) => a + b, 0) / totalFiles;
+              updateProgressBar(overall * 0.5);
+              setStatus('📤', `Uploading ${totalFiles} videos... ${Math.round(overall)}%`);
+            });
+
+            console.log(`✅ Uploaded ${file.name}`);
+
+            return { key, originalName: file.name, size: file.size };
+
+          } catch (err) {
+            clearTimeout(timeoutId);
+            throw err;
           }
-
-          const { uploadUrl, key } = await urlRes.json();
-
-          // Upload with progress tracking per file
-          await uploadToWorkerWithProgress(uploadUrl, file, (pct) => {
-            progressPerFile[i] = pct;
-
-            // Overall = average of all files progress
-            const overall = progressPerFile.reduce((a, b) => a + b, 0) 
-              / totalFiles;
-
-            // Map 0-100% into 0-50% of total bar
-            updateProgressBar(overall * 0.5);
-            setStatus('📤', 
-              `Uploading ${totalFiles} videos... ${Math.round(overall)}%`
-            );
-          });
-
-          console.log(`✅ Uploaded ${file.name}`);
-
-          return {
-            key,
-            originalName: file.name,
-            size: file.size
-          };
         })
       );
 
       // ── PHASE 2: Process on server ──
-      setStatus('⚙️', 'Compressing videos...');
+      setStatus('⚙️', 'Compressing videos on server...');
       setStep(2);
       updateProgressBar(50);
 
-      const totalSizeMB = filesToProcess.reduce(
-        (s, f) => s + f.size, 0
-      ) / (1024 * 1024);
-
+      const totalSizeMB = filesToProcess.reduce((s, f) => s + f.size, 0) / (1024 * 1024);
       startProcessingSimulation(totalSizeMB);
 
-      const processRes = await fetch(`${BACKEND_URL}/api/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: allFileInfos })
-      });
+      // ✅ Add timeout to process request
+      const processController = new AbortController();
+      const processTimeoutId = setTimeout(() => processController.abort(), 900000); // 15 min
 
-      stopProcessingSimulation();
+      try {
+        const processRes = await fetch(`${BACKEND_URL}/api/process`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: allFileInfos }),
+          signal: processController.signal
+        });
 
-      if (!processRes.ok) {
-        const err = await processRes.json();
-        throw new Error(err.error || 'Processing failed');
+        clearTimeout(processTimeoutId);
+        stopProcessingSimulation();
+
+        if (!processRes.ok) {
+          const err = await processRes.json();
+          throw new Error(err.error || 'Processing failed');
+        }
+
+        const result = await processRes.json();
+        updateProgressBar(98);
+        setStatus('✅', 'Almost done...');
+
+        return result;
+
+      } catch (err) {
+        clearTimeout(processTimeoutId);
+        throw err;
       }
 
-      const result = await processRes.json();
-      updateProgressBar(98);
-      setStatus('✅', 'Almost done...');
-
-      return result;
     } finally {
-      // ✅ Always release when done
       releaseWakeLock();
     }
   }
