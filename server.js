@@ -998,16 +998,6 @@ app.use((err, req, res, next) => {
 // ========================
 // START SERVER
 // ========================
-// ── Abort stale R2 multipart uploads on startup ──
-async function abortStaleMultiparts() {
-  try {
-    const res = await axios.post('https://upload.wastatusvideo.com/multipart/abort-stale');
-    console.log('Stale multipart cleanup:', res.data);
-  } catch (err) {
-    console.warn('Stale multipart cleanup failed:', err.message);
-  }
-}
-
 const server = app.listen(PORT, () => {
   console.log(`
 ================================
@@ -1016,7 +1006,6 @@ const server = app.listen(PORT, () => {
 Local: http://localhost:${PORT}
 ================================
   `);
-  abortStaleMultiparts(); // ✅ clean on startup
 });
 
 server.requestTimeout = 0;
