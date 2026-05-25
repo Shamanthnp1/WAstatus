@@ -1116,7 +1116,7 @@
             </div>
             <div id="step4Indicator" class="step-indicator">
               <div class="step-dot"></div>
-              <span>Upload R2</span>
+              <span>Sending</span>
             </div>
             <div id="step5Indicator" class="step-indicator">
               <div class="step-dot"></div>
@@ -2078,15 +2078,15 @@
       updateProgressBar(current);
 
       // Update step indicators based on progress
-      if (current < 65) {
+      if (current < 60) {
         setStep(2);
         setStatus('\u{2699}\u{FE0F}', 'Compressing for maximum quality...');
-      } else if (current < 78) {
+      } else if (current < 75) {
         setStep(3);
-        setStatus('\u{2702}\u{FE0F}', 'Optimizing video chunks...');
+        setStatus('\u{2702}\u{FE0F}', 'Splitting & optimizing chunks...');
       } else if (current < 93) {
         setStep(4);
-        setStatus('\u{2601}\u{FE0F}', 'Final steps... Nearly done!');
+        setStatus('\u{2601}\u{FE0F}', 'Uploading to server... Nearly done!');
       }
     }, intervalMs);
   }
