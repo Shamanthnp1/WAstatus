@@ -206,7 +206,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const audioBitrateK = 128;
   const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
   const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-  const videoBitrateK = Math.min(calculatedK, 3500); // WA real ceiling ~3500-4000k
+  const videoBitrateK = Math.min(calculatedK, 3700); // match competitor exactly
 
   console.log(`Chunk bitrate: ${videoBitrateK}k (calculated: ${calculatedK}k)`);
 
@@ -259,39 +259,43 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setStartTime(startTime)
             .setDuration(chunkDuration)
             .outputOptions([
-              // ===== Video codec — WA Status native =====
+              // ===== Video: match competitor exactly =====
               '-c:v', 'libx264',
-              '-profile:v', 'main',     // was 'baseline'
-              '-level', '3.1',          // was '3.0' — main profile needs 3.1 for 720p30
+              '-profile:v', 'high',                    // was 'baseline'/'main' — WA wants HIGH
+              '-level', '4.0',                         // was '3.0'/'3.1'
               '-pix_fmt', 'yuv420p',
 
-              // ===== Pure CBR (no -crf!) — WA detects VBR bursts and re-encodes =====
+              // ===== Bitrate ~3.7 Mbps (competitor's sweet spot) =====
               `-b:v`, `${videoBitrateK}k`,
               `-maxrate`, `${videoBitrateK}k`,
-              `-bufsize`, `${videoBitrateK}k`,   // bufsize == maxrate for tight CBR
+              `-bufsize`, `${videoBitrateK}k`,
 
-              // ===== Resolution cap 720p + square pixels =====
-              '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+              // ===== B-frames ALLOWED (High profile supports them) =====
+              // DO NOT add -bf 0 / -coder 0 / -refs 1 — those were baseline restrictions
 
-              // ===== Color tags — WA expects bt709 =====
-              '-color_primaries', 'bt709',
-              '-color_trc', 'bt709',
-              '-colorspace', 'bt709',
+              // ===== Resolution: 1080p (portrait safe) =====
+              '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
 
-              // ===== Framerate — force CFR (phone videos are VFR) =====
-              '-r', '30',
+              // ===== COLOR: BT.601 (bt470bg), NOT bt709 =====
+              '-color_primaries', 'bt470bg',           // was 'bt709' — WA wants BT.601
+              '-color_trc', 'bt709',                   // transfer stays bt709 (matches competitor)
+              '-colorspace', 'bt470bg',                // was 'bt709'
+              '-color_range', 'tv',
+
+              // ===== Frame rate: 29.97, NOT 30 =====
+              '-r', '30000/1001',                      // was '30' — 29.97 NTSC
               '-fps_mode', 'cfr',
-              '-g', '30',           // Keyframe every 1s
-              '-keyint_min', '30',
-              '-sc_threshold', '0', // No scene-change keyframes — predictable GOP
+              '-g', '60',                              // ~2s GOP at 29.97fps
+              '-keyint_min', '60',
+              '-sc_threshold', '0',
 
               '-preset', 'medium',
 
-              // ===== Audio — WA Status native =====
+              // ===== Audio: 44100 Hz, NOT 48000 =====
               '-c:a', 'aac',
               '-profile:a', 'aac_low',
-              `-b:a`, `${audioBitrateK}k`,
-              '-ar', '48000',
+              `-b:a`, '128k',
+              '-ar', '44100',                          // was '48000' — WA wants 44.1kHz
               '-ac', '2',
 
               '-movflags', '+faststart',
@@ -360,45 +364,49 @@ function compressVideo(inputPath, outputPath, knownDuration) {
       const audioBitrateK = 128;
       const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
       const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-      const videoBitrateK = Math.min(calculatedK, 3500); // WA real ceiling ~3500-4000k
+      const videoBitrateK = Math.min(calculatedK, 3700); // match competitor exactly
 
       console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k (calc:${calculatedK}k)`);
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
-          // ===== Video codec — WA Status native =====
+          // ===== Video: match competitor exactly =====
           '-c:v', 'libx264',
-          '-profile:v', 'main',     // was 'baseline'
-          '-level', '3.1',          // was '3.0' — main profile needs 3.1 for 720p30
+          '-profile:v', 'high',                    // was 'baseline'/'main' — WA wants HIGH
+          '-level', '4.0',                         // was '3.0'/'3.1'
           '-pix_fmt', 'yuv420p',
 
-          // ===== Pure CBR (no -crf!) =====
+          // ===== Bitrate ~3.7 Mbps (competitor's sweet spot) =====
           `-b:v`, `${videoBitrateK}k`,
           `-maxrate`, `${videoBitrateK}k`,
           `-bufsize`, `${videoBitrateK}k`,
 
-          // ===== Resolution cap 720p + square pixels =====
-          '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+          // ===== B-frames ALLOWED (High profile supports them) =====
+          // DO NOT add -bf 0 / -coder 0 / -refs 1 — those were baseline restrictions
 
-          // ===== Color tags =====
-          '-color_primaries', 'bt709',
-          '-color_trc', 'bt709',
-          '-colorspace', 'bt709',
+          // ===== Resolution: 1080p (portrait safe) =====
+          '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
 
-          // ===== CFR + GOP =====
-          '-r', '30',
+          // ===== COLOR: BT.601 (bt470bg), NOT bt709 =====
+          '-color_primaries', 'bt470bg',           // was 'bt709' — WA wants BT.601
+          '-color_trc', 'bt709',                   // transfer stays bt709 (matches competitor)
+          '-colorspace', 'bt470bg',                // was 'bt709'
+          '-color_range', 'tv',
+
+          // ===== Frame rate: 29.97, NOT 30 =====
+          '-r', '30000/1001',                      // was '30' — 29.97 NTSC
           '-fps_mode', 'cfr',
-          '-g', '30',
-          '-keyint_min', '30',
+          '-g', '60',                              // ~2s GOP at 29.97fps
+          '-keyint_min', '60',
           '-sc_threshold', '0',
 
           '-preset', 'medium',
 
-          // ===== Audio =====
+          // ===== Audio: 44100 Hz, NOT 48000 =====
           '-c:a', 'aac',
           '-profile:a', 'aac_low',
-          `-b:a`, `${audioBitrateK}k`,
-          '-ar', '48000',
+          `-b:a`, '128k',
+          '-ar', '44100',                          // was '48000' — WA wants 44.1kHz
           '-ac', '2',
 
           '-movflags', '+faststart',
