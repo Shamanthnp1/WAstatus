@@ -261,19 +261,14 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .outputOptions([
               // ===== Video codec — WA Status native =====
               '-c:v', 'libx264',
-              '-profile:v', 'baseline',
-              '-level', '3.0',
+              '-profile:v', 'main',     // was 'baseline'
+              '-level', '3.1',          // was '3.0' — main profile needs 3.1 for 720p30
               '-pix_fmt', 'yuv420p',
 
               // ===== Pure CBR (no -crf!) — WA detects VBR bursts and re-encodes =====
               `-b:v`, `${videoBitrateK}k`,
               `-maxrate`, `${videoBitrateK}k`,
               `-bufsize`, `${videoBitrateK}k`,   // bufsize == maxrate for tight CBR
-
-              // ===== Baseline-compliant encoding (explicit) =====
-              '-bf', '0',           // No B-frames
-              '-coder', '0',        // CAVLC entropy (baseline)
-              '-refs', '1',         // Single reference frame
 
               // ===== Resolution cap 720p + square pixels =====
               '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
@@ -373,19 +368,14 @@ function compressVideo(inputPath, outputPath, knownDuration) {
         .outputOptions([
           // ===== Video codec — WA Status native =====
           '-c:v', 'libx264',
-          '-profile:v', 'baseline',
-          '-level', '3.0',
+          '-profile:v', 'main',     // was 'baseline'
+          '-level', '3.1',          // was '3.0' — main profile needs 3.1 for 720p30
           '-pix_fmt', 'yuv420p',
 
           // ===== Pure CBR (no -crf!) =====
           `-b:v`, `${videoBitrateK}k`,
           `-maxrate`, `${videoBitrateK}k`,
           `-bufsize`, `${videoBitrateK}k`,
-
-          // ===== Baseline-compliant (explicit) =====
-          '-bf', '0',
-          '-coder', '0',
-          '-refs', '1',
 
           // ===== Resolution cap 720p + square pixels =====
           '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
