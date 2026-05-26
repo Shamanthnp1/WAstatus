@@ -218,11 +218,10 @@ function getOutputOptions(videoBitrateK, duration) {
   console.log(`bufsize: ${bufSizeK}k for duration: ${duration}s`);
 
   return [
+    '-vf', "scale='min(1080,iw)':trunc(ow/a/2)*2",
+
     '-c:v', 'libx264',
-    '-profile:v', 'high',
-    '-level:v', '4.0',
     '-pix_fmt', 'yuv420p',
-    '-refs', '1',
 
     '-crf', '23',
     '-maxrate', '3800k',
@@ -230,15 +229,13 @@ function getOutputOptions(videoBitrateK, duration) {
 
     '-r', '29.97',
 
-    '-x264-params', 'bframes=2',
-
     '-c:a', 'aac',
     '-ar', '44100',
     '-b:a', '128k',
 
     '-movflags', '+faststart',
 
-    '-brand', 'isom'
+    '-threads', String(require('os').cpus().length)
   ];
 }
 
