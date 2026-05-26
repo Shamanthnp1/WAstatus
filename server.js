@@ -196,17 +196,71 @@ function getVideoDuration(filePath) {
   });
 }
 
+// ========================
+// SHARED FFMPEG OPTIONS
+// ========================
+function getOutputOptions(videoBitrateK) {
+  return [
+    // ===== Video =====
+    '-c:v', 'libx264',
+    '-profile:v', 'high',
+    '-level', '4.0',
+    '-pix_fmt', 'yuv420p',
+
+    // ===== Bitrate =====
+    '-b:v', `${videoBitrateK}k`,
+    '-maxrate', `${videoBitrateK}k`,
+    '-bufsize', `${videoBitrateK * 2}k`,
+
+    // ===== Resolution =====
+    '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+    // ❌ NO '-aspect' flag - removed completely
+
+    // ===== Color - FIXED colorspace =====
+    '-color_primaries', 'bt470bg',
+    '-color_trc', 'bt709',
+    '-colorspace', 'bt470bg',   // ← WAS WRONG (bt709), NOW FIXED
+    '-color_range', 'tv',
+
+    // ===== Frame Rate =====
+    '-r', '2997/100',
+    '-fps_mode', 'cfr',
+    '-video_track_timescale', '11988',
+    '-g', '60',
+    '-keyint_min', '60',
+    '-sc_threshold', '0',
+    '-bf', '2',
+    '-refs', '1',
+    '-preset', 'medium',
+
+    // ===== Audio =====
+    '-c:a', 'aac',
+    '-profile:a', 'aac_low',
+    '-b:a', '128k',
+    '-ar', '44100',
+    '-ac', '2',
+
+    // ===== Container =====
+    '-movflags', '+faststart',
+
+    // ===== Metadata - FIXED to match competitor =====
+    '-metadata:s:v:0', 'language=eng',
+    '-metadata:s:a:0', 'language=eng',
+    '-metadata:s:v:0', 'handler_name=VideoHandle',
+    '-metadata:s:a:0', 'handler_name=SoundHandle',  // ← WAS MISSING
+  ];
+}
+
 // Split video into chunks of maxDuration seconds
 async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
-  // Dynamic bitrate based on chunk duration, capped at WA Status native (~2 Mbps)
   const targetSizeMB  = 14;
   const audioBitrateK = 128;
   const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
   const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-  const videoBitrateK = Math.min(calculatedK, 3700); // match competitor exactly
+  const videoBitrateK = Math.min(calculatedK, 3700);
 
   console.log(`Chunk bitrate: ${videoBitrateK}k (calculated: ${calculatedK}k)`);
 
@@ -258,55 +312,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
           chunkCommand = ffmpeg(inputPath)
             .setStartTime(startTime)
             .setDuration(chunkDuration)
-            .outputOptions([
-              // ===== Video =====
-              '-c:v', 'libx264',
-              '-profile:v', 'high',
-              '-level', '4.0',
-              '-pix_fmt', 'yuv420p',
-
-              // ===== Bitrate — match competitor (~3.68 Mbps) =====
-              '-b:v', `${videoBitrateK}k`,
-              '-maxrate', `${videoBitrateK}k`,
-              '-bufsize', `${videoBitrateK * 2}k`,    // 2x bitrate is the standard, not 1x
-
-              // ===== Resolution — NO setsar! =====
-              '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-              // ❌ REMOVED: ',setsar=1'   ← this is what was writing the pasp atom
-
-              // ===== Strip aspect-ratio metadata so output shows N/A like competitor =====
-              '-aspect', '9:16',                     // tell muxer DAR is implicit from resolution, no pasp atom
-
-              // ===== Color: BT.601 like competitor =====
-              '-color_primaries', 'bt470bg',
-              '-color_trc', 'bt709',
-              '-colorspace', 'bt470bg',
-              '-color_range', 'tv',
-
-              // ===== Frame rate — use competitor's exact form 2997/100 =====
-              '-r', '2997/100',                      // ⚠️ was '30000/1001' — same number, different rational
-              '-fps_mode', 'cfr',
-              '-video_track_timescale', '11988',     // ⚠️ NEW — forces competitor's mdhd timescale
-              '-g', '60',
-              '-keyint_min', '60',
-              '-sc_threshold', '0',
-              '-bf', '2',                            // explicit B-frames=2 (competitor has has_b_frames=2)
-              '-refs', '1',                          // competitor has refs=1
-
-              '-preset', 'medium',
-
-              // ===== Audio =====
-              '-c:a', 'aac',
-              '-profile:a', 'aac_low',
-              '-b:a', '128k',
-              '-ar', '44100',
-              '-ac', '2',
-
-              // ===== Container — competitor's exact brand string =====
-              '-brand', 'mp42',                      // optional; or use -f mp4 with movflags below
-              '-movflags', '+faststart',
-              '-metadata', 'handler_name=VideoHandle',  // competitor has this tag
-            ])
+            .outputOptions(getOutputOptions(videoBitrateK))  // ← USING SHARED FUNCTION
             .output(chunkPath)
             .on('start', (cmd) =>
               console.log(`Chunk ${index + 1}/${totalChunks} started...`)
@@ -366,65 +372,16 @@ function compressVideo(inputPath, outputPath, knownDuration) {
     durationPromise.then((duration) => {
       if (settled) return;
 
-      // Dynamic bitrate, capped at WA Status native (~2 Mbps)
       const targetSizeMB  = 14;
       const audioBitrateK = 128;
       const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
       const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-      const videoBitrateK = Math.min(calculatedK, 3700); // match competitor exactly
+      const videoBitrateK = Math.min(calculatedK, 3700);
 
       console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k (calc:${calculatedK}k)`);
 
       ffmpegCommand = ffmpeg(inputPath)
-        .outputOptions([
-          // ===== Video =====
-          '-c:v', 'libx264',
-          '-profile:v', 'high',
-          '-level', '4.0',
-          '-pix_fmt', 'yuv420p',
-
-          // ===== Bitrate — match competitor (~3.68 Mbps) =====
-          '-b:v', `${videoBitrateK}k`,
-          '-maxrate', `${videoBitrateK}k`,
-          '-bufsize', `${videoBitrateK * 2}k`,    // 2x bitrate is the standard, not 1x
-
-          // ===== Resolution — NO setsar! =====
-          '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-          // ❌ REMOVED: ',setsar=1'   ← this is what was writing the pasp atom
-
-          // ===== Strip aspect-ratio metadata so output shows N/A like competitor =====
-          '-aspect', '9:16',                     // tell muxer DAR is implicit from resolution, no pasp atom
-
-          // ===== Color: BT.601 like competitor =====
-          '-color_primaries', 'bt470bg',
-          '-color_trc', 'bt709',
-          '-colorspace', 'bt470bg',
-          '-color_range', 'tv',
-
-          // ===== Frame rate — use competitor's exact form 2997/100 =====
-          '-r', '2997/100',                      // ⚠️ was '30000/1001' — same number, different rational
-          '-fps_mode', 'cfr',
-          '-video_track_timescale', '11988',     // ⚠️ NEW — forces competitor's mdhd timescale
-          '-g', '60',
-          '-keyint_min', '60',
-          '-sc_threshold', '0',
-          '-bf', '2',                            // explicit B-frames=2 (competitor has has_b_frames=2)
-          '-refs', '1',                          // competitor has refs=1
-
-          '-preset', 'medium',
-
-          // ===== Audio =====
-          '-c:a', 'aac',
-          '-profile:a', 'aac_low',
-          '-b:a', '128k',
-          '-ar', '44100',
-          '-ac', '2',
-
-          // ===== Container — competitor's exact brand string =====
-          '-brand', 'mp42',                      // optional; or use -f mp4 with movflags below
-          '-movflags', '+faststart',
-          '-metadata', 'handler_name=VideoHandle',  // competitor has this tag
-        ])
+        .outputOptions(getOutputOptions(videoBitrateK))  // ← USING SHARED FUNCTION
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
         .on('progress', (p) => {
