@@ -199,55 +199,40 @@ function getVideoDuration(filePath) {
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
-function getOutputOptions(videoBitrateK) {
+function getOutputOptions(videoBitrateK, duration) {
+  console.log(`✅ getOutputOptions called! duration: ${duration}s`);
+
+  // Competitor's exact bufsize logic
+  const durationMs = duration * 1000;
+  let bufSizeK;
+  if (durationMs < 6000) {
+    bufSizeK = Math.round(3800 / 2);
+  } else if (durationMs < 11000) {
+    bufSizeK = Math.round(3800 / 1.5);
+  } else if (durationMs < 16000) {
+    bufSizeK = 3800;
+  } else {
+    bufSizeK = Math.round(3800 * 1.5);
+  }
+
+  console.log(`bufsize: ${bufSizeK}k for duration: ${duration}s`);
+
   return [
-    // ===== Video =====
     '-c:v', 'libx264',
-    '-profile:v', 'high',
-    '-level', '4.0',
-    '-pix_fmt', 'yuv420p',
+    '-crf', '23',              // ← COMPETITOR USES CRF 23, NOT -b:v!
+    '-maxrate', '3800k',       // ← COMPETITOR USES 3800k
+    '-bufsize', `${bufSizeK}k`,// ← COMPETITOR'S EXACT BUFSIZE LOGIC
 
-    // ===== Bitrate =====
-    '-b:v', `${videoBitrateK}k`,
-    '-maxrate', `${Math.floor(videoBitrateK * 1.5)}k`,
-    '-bufsize', `${videoBitrateK * 2}k`,
+    '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2',
 
-    // ===== Resolution =====
-    '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-    // ❌ NO '-aspect' flag - removed completely
+    '-r', '29.97',             // ← COMPETITOR USES 29.97 NOT 2997/100
 
-    // ===== Color - FIXED colorspace =====
-    '-color_primaries', 'bt470bg',
-    '-color_trc', 'bt709',
-    '-colorspace', 'bt470bg',   // ← WAS WRONG (bt709), NOW FIXED
-    '-color_range', 'tv',
-
-    // ===== Frame Rate =====
-    '-r', '2997/100',
-    '-fps_mode', 'cfr',
-    '-video_track_timescale', '11988',
-    '-g', '60',
-    '-keyint_min', '60',
-    '-sc_threshold', '0',
-    '-bf', '2',
-    '-refs', '1',
-    '-preset', 'medium',
-
-    // ===== Audio =====
-    '-c:a', 'aac',
-    '-profile:a', 'aac_low',
-    '-b:a', '128k',
     '-ar', '44100',
-    '-ac', '2',
-
-    // ===== Container =====
+    '-b:a', '128k',
     '-movflags', '+faststart',
 
-    // ===== Metadata - FIXED to match competitor =====
-    '-metadata:s:v:0', 'language=eng',
-    '-metadata:s:a:0', 'language=eng',
-    '-metadata:s:v:0', 'handler_name=VideoHandle',
-    '-metadata:s:a:0', 'handler_name=SoundHandle',  // ← WAS MISSING
+    // threads = Runtime.availableProcessors()
+    '-threads', '0',           // 0 = auto, same as availableProcessors()
   ];
 }
 
@@ -256,11 +241,8 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
-  const audioBitrateK = 128;
-  const maxSizeMB = 15.5;
-  const maxBitrateK = Math.floor((maxSizeMB * 8 * 1024) / chunkDuration) - audioBitrateK;
-  const videoBitrateK = Math.min(maxBitrateK, 3700);
-  console.log(`splitVideo → chunkDuration:${chunkDuration}s | bitrate:${videoBitrateK}k`);
+  console.log(`splitVideo → chunkDuration:${chunkDuration}s | using CRF 23`);
+  const videoBitrateK = 3800; // only for reference
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -310,7 +292,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
           chunkCommand = ffmpeg(inputPath)
             .setStartTime(startTime)
             .setDuration(chunkDuration)
-            .outputOptions(getOutputOptions(videoBitrateK))  // ← USING SHARED FUNCTION
+            .outputOptions(getOutputOptions(videoBitrateK, chunkDuration))  // ← pass chunkDuration
             .output(chunkPath)
             .on('start', (cmd) =>
               console.log(`Chunk ${index + 1}/${totalChunks} started...`)
@@ -370,14 +352,11 @@ function compressVideo(inputPath, outputPath, knownDuration) {
     durationPromise.then((duration) => {
       if (settled) return;
 
-      const audioBitrateK = 128;
-      const maxSizeMB = 15.5;
-      const maxBitrateK = Math.floor((maxSizeMB * 8 * 1024) / duration) - audioBitrateK;
-      const videoBitrateK = Math.min(maxBitrateK, 3700);
-      console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k`);
+      console.log(`compressVideo → duration:${duration.toFixed(1)}s | using CRF 23`);
+      const videoBitrateK = 3800; // only used for logging, CRF controls quality now
 
       ffmpegCommand = ffmpeg(inputPath)
-        .outputOptions(getOutputOptions(videoBitrateK))  // ← USING SHARED FUNCTION
+        .outputOptions(getOutputOptions(videoBitrateK, duration))  // ← pass duration
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
         .on('progress', (p) => {
