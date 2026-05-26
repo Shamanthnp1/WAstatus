@@ -256,10 +256,11 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setDuration(chunkDuration)
             .outputOptions([
               '-c:v libx264',
-              '-crf 18',              // near lossless — best quality
-              '-maxrate 6000k',       // safety cap so it never exceeds 16MB for 29s
+              '-crf 18',
+              '-maxrate 6000k',
               '-bufsize 12000k',
-              '-preset slow',         // slower encode = better compression at same quality
+              '-preset medium',      // ✅ Changed from slow (2x faster!)
+              '-tune film',          // ✅ ADD THIS — better real footage
               '-profile:v high',
               '-level 4.1',
               '-c:a aac',
@@ -333,10 +334,11 @@ function compressVideo(inputPath, outputPath, knownDuration) {
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
           '-c:v libx264',
-          '-crf 18',              // near lossless — best quality
-          '-maxrate 6000k',       // safety cap so it never exceeds 16MB for 29s
+          '-crf 18',
+          '-maxrate 6000k',
           '-bufsize 12000k',
-          '-preset slow',         // slower encode = better compression at same quality
+          '-preset medium',      // ✅ Changed from slow (2x faster!)
+          '-tune film',          // ✅ ADD THIS — better real footage
           '-profile:v high',
           '-level 4.1',
           '-c:a aac',
