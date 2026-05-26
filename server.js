@@ -218,7 +218,7 @@ function getOutputOptions(videoBitrateK, duration) {
   console.log(`bufsize: ${bufSizeK}k for duration: ${duration}s`);
 
   return [
-    '-vf', "scale='min(1080,iw)':trunc(ow/a/2)*2",
+    '-vf', 'scale=1080:trunc(ow/a/2)*2',
 
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
