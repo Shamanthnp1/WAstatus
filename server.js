@@ -257,18 +257,18 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .outputOptions([
               '-c:v libx264',
               '-crf 18',
-              '-maxrate 6000k',
-              '-bufsize 12000k',
-              '-preset medium',      // ✅ Changed from slow (2x faster!)
-              '-tune film',          // ✅ ADD THIS — better real footage
-              '-profile:v high',
-              '-level 4.1',
+              '-maxrate 5000k',       // ✅ Within WhatsApp's 5Mbps limit
+              '-bufsize 10000k',
+              '-preset medium',
+              '-tune film',
+              '-profile:v main',      // ✅ Changed from high → main
+              '-level 3.1',           // ✅ Changed from 4.1 → 3.1
               '-c:a aac',
               '-b:a 128k',
-              '-ar 44100',
+              '-ar 48000',            // ✅ Changed from 44100 → 48000
               '-movflags faststart',
               '-pix_fmt yuv420p',
-              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+              '-vf scale=\'min(1280,iw)\':\'min(720,ih)\':force_original_aspect_ratio=decrease,trunc(iw/2)*2:trunc(ih/2)*2',
             ])
             .output(chunkPath)
             .on('start', () =>
@@ -335,18 +335,19 @@ function compressVideo(inputPath, outputPath, knownDuration) {
         .outputOptions([
           '-c:v libx264',
           '-crf 18',
-          '-maxrate 6000k',
-          '-bufsize 12000k',
-          '-preset medium',      // ✅ Changed from slow (2x faster!)
-          '-tune film',          // ✅ ADD THIS — better real footage
-          '-profile:v high',
-          '-level 4.1',
+          '-maxrate 5000k',       // ✅ Within WhatsApp's 5Mbps limit
+          '-bufsize 10000k',
+          '-preset medium',
+          '-tune film',
+          '-profile:v main',      // ✅ Changed from high → main
+          '-level 3.1',           // ✅ Changed from 4.1 → 3.1
+          '-pix_fmt yuv420p',
+          '-vf scale=\'min(1280,iw)\':\'min(720,ih)\':force_original_aspect_ratio=decrease,trunc(iw/2)*2:trunc(ih/2)*2',
           '-c:a aac',
           '-b:a 128k',
-          '-ar 44100',
+          '-ar 48000',            // ✅ Changed from 44100 → 48000
           '-movflags faststart',
-          '-pix_fmt yuv420p',
-          '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+          '-r 30',                // ✅ Cap at 30fps (WhatsApp standard)
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
