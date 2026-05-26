@@ -259,46 +259,53 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setStartTime(startTime)
             .setDuration(chunkDuration)
             .outputOptions([
-              // ===== Video: match competitor exactly =====
+              // ===== Video =====
               '-c:v', 'libx264',
-              '-profile:v', 'high',                    // was 'baseline'/'main' — WA wants HIGH
-              '-level', '4.0',                         // was '3.0'/'3.1'
+              '-profile:v', 'high',
+              '-level', '4.0',
               '-pix_fmt', 'yuv420p',
 
-              // ===== Bitrate ~3.7 Mbps (competitor's sweet spot) =====
-              `-b:v`, `${videoBitrateK}k`,
-              `-maxrate`, `${videoBitrateK}k`,
-              `-bufsize`, `${videoBitrateK}k`,
+              // ===== Bitrate — match competitor (~3.68 Mbps) =====
+              '-b:v', `${videoBitrateK}k`,
+              '-maxrate', `${videoBitrateK}k`,
+              '-bufsize', `${videoBitrateK * 2}k`,    // 2x bitrate is the standard, not 1x
 
-              // ===== B-frames ALLOWED (High profile supports them) =====
-              // DO NOT add -bf 0 / -coder 0 / -refs 1 — those were baseline restrictions
+              // ===== Resolution — NO setsar! =====
+              '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+              // ❌ REMOVED: ',setsar=1'   ← this is what was writing the pasp atom
 
-              // ===== Resolution: 1080p (portrait safe) =====
-              '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+              // ===== Strip aspect-ratio metadata so output shows N/A like competitor =====
+              '-aspect', '9:16',                     // tell muxer DAR is implicit from resolution, no pasp atom
 
-              // ===== COLOR: BT.601 (bt470bg), NOT bt709 =====
-              '-color_primaries', 'bt470bg',           // was 'bt709' — WA wants BT.601
-              '-color_trc', 'bt709',                   // transfer stays bt709 (matches competitor)
-              '-colorspace', 'bt470bg',                // was 'bt709'
+              // ===== Color: BT.601 like competitor =====
+              '-color_primaries', 'bt470bg',
+              '-color_trc', 'bt709',
+              '-colorspace', 'bt470bg',
               '-color_range', 'tv',
 
-              // ===== Frame rate: 29.97, NOT 30 =====
-              '-r', '30000/1001',                      // was '30' — 29.97 NTSC
+              // ===== Frame rate — use competitor's exact form 2997/100 =====
+              '-r', '2997/100',                      // ⚠️ was '30000/1001' — same number, different rational
               '-fps_mode', 'cfr',
-              '-g', '60',                              // ~2s GOP at 29.97fps
+              '-video_track_timescale', '11988',     // ⚠️ NEW — forces competitor's mdhd timescale
+              '-g', '60',
               '-keyint_min', '60',
               '-sc_threshold', '0',
+              '-bf', '2',                            // explicit B-frames=2 (competitor has has_b_frames=2)
+              '-refs', '1',                          // competitor has refs=1
 
               '-preset', 'medium',
 
-              // ===== Audio: 44100 Hz, NOT 48000 =====
+              // ===== Audio =====
               '-c:a', 'aac',
               '-profile:a', 'aac_low',
-              `-b:a`, '128k',
-              '-ar', '44100',                          // was '48000' — WA wants 44.1kHz
+              '-b:a', '128k',
+              '-ar', '44100',
               '-ac', '2',
 
+              // ===== Container — competitor's exact brand string =====
+              '-brand', 'mp42',                      // optional; or use -f mp4 with movflags below
               '-movflags', '+faststart',
+              '-metadata', 'handler_name=VideoHandle',  // competitor has this tag
             ])
             .output(chunkPath)
             .on('start', (cmd) =>
@@ -370,46 +377,53 @@ function compressVideo(inputPath, outputPath, knownDuration) {
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
-          // ===== Video: match competitor exactly =====
+          // ===== Video =====
           '-c:v', 'libx264',
-          '-profile:v', 'high',                    // was 'baseline'/'main' — WA wants HIGH
-          '-level', '4.0',                         // was '3.0'/'3.1'
+          '-profile:v', 'high',
+          '-level', '4.0',
           '-pix_fmt', 'yuv420p',
 
-          // ===== Bitrate ~3.7 Mbps (competitor's sweet spot) =====
-          `-b:v`, `${videoBitrateK}k`,
-          `-maxrate`, `${videoBitrateK}k`,
-          `-bufsize`, `${videoBitrateK}k`,
+          // ===== Bitrate — match competitor (~3.68 Mbps) =====
+          '-b:v', `${videoBitrateK}k`,
+          '-maxrate', `${videoBitrateK}k`,
+          '-bufsize', `${videoBitrateK * 2}k`,    // 2x bitrate is the standard, not 1x
 
-          // ===== B-frames ALLOWED (High profile supports them) =====
-          // DO NOT add -bf 0 / -coder 0 / -refs 1 — those were baseline restrictions
+          // ===== Resolution — NO setsar! =====
+          '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+          // ❌ REMOVED: ',setsar=1'   ← this is what was writing the pasp atom
 
-          // ===== Resolution: 1080p (portrait safe) =====
-          '-vf', "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+          // ===== Strip aspect-ratio metadata so output shows N/A like competitor =====
+          '-aspect', '9:16',                     // tell muxer DAR is implicit from resolution, no pasp atom
 
-          // ===== COLOR: BT.601 (bt470bg), NOT bt709 =====
-          '-color_primaries', 'bt470bg',           // was 'bt709' — WA wants BT.601
-          '-color_trc', 'bt709',                   // transfer stays bt709 (matches competitor)
-          '-colorspace', 'bt470bg',                // was 'bt709'
+          // ===== Color: BT.601 like competitor =====
+          '-color_primaries', 'bt470bg',
+          '-color_trc', 'bt709',
+          '-colorspace', 'bt470bg',
           '-color_range', 'tv',
 
-          // ===== Frame rate: 29.97, NOT 30 =====
-          '-r', '30000/1001',                      // was '30' — 29.97 NTSC
+          // ===== Frame rate — use competitor's exact form 2997/100 =====
+          '-r', '2997/100',                      // ⚠️ was '30000/1001' — same number, different rational
           '-fps_mode', 'cfr',
-          '-g', '60',                              // ~2s GOP at 29.97fps
+          '-video_track_timescale', '11988',     // ⚠️ NEW — forces competitor's mdhd timescale
+          '-g', '60',
           '-keyint_min', '60',
           '-sc_threshold', '0',
+          '-bf', '2',                            // explicit B-frames=2 (competitor has has_b_frames=2)
+          '-refs', '1',                          // competitor has refs=1
 
           '-preset', 'medium',
 
-          // ===== Audio: 44100 Hz, NOT 48000 =====
+          // ===== Audio =====
           '-c:a', 'aac',
           '-profile:a', 'aac_low',
-          `-b:a`, '128k',
-          '-ar', '44100',                          // was '48000' — WA wants 44.1kHz
+          '-b:a', '128k',
+          '-ar', '44100',
           '-ac', '2',
 
+          // ===== Container — competitor's exact brand string =====
+          '-brand', 'mp42',                      // optional; or use -f mp4 with movflags below
           '-movflags', '+faststart',
+          '-metadata', 'handler_name=VideoHandle',  // competitor has this tag
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
