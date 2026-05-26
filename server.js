@@ -257,18 +257,19 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .outputOptions([
               '-c:v libx264',
               '-crf 18',
-              '-maxrate 5000k',       // ✅ Within WhatsApp's 5Mbps limit
+              '-maxrate 5000k',
               '-bufsize 10000k',
               '-preset medium',
               '-tune film',
-              '-profile:v main',      // ✅ Changed from high → main
-              '-level 3.1',           // ✅ Changed from 4.1 → 3.1
+              '-profile:v main',
+              '-level 3.1',
+              '-pix_fmt yuv420p',
+              '-vf', 'scale=-2:min(720\\,ih)',  // ✅ Fixed!
               '-c:a aac',
               '-b:a 128k',
-              '-ar 48000',            // ✅ Changed from 44100 → 48000
+              '-ar 48000',
               '-movflags faststart',
-              '-pix_fmt yuv420p',
-              '-vf scale=\'min(1280,iw)\':\'min(720,ih)\':force_original_aspect_ratio=decrease,trunc(iw/2)*2:trunc(ih/2)*2',
+              '-r 30',
             ])
             .output(chunkPath)
             .on('start', () =>
@@ -335,19 +336,19 @@ function compressVideo(inputPath, outputPath, knownDuration) {
         .outputOptions([
           '-c:v libx264',
           '-crf 18',
-          '-maxrate 5000k',       // ✅ Within WhatsApp's 5Mbps limit
+          '-maxrate 5000k',
           '-bufsize 10000k',
           '-preset medium',
           '-tune film',
-          '-profile:v main',      // ✅ Changed from high → main
-          '-level 3.1',           // ✅ Changed from 4.1 → 3.1
+          '-profile:v main',
+          '-level 3.1',
           '-pix_fmt yuv420p',
-          '-vf scale=\'min(1280,iw)\':\'min(720,ih)\':force_original_aspect_ratio=decrease,trunc(iw/2)*2:trunc(ih/2)*2',
+          '-vf', 'scale=-2:min(720\\,ih)',  // ✅ Fixed!
           '-c:a aac',
           '-b:a 128k',
-          '-ar 48000',            // ✅ Changed from 44100 → 48000
+          '-ar 48000',
           '-movflags faststart',
-          '-r 30',                // ✅ Cap at 30fps (WhatsApp standard)
+          '-r 30',
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
