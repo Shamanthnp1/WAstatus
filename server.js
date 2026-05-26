@@ -207,7 +207,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
   const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
 
-  console.log(`Chunk bitrate: ${videoBitrateK}k for ${chunkDuration}s chunks → ~${targetSizeMB}MB each`);
+  console.log(`Chunk bitrate: ${videoBitrateK}k`);
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -263,18 +263,20 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .outputOptions([
               '-c:v libx264',
               '-crf 18',
-              `-maxrate ${videoBitrateK}k`,       // ✅ Dynamic!
+              `-maxrate ${videoBitrateK}k`,
               `-bufsize ${videoBitrateK * 2}k`,
               '-preset medium',
               '-tune film',
-              '-profile:v high',
-              '-level 4.1',
+              '-profile:v baseline', // ✅ WhatsApp Status compatible!
+              '-level 3.0',          // ✅ WhatsApp Status compatible!
               '-c:a aac',
               `-b:a ${audioBitrateK}k`,
-              '-ar 44100',
+              '-ar 48000',           // ✅ WhatsApp audio spec!
               '-movflags faststart',
               '-pix_fmt yuv420p',
               '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+              '-r 30',               // ✅ 30fps cap
+              '-g 60',               // ✅ Keyframe interval
             ])
             .output(chunkPath)
             .on('start', () =>
@@ -335,32 +337,32 @@ function compressVideo(inputPath, outputPath, knownDuration) {
     durationPromise.then((duration) => {
       if (settled) return;
 
-      console.log(`compressVideo → duration:${duration.toFixed(1)}s`);
+      // ✅ Dynamic bitrate
+      const targetSizeMB  = 14;
+      const audioBitrateK = 128;
+      const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
+      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
 
-      // ✅ Calculate safe maxrate for 14MB output
-      const targetSizeMB   = 14;
-      const audioBitrateK  = 128;
-      const totalBitrateK  = (targetSizeMB * 8 * 1024) / duration;
-      const videoBitrateK  = Math.floor(totalBitrateK - audioBitrateK);
-
-      console.log(`Safe maxrate: ${videoBitrateK}k for ${duration.toFixed(1)}s`);
+      console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k`);
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
           '-c:v libx264',
-          '-crf 18',                          // ✅ Quality control
-          `-maxrate ${videoBitrateK}k`,        // ✅ Dynamic — based on duration!
-          `-bufsize ${videoBitrateK * 2}k`,    // ✅ 2x buffer
+          '-crf 18',
+          `-maxrate ${videoBitrateK}k`,
+          `-bufsize ${videoBitrateK * 2}k`,
           '-preset medium',
           '-tune film',
-          '-profile:v high',
-          '-level 4.1',
+          '-profile:v baseline', // ✅ WhatsApp Status compatible!
+          '-level 3.0',          // ✅ WhatsApp Status compatible!
           '-pix_fmt yuv420p',
           '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
           '-c:a aac',
           `-b:a ${audioBitrateK}k`,
-          '-ar 44100',
+          '-ar 48000',           // ✅ WhatsApp audio spec!
           '-movflags faststart',
+          '-r 30',               // ✅ 30fps cap
+          '-g 60',               // ✅ Keyframe interval
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
