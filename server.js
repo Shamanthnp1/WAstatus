@@ -219,20 +219,26 @@ function getOutputOptions(videoBitrateK, duration) {
 
   return [
     '-c:v', 'libx264',
-    '-crf', '23',              // ← COMPETITOR USES CRF 23, NOT -b:v!
-    '-maxrate', '3800k',       // ← COMPETITOR USES 3800k
-    '-bufsize', `${bufSizeK}k`,// ← COMPETITOR'S EXACT BUFSIZE LOGIC
+    '-profile:v', 'high',
+    '-level:v', '4.0',
+    '-pix_fmt', 'yuv420p',
+    '-refs', '1',
 
-    '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2',
+    '-crf', '23',
+    '-maxrate', '3800k',
+    '-bufsize', `${bufSizeK}k`,
 
-    '-r', '29.97',             // ← COMPETITOR USES 29.97 NOT 2997/100
+    '-r', '29.97',
 
+    '-x264-params', 'bframes=2',
+
+    '-c:a', 'aac',
     '-ar', '44100',
     '-b:a', '128k',
+
     '-movflags', '+faststart',
 
-    // threads = Runtime.availableProcessors()
-    '-threads', '2',           // 0 = auto, same as availableProcessors()
+    '-brand', 'isom'
   ];
 }
 
