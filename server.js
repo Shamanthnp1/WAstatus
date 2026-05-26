@@ -260,13 +260,13 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setStartTime(startTime)
             .setDuration(chunkDuration)
             .outputOptions([
-              '-c:v libx265',                    // ✅ H.265
-              '-crf 24',                         // ✅ H.265 CRF (= H.264 CRF 18 quality)
-              `-maxrate ${videoBitrateK}k`,
-              `-bufsize ${videoBitrateK * 2}k`,  // ✅ 2x buffer
-              '-preset medium',
-              '-tune fastdecode',                // ✅ Better mobile playback
-              '-tag:v hvc1',                     // ✅ iPhone compatibility
+              '-c:v libx264',
+              '-crf 20',                        // ✅ quality control
+              `-maxrate ${videoBitrateK}k`,      // ✅ hard size ceiling
+              `-bufsize ${videoBitrateK}k`,      // ✅ tight buffer
+              '-preset medium',                 // ✅ better quality
+              '-profile:v high',
+              '-level 4.1',
               '-c:a aac',
               `-b:a ${audioBitrateK}k`,
               '-ar 44100',
@@ -342,13 +342,13 @@ function compressVideo(inputPath, outputPath, knownDuration) {
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
-          '-c:v libx265',                    // ✅ H.265
-          '-crf 24',                         // ✅ H.265 CRF
-          `-maxrate ${videoBitrateK}k`,
-          `-bufsize ${videoBitrateK * 2}k`,  // ✅ 2x buffer
-          '-preset medium',
-          '-tune fastdecode',                // ✅ Better mobile playback
-          '-tag:v hvc1',                     // ✅ iPhone compatibility
+          '-c:v libx264',
+          '-crf 20',                          // ✅ quality control
+          `-maxrate ${videoBitrateK}k`,        // ✅ hard size ceiling
+          `-bufsize ${videoBitrateK}k`,        // ✅ tight buffer
+          '-preset medium',                   // ✅ better quality
+          '-profile:v high',
+          '-level 4.1',
           '-pix_fmt yuv420p',
           '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
           '-c:a aac',
@@ -654,7 +654,7 @@ app.post('/api/process', limiter, async (req, res) => {
               await compressVideo(localInputPath, outputPath, duration);
 
               const url = await uploadToR2(outputPath, outputFileName);
-              await fs.promises.unlink(outputPath).catch(() => {});
+              await fs.promises.unlink(outputPath).catch(() => { });
 
               console.log(`✅ [${index + 1}] R2 upload done: ${outputFileName}`);
               return [{ fileName: outputFileName, url }];
@@ -671,10 +671,10 @@ app.post('/api/process', limiter, async (req, res) => {
               for (let i = 0; i < chunkPaths.length; i++) {
                 const chunkPath = chunkPaths[i];
                 const chunkFileName = path.basename(chunkPath);
-                
+
                 const url = await uploadToR2(chunkPath, chunkFileName);
-                await fs.promises.unlink(chunkPath).catch(() => {});
-                
+                await fs.promises.unlink(chunkPath).catch(() => { });
+
                 console.log(`✅ [${index + 1}] Chunk ${i + 1}/${chunkPaths.length} uploaded: ${chunkFileName}`);
                 chunkResults.push({ fileName: chunkFileName, url });
               }
@@ -684,7 +684,7 @@ app.post('/api/process', limiter, async (req, res) => {
 
           } finally {
             // ✅ Always clean local temp file
-            await fs.promises.unlink(localInputPath).catch(() => {});
+            await fs.promises.unlink(localInputPath).catch(() => { });
           }
         })
       );
