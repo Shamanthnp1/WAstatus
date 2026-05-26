@@ -260,13 +260,13 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setStartTime(startTime)
             .setDuration(chunkDuration)
             .outputOptions([
-              '-c:v libx264',
-              '-crf 20',                        // ✅ quality control
-              `-maxrate ${videoBitrateK}k`,      // ✅ hard size ceiling
-              `-bufsize ${videoBitrateK}k`,      // ✅ tight buffer
-              '-preset medium',                 // ✅ better quality
-              '-profile:v high',
-              '-level 4.1',
+              '-c:v libx265',                    // ✅ H.265
+              '-crf 24',                         // ✅ H.265 CRF (= H.264 CRF 18 quality)
+              `-maxrate ${videoBitrateK}k`,
+              `-bufsize ${videoBitrateK * 2}k`,  // ✅ 2x buffer
+              '-preset medium',
+              '-tune fastdecode',                // ✅ Better mobile playback
+              '-tag:v hvc1',                     // ✅ iPhone compatibility
               '-c:a aac',
               `-b:a ${audioBitrateK}k`,
               '-ar 44100',
@@ -342,13 +342,13 @@ function compressVideo(inputPath, outputPath, knownDuration) {
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
-          '-c:v libx264',
-          '-crf 20',                          // ✅ quality control
-          `-maxrate ${videoBitrateK}k`,        // ✅ hard size ceiling
-          `-bufsize ${videoBitrateK}k`,        // ✅ tight buffer
-          '-preset medium',                   // ✅ better quality
-          '-profile:v high',
-          '-level 4.1',
+          '-c:v libx265',                    // ✅ H.265
+          '-crf 24',                         // ✅ H.265 CRF
+          `-maxrate ${videoBitrateK}k`,
+          `-bufsize ${videoBitrateK * 2}k`,  // ✅ 2x buffer
+          '-preset medium',
+          '-tune fastdecode',                // ✅ Better mobile playback
+          '-tag:v hvc1',                     // ✅ iPhone compatibility
           '-pix_fmt yuv420p',
           '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
           '-c:a aac',
