@@ -201,7 +201,13 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
+  // ✅ Dynamic bitrate based on chunk duration
+  const targetSizeMB  = 14;
+  const audioBitrateK = 128;
+  const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
+  const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
 
+  console.log(`Chunk bitrate: ${videoBitrateK}k for ${chunkDuration}s chunks → ~${targetSizeMB}MB each`);
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -257,19 +263,18 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .outputOptions([
               '-c:v libx264',
               '-crf 18',
-              '-maxrate 5000k',
-              '-bufsize 10000k',
+              `-maxrate ${videoBitrateK}k`,       // ✅ Dynamic!
+              `-bufsize ${videoBitrateK * 2}k`,
               '-preset medium',
               '-tune film',
-              '-profile:v main',
-              '-level 3.1',
-              '-pix_fmt yuv420p',
-              '-vf', 'scale=-2:min(720\\,ih)',  // ✅ Fixed!
+              '-profile:v high',
+              '-level 4.1',
               '-c:a aac',
-              '-b:a 128k',
-              '-ar 48000',
+              `-b:a ${audioBitrateK}k`,
+              '-ar 44100',
               '-movflags faststart',
-              '-r 30',
+              '-pix_fmt yuv420p',
+              '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
             ])
             .output(chunkPath)
             .on('start', () =>
@@ -332,28 +337,35 @@ function compressVideo(inputPath, outputPath, knownDuration) {
 
       console.log(`compressVideo → duration:${duration.toFixed(1)}s`);
 
+      // ✅ Calculate safe maxrate for 14MB output
+      const targetSizeMB   = 14;
+      const audioBitrateK  = 128;
+      const totalBitrateK  = (targetSizeMB * 8 * 1024) / duration;
+      const videoBitrateK  = Math.floor(totalBitrateK - audioBitrateK);
+
+      console.log(`Safe maxrate: ${videoBitrateK}k for ${duration.toFixed(1)}s`);
+
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
           '-c:v libx264',
-          '-crf 18',
-          '-maxrate 5000k',
-          '-bufsize 10000k',
+          '-crf 18',                          // ✅ Quality control
+          `-maxrate ${videoBitrateK}k`,        // ✅ Dynamic — based on duration!
+          `-bufsize ${videoBitrateK * 2}k`,    // ✅ 2x buffer
           '-preset medium',
           '-tune film',
-          '-profile:v main',
-          '-level 3.1',
+          '-profile:v high',
+          '-level 4.1',
           '-pix_fmt yuv420p',
-          '-vf', 'scale=-2:min(720\\,ih)',  // ✅ Fixed!
+          '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
           '-c:a aac',
-          '-b:a 128k',
-          '-ar 48000',
+          `-b:a ${audioBitrateK}k`,
+          '-ar 44100',
           '-movflags faststart',
-          '-r 30',
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
         .on('progress', (p) => {
-          if (p.percent) console.log(`Compress progress: ${p.percent.toFixed(1)}%`);
+          if (p.percent) console.log(`Compress: ${p.percent.toFixed(1)}%`);
         })
         .on('end', () => {
           const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
