@@ -201,13 +201,14 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
-  // ✅ Dynamic bitrate based on chunk duration
+  // Dynamic bitrate based on chunk duration, capped at WA Status native (~2 Mbps)
   const targetSizeMB  = 14;
   const audioBitrateK = 128;
   const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
-  const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
+  const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
+  const videoBitrateK = Math.min(calculatedK, 2000); // WA Status cap — prevents re-encode
 
-  console.log(`Chunk bitrate: ${videoBitrateK}k`);
+  console.log(`Chunk bitrate: ${videoBitrateK}k (calculated: ${calculatedK}k)`);
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -218,14 +219,11 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   }
 
   let BATCH_SIZE;
-  if (totalChunks <= 4) {
-    BATCH_SIZE = 2;
-  } else if (totalChunks <= 10) {
-    BATCH_SIZE = 3;
-  } else {
-    BATCH_SIZE = 4;
-  }
+  if (totalChunks <= 4)       BATCH_SIZE = 2;
+  else if (totalChunks <= 10) BATCH_SIZE = 3;
+  else                        BATCH_SIZE = 4;
   console.log(`Total chunks: ${totalChunks} → BATCH_SIZE: ${BATCH_SIZE}`);
+
   const chunkPaths = [];
 
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
@@ -252,7 +250,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
 
           const chunkTimer = setTimeout(() => {
             if (chunkCommand) {
-              try { chunkCommand.kill('SIGKILL'); } catch (e) { }
+              try { chunkCommand.kill('SIGKILL'); } catch (e) {}
             }
             finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
           }, 300000);
@@ -261,25 +259,50 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setStartTime(startTime)
             .setDuration(chunkDuration)
             .outputOptions([
-              '-c:v libx264',
-              '-crf 18',
-              `-maxrate ${videoBitrateK}k`,
-              `-bufsize ${videoBitrateK * 2}k`,
-              '-preset medium',
-              '-tune film',
-              '-profile:v baseline', // ✅ WhatsApp Status compatible!
-              '-level 3.0',          // ✅ WhatsApp Status compatible!
-              '-c:a aac',
-              `-b:a ${audioBitrateK}k`,
-              '-ar 48000',           // ✅ WhatsApp audio spec!
-              '-movflags faststart',
-              '-pix_fmt yuv420p',
-              '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-              '-r 30',               // ✅ 30fps cap
-              '-g 60',               // ✅ Keyframe interval
+              // ===== Video codec — WA Status native =====
+              '-c:v', 'libx264',
+              '-profile:v', 'baseline',
+              '-level', '3.0',
+              '-pix_fmt', 'yuv420p',
+
+              // ===== Pure CBR (no -crf!) — WA detects VBR bursts and re-encodes =====
+              `-b:v`, `${videoBitrateK}k`,
+              `-maxrate`, `${videoBitrateK}k`,
+              `-bufsize`, `${videoBitrateK}k`,   // bufsize == maxrate for tight CBR
+
+              // ===== Baseline-compliant encoding (explicit) =====
+              '-bf', '0',           // No B-frames
+              '-coder', '0',        // CAVLC entropy (baseline)
+              '-refs', '1',         // Single reference frame
+
+              // ===== Resolution cap 720p + square pixels =====
+              '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+
+              // ===== Color tags — WA expects bt709 =====
+              '-color_primaries', 'bt709',
+              '-color_trc', 'bt709',
+              '-colorspace', 'bt709',
+
+              // ===== Framerate — force CFR (phone videos are VFR) =====
+              '-r', '30',
+              '-fps_mode', 'cfr',
+              '-g', '30',           // Keyframe every 1s
+              '-keyint_min', '30',
+              '-sc_threshold', '0', // No scene-change keyframes — predictable GOP
+
+              '-preset', 'medium',
+
+              // ===== Audio — WA Status native =====
+              '-c:a', 'aac',
+              '-profile:a', 'aac_low',
+              `-b:a`, `${audioBitrateK}k`,
+              '-ar', '48000',
+              '-ac', '2',
+
+              '-movflags', '+faststart',
             ])
             .output(chunkPath)
-            .on('start', () =>
+            .on('start', (cmd) =>
               console.log(`Chunk ${index + 1}/${totalChunks} started...`)
             )
             .on('progress', (progress) => {
@@ -325,7 +348,7 @@ function compressVideo(inputPath, outputPath, knownDuration) {
 
     const timeoutId = setTimeout(() => {
       if (ffmpegCommand) {
-        try { ffmpegCommand.kill('SIGKILL'); } catch (e) { }
+        try { ffmpegCommand.kill('SIGKILL'); } catch (e) {}
       }
       finish(new Error('compressVideo timeout after 10 minutes'));
     }, 600000);
@@ -337,32 +360,58 @@ function compressVideo(inputPath, outputPath, knownDuration) {
     durationPromise.then((duration) => {
       if (settled) return;
 
-      // ✅ Dynamic bitrate
+      // Dynamic bitrate, capped at WA Status native (~2 Mbps)
       const targetSizeMB  = 14;
       const audioBitrateK = 128;
       const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
-      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
+      const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
+      const videoBitrateK = Math.min(calculatedK, 2000); // WA Status cap
 
-      console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k`);
+      console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k (calc:${calculatedK}k)`);
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
-          '-c:v libx264',
-          '-crf 18',
-          `-maxrate ${videoBitrateK}k`,
-          `-bufsize ${videoBitrateK * 2}k`,
-          '-preset medium',
-          '-tune film',
-          '-profile:v baseline', // ✅ WhatsApp Status compatible!
-          '-level 3.0',          // ✅ WhatsApp Status compatible!
-          '-pix_fmt yuv420p',
-          '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-          '-c:a aac',
-          `-b:a ${audioBitrateK}k`,
-          '-ar 48000',           // ✅ WhatsApp audio spec!
-          '-movflags faststart',
-          '-r 30',               // ✅ 30fps cap
-          '-g 60',               // ✅ Keyframe interval
+          // ===== Video codec — WA Status native =====
+          '-c:v', 'libx264',
+          '-profile:v', 'baseline',
+          '-level', '3.0',
+          '-pix_fmt', 'yuv420p',
+
+          // ===== Pure CBR (no -crf!) =====
+          `-b:v`, `${videoBitrateK}k`,
+          `-maxrate`, `${videoBitrateK}k`,
+          `-bufsize`, `${videoBitrateK}k`,
+
+          // ===== Baseline-compliant (explicit) =====
+          '-bf', '0',
+          '-coder', '0',
+          '-refs', '1',
+
+          // ===== Resolution cap 720p + square pixels =====
+          '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+
+          // ===== Color tags =====
+          '-color_primaries', 'bt709',
+          '-color_trc', 'bt709',
+          '-colorspace', 'bt709',
+
+          // ===== CFR + GOP =====
+          '-r', '30',
+          '-fps_mode', 'cfr',
+          '-g', '30',
+          '-keyint_min', '30',
+          '-sc_threshold', '0',
+
+          '-preset', 'medium',
+
+          // ===== Audio =====
+          '-c:a', 'aac',
+          '-profile:a', 'aac_low',
+          `-b:a`, `${audioBitrateK}k`,
+          '-ar', '48000',
+          '-ac', '2',
+
+          '-movflags', '+faststart',
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
