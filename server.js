@@ -232,7 +232,7 @@ function getOutputOptions(videoBitrateK, duration) {
     '-movflags', '+faststart',
 
     // threads = Runtime.availableProcessors()
-    '-threads', '0',           // 0 = auto, same as availableProcessors()
+    '-threads', '2',           // 0 = auto, same as availableProcessors()
   ];
 }
 
@@ -253,9 +253,9 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   }
 
   let BATCH_SIZE;
-  if (totalChunks <= 4)       BATCH_SIZE = 2;
+  if (totalChunks <= 4) BATCH_SIZE = 2;
   else if (totalChunks <= 10) BATCH_SIZE = 3;
-  else                        BATCH_SIZE = 4;
+  else BATCH_SIZE = 4;
   console.log(`Total chunks: ${totalChunks} → BATCH_SIZE: ${BATCH_SIZE}`);
 
   const chunkPaths = [];
@@ -284,7 +284,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
 
           const chunkTimer = setTimeout(() => {
             if (chunkCommand) {
-              try { chunkCommand.kill('SIGKILL'); } catch (e) {}
+              try { chunkCommand.kill('SIGKILL'); } catch (e) { }
             }
             finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
           }, 300000);
@@ -340,7 +340,7 @@ function compressVideo(inputPath, outputPath, knownDuration) {
 
     const timeoutId = setTimeout(() => {
       if (ffmpegCommand) {
-        try { ffmpegCommand.kill('SIGKILL'); } catch (e) {}
+        try { ffmpegCommand.kill('SIGKILL'); } catch (e) { }
       }
       finish(new Error('compressVideo timeout after 10 minutes'));
     }, 600000);
