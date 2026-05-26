@@ -267,7 +267,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
               '-ar 44100',
               '-movflags faststart',
               '-pix_fmt yuv420p',
-              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+              '-vf scale=\'if(gt(iw,1920),1920,-2)\':\'if(gt(ih,1080),1080,-2)\'',
             ])
             .output(chunkPath)
             .on('start', () =>
@@ -344,7 +344,7 @@ function compressVideo(inputPath, outputPath, knownDuration) {
           '-ar 44100',
           '-movflags faststart',
           '-pix_fmt yuv420p',
-          '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
+          '-vf scale=\'if(gt(iw,1920),1920,-2)\':\'if(gt(ih,1080),1080,-2)\'',
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
@@ -642,6 +642,9 @@ app.post('/api/process', limiter, async (req, res) => {
               const outputPath = path.join('compressed', outputFileName);
 
               await compressVideo(localInputPath, outputPath, duration);
+
+              const { size } = fs.statSync(outputPath);
+              console.log(`Output file size: ${(size / 1024 / 1024).toFixed(2)} MB`);
 
               const url = await uploadToR2(outputPath, outputFileName);
               await fs.promises.unlink(outputPath).catch(() => { });
