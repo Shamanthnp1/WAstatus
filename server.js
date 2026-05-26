@@ -206,7 +206,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const audioBitrateK = 128;
   const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
   const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-  const videoBitrateK = Math.min(calculatedK, 2000); // WA Status cap — prevents re-encode
+  const videoBitrateK = Math.min(calculatedK, 3500); // WA real ceiling ~3500-4000k
 
   console.log(`Chunk bitrate: ${videoBitrateK}k (calculated: ${calculatedK}k)`);
 
@@ -365,7 +365,7 @@ function compressVideo(inputPath, outputPath, knownDuration) {
       const audioBitrateK = 128;
       const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
       const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-      const videoBitrateK = Math.min(calculatedK, 2000); // WA Status cap
+      const videoBitrateK = Math.min(calculatedK, 3500); // WA real ceiling ~3500-4000k
 
       console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k (calc:${calculatedK}k)`);
 
