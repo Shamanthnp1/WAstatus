@@ -201,12 +201,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
-  const targetSizeMB = 15;
-  const audioBitrateK = 128;                              // ✅ was 192
-  const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
-  const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
 
-  console.log(`Chunk video bitrate ceiling: ${videoBitrateK}kbps`);
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -261,14 +256,14 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
             .setDuration(chunkDuration)
             .outputOptions([
               '-c:v libx264',
-              '-crf 20',                        // ✅ quality control
-              `-maxrate ${videoBitrateK}k`,      // ✅ hard size ceiling
-              `-bufsize ${videoBitrateK}k`,      // ✅ tight buffer
-              '-preset medium',                 // ✅ better quality
+              '-crf 18',              // near lossless — best quality
+              '-maxrate 6000k',       // safety cap so it never exceeds 16MB for 29s
+              '-bufsize 12000k',
+              '-preset slow',         // slower encode = better compression at same quality
               '-profile:v high',
               '-level 4.1',
               '-c:a aac',
-              `-b:a ${audioBitrateK}k`,
+              '-b:a 128k',
               '-ar 44100',
               '-movflags faststart',
               '-pix_fmt yuv420p',
@@ -333,28 +328,23 @@ function compressVideo(inputPath, outputPath, knownDuration) {
     durationPromise.then((duration) => {
       if (settled) return;
 
-      const targetSizeMB = 15;
-      const audioBitrateK = 128;
-      const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
-      const videoBitrateK = Math.floor(totalBitrateK - audioBitrateK);
-
-      console.log(`compressVideo → duration:${duration.toFixed(1)}s videoBitrate:${videoBitrateK}k`);
+      console.log(`compressVideo → duration:${duration.toFixed(1)}s`);
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions([
           '-c:v libx264',
-          '-crf 20',                          // ✅ quality control
-          `-maxrate ${videoBitrateK}k`,        // ✅ hard size ceiling
-          `-bufsize ${videoBitrateK}k`,        // ✅ tight buffer
-          '-preset medium',                   // ✅ better quality
+          '-crf 18',              // near lossless — best quality
+          '-maxrate 6000k',       // safety cap so it never exceeds 16MB for 29s
+          '-bufsize 12000k',
+          '-preset slow',         // slower encode = better compression at same quality
           '-profile:v high',
           '-level 4.1',
+          '-c:a aac',
+          '-b:a 128k',
+          '-ar 44100',
+          '-movflags faststart',
           '-pix_fmt yuv420p',
           '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2',
-          '-c:a aac',
-          `-b:a ${audioBitrateK}k`,
-          '-ar 44100',
-          '-movflags faststart'
         ])
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
