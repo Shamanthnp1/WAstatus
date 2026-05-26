@@ -209,7 +209,7 @@ function getOutputOptions(videoBitrateK) {
 
     // ===== Bitrate =====
     '-b:v', `${videoBitrateK}k`,
-    '-maxrate', `${videoBitrateK}k`,
+    '-maxrate', `${Math.floor(videoBitrateK * 1.5)}k`,
     '-bufsize', `${videoBitrateK * 2}k`,
 
     // ===== Resolution =====
@@ -256,13 +256,11 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
-  const targetSizeMB  = 14;
   const audioBitrateK = 128;
-  const totalBitrateK = (targetSizeMB * 8 * 1024) / chunkDuration;
-  const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-  const videoBitrateK = Math.min(calculatedK, 3700);
-
-  console.log(`Chunk bitrate: ${videoBitrateK}k (calculated: ${calculatedK}k)`);
+  const maxSizeMB = 15.5;
+  const maxBitrateK = Math.floor((maxSizeMB * 8 * 1024) / chunkDuration) - audioBitrateK;
+  const videoBitrateK = Math.min(maxBitrateK, 3700);
+  console.log(`splitVideo → chunkDuration:${chunkDuration}s | bitrate:${videoBitrateK}k`);
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -372,13 +370,11 @@ function compressVideo(inputPath, outputPath, knownDuration) {
     durationPromise.then((duration) => {
       if (settled) return;
 
-      const targetSizeMB  = 14;
       const audioBitrateK = 128;
-      const totalBitrateK = (targetSizeMB * 8 * 1024) / duration;
-      const calculatedK   = Math.floor(totalBitrateK - audioBitrateK);
-      const videoBitrateK = Math.min(calculatedK, 3700);
-
-      console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k (calc:${calculatedK}k)`);
+      const maxSizeMB = 15.5;
+      const maxBitrateK = Math.floor((maxSizeMB * 8 * 1024) / duration) - audioBitrateK;
+      const videoBitrateK = Math.min(maxBitrateK, 3700);
+      console.log(`compressVideo → duration:${duration.toFixed(1)}s | bitrate:${videoBitrateK}k`);
 
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions(getOutputOptions(videoBitrateK))  // ← USING SHARED FUNCTION
