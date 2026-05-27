@@ -213,45 +213,39 @@ function getVideoDimensions(filePath) {
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
-function getOutputOptions(duration, inputHeight = 1920, attempt = 0) {
-  console.log(`✅ getOutputOptions called! duration: ${duration}s, inputHeight: ${inputHeight}, attempt: ${attempt}`);
-
-  const durationMs = duration * 1000;
-  let bufSizeK;
-  if (durationMs < 6000) {
-    bufSizeK = 1900;
-  } else if (durationMs < 11000) {
-    bufSizeK = 3800;
-  } else if (durationMs < 16000) {
-    bufSizeK = 5700;
-  } else {
-    bufSizeK = 7600;
-  }
-
-  // The Premium Multi-Pass Fallback Logic
-  let vfFilter;
-  if (attempt === 0) {
-    // Attempt 0: Try to keep 1080p (Only scale if 4K)
-    vfFilter = inputHeight >= 2160 ? 'scale=1080:trunc(ow/a/2)*2' : 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
-  } else if (attempt === 1) {
-    // Attempt 1: Fallback to 720p
-    vfFilter = 'scale=720:trunc(ow/a/2)*2';
-  } else {
-    // Attempt 2: Last resort 540p
-    vfFilter = 'scale=540:trunc(ow/a/2)*2';
-  }
+function getOutputOptions(duration) {
+  console.log(`✅ getOutputOptions called! (Golden Ratio Profile)`);
 
   return [
-    '-vf', vfFilter,
+    // 1. THE BYPASS RESOLUTION: Force 720p vertical. 
+    // This stops WhatsApp from triggering its 1080p-crusher algorithm.
+    '-vf', 'scale=720:trunc(ow/a/2)*2', 
+    
+    // 2. THE CODEC: Standard H.264 is the most widely supported.
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-    '-crf', '22',              // CRF matched to the Java App
-    '-maxrate', '3800k',
-    '-bufsize', `${bufSizeK}k`,
-    '-r', '29.97',
+    
+    // 3. THE QUALITY ANCHOR: 
+    // CRF 24 is visually lossless on a phone screen but saves massive file size.
+    '-crf', '24',              
+    
+    // 4. THE INVISIBLE CAP (CRITICAL FIX): 
+    // WhatsApp hates bitrates over 2.5 Mbps. We cap it at 2000k (2 Mbps).
+    // Because it is 720p, 2 Mbps looks incredibly crisp.
+    '-maxrate', '2000k',       
+    '-bufsize', '4000k',       // Buffer size should be 2x maxrate
+    
+    // 5. THE FRAME RATE LIMIT: 
+    // 30 FPS. WhatsApp struggles with 60 FPS statuses.
+    '-r', '30',                
+    
+    // 6. AUDIO OPTIMIZATION:
     '-c:a', 'aac',
     '-ar', '44100',
-    '-b:a', '128k',
+    '-b:a', '128k',            // Standard audio bitrate
+    
+    // 7. WEB OPTIMIZATION: 
+    // Puts metadata at the front so WhatsApp reads it instantly.
     '-movflags', '+faststart',
     '-f', 'mp4',
     '-threads', '2',
