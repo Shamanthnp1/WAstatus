@@ -213,34 +213,33 @@ function getVideoDimensions(filePath) {
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration) {
-  console.log(`✅ getOutputOptions called! (PureStatus Vanilla Clone)`);
+  console.log(`✅ getOutputOptions called! (PureStatus Clone - Safe Bitrate)`);
 
   const durationMs = duration * 1000;
   
-  // This is the EXACT math from the competitor's Java code
+  // Scaled down buffer math to match the 3500k maxrate limit
   let bufSizeK;
   if (durationMs < 6000) {
-    bufSizeK = 1900;
+    bufSizeK = 1750;
   } else if (durationMs < 11000) {
-    bufSizeK = 2533; 
+    bufSizeK = 2333; 
   } else if (durationMs < 16000) {
-    bufSizeK = 3800;
+    bufSizeK = 3500;
   } else {
-    bufSizeK = 5700;
+    bufSizeK = 5250;
   }
 
-  // The competitor always forces a 1080 width to maintain aspect ratio
-  let vfFilter = 'scale=1080:trunc(ow/a/2)*2';
-
   return [
-    '-vf', vfFilter,
+    '-vf', 'scale=1080:trunc(ow/a/2)*2',
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     
-    // THE EXACT SETTINGS FROM THEIR JAVA CODE (No Spoofing, No Hacks)
-    '-crf', '23',
-    '-maxrate', '3800k',
+    // THE SAFE BITRATE CHOKE (Compensating for FFmpeg 6.0)
+    '-crf', '25',
+    '-maxrate', '3500k',
     '-bufsize', `${bufSizeK}k`,
+    
+    // STANDARD AUDIO & CONTAINER (No Hacks)
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
