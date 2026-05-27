@@ -213,8 +213,8 @@ function getVideoDimensions(filePath) {
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
-function getOutputOptions(duration, inputHeight = 1920) {
-  console.log(`✅ getOutputOptions called! duration: ${duration}s inputHeight: ${inputHeight}`);
+function getOutputOptions(duration, inputHeight = 1920, attempt = 0) {
+  console.log(`✅ getOutputOptions called! duration: ${duration}s, inputHeight: ${inputHeight}, attempt: ${attempt}`);
 
   const durationMs = duration * 1000;
   let bufSizeK;
@@ -228,23 +228,24 @@ function getOutputOptions(duration, inputHeight = 1920) {
     bufSizeK = 7600;
   }
 
-  console.log(`bufsize: ${bufSizeK}k for duration: ${duration}s`);
-
-  // Premium scale logic - only scale if 4K input
+  // The Premium Multi-Pass Fallback Logic
   let vfFilter;
-  if (inputHeight >= 2160) {
-    vfFilter = 'scale=1080:trunc(ow/a/2)*2';  // 4K → scale to 1080
+  if (attempt === 0) {
+    // Attempt 0: Try to keep 1080p (Only scale if 4K)
+    vfFilter = inputHeight >= 2160 ? 'scale=1080:trunc(ow/a/2)*2' : 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  } else if (attempt === 1) {
+    // Attempt 1: Fallback to 720p
+    vfFilter = 'scale=720:trunc(ow/a/2)*2';
   } else {
-    vfFilter = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';  // HD → keep original, just ensure even dimensions
+    // Attempt 2: Last resort 540p
+    vfFilter = 'scale=540:trunc(ow/a/2)*2';
   }
-
-  console.log(`vf filter: ${vfFilter}`);
 
   return [
     '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-    '-crf', '23',
+    '-crf', '22',              // CRF matched to the Java App
     '-maxrate', '3800k',
     '-bufsize', `${bufSizeK}k`,
     '-r', '29.97',
@@ -290,53 +291,53 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
     );
 
     const batchResults = await Promise.all(
-      batch.map(({ index, startTime, chunkPath }) =>
-        new Promise((res, rej) => {
-          let settled = false;
-          let chunkCommand = null;
+      batch.map(async ({ index, startTime, chunkPath }) => {
+        
+        let startAttempt = (chunkDuration >= 59) ? 1 : 0;
 
-          const finishChunk = (err, result) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(chunkTimer);
-            if (err) { rej(err); return; }
-            res(result);
-          };
+        for (let attempt = startAttempt; attempt < 3; attempt++) {
+          await new Promise((res, rej) => {
+            let settled = false;
+            let chunkCommand = null;
 
-          const chunkTimer = setTimeout(() => {
-            if (chunkCommand) {
-              try { chunkCommand.kill('SIGKILL'); } catch (e) { }
-            }
-            finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
-          }, 300000);
+            const finishChunk = (err) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(chunkTimer);
+              if (err) { rej(err); return; }
+              res();
+            };
 
-          chunkCommand = ffmpeg(inputPath)
-            .setStartTime(startTime)
-            .setDuration(chunkDuration)
-            .outputOptions(getOutputOptions(chunkDuration, inputHeight))
-            .output(chunkPath)
-            .on('start', (cmd) =>
-              console.log(`Chunk ${index + 1}/${totalChunks} started...`)
-            )
-            .on('progress', (progress) => {
-              if (progress.percent) {
-                console.log(`Chunk ${index + 1}: ${progress.percent.toFixed(1)}%`);
+            const chunkTimer = setTimeout(() => {
+              if (chunkCommand) {
+                try { chunkCommand.kill('SIGKILL'); } catch (e) { }
               }
-            })
-            .on('end', () => {
-              const stats = fs.statSync(chunkPath);
-              const sizeMB = stats.size / (1024 * 1024);
-              console.log(`Chunk ${index + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
-              finishChunk(null, chunkPath);
-            })
-            .on('error', (err) => {
-              console.error(`Chunk ${index + 1} error:`, err);
-              finishChunk(err);
-            });
+              finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
+            }, 300000);
 
-          chunkCommand.run();
-        })
-      )
+            chunkCommand = ffmpeg(inputPath)
+              .setStartTime(startTime)
+              .setDuration(chunkDuration)
+              .outputOptions(getOutputOptions(chunkDuration, inputHeight, attempt)) // Pass attempt here
+              .output(chunkPath)
+              .on('end', () => finishChunk(null))
+              .on('error', (err) => finishChunk(err));
+
+            chunkCommand.run();
+          });
+
+          // Size check for the chunk
+          const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
+          if (sizeMB <= 15.5) {
+            console.log(`✅ Chunk ${index + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
+            return chunkPath; // Success, move to next chunk
+          }
+
+          console.log(`⚠️ Chunk ${index + 1} failed size check (${sizeMB.toFixed(2)}MB > 15.5MB). Retrying...`);
+        }
+
+        throw new Error(`Chunk ${index + 1} could not be compressed under 16MB.`);
+      })
     );
 
     chunkPaths.push(...batchResults);
@@ -345,53 +346,57 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
   return chunkPaths;
 }
 
-// Compress single video (for short videos under 29s)
-function compressVideo(inputPath, outputPath, knownDuration, inputHeight = 1920) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let ffmpegCommand = null;
+// Compress single video with Multi-Pass Fallback
+async function compressVideo(inputPath, outputPath, knownDuration, inputHeight = 1920) {
+  const duration = Number.isFinite(knownDuration) ? knownDuration : await getVideoDuration(inputPath);
+  
+  // The 60-Second Rule: Skip 1080p completely if the video is roughly 60 seconds.
+  let startAttempt = (duration >= 59) ? 1 : 0;
 
-    const finish = (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutId);
-      if (err) { reject(err); return; }
-      resolve();
-    };
+  for (let attempt = startAttempt; attempt < 3; attempt++) {
+    console.log(`🎬 compressVideo → Attempt ${attempt} | height:${inputHeight}`);
 
-    const timeoutId = setTimeout(() => {
-      if (ffmpegCommand) {
-        try { ffmpegCommand.kill('SIGKILL'); } catch (e) { }
-      }
-      finish(new Error('compressVideo timeout after 10 minutes'));
-    }, 600000);
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      let ffmpegCommand = null;
 
-    const durationPromise = Number.isFinite(knownDuration)
-      ? Promise.resolve(knownDuration)
-      : getVideoDuration(inputPath);
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (err) return reject(err);
+        resolve();
+      };
 
-    durationPromise.then((duration) => {
-      if (settled) return;
+      const timeoutId = setTimeout(() => {
+        if (ffmpegCommand) {
+          try { ffmpegCommand.kill('SIGKILL'); } catch (e) { }
+        }
+        finish(new Error(`compressVideo timeout after 10 minutes on attempt ${attempt}`));
+      }, 600000);
 
-      console.log(`compressVideo → duration:${duration.toFixed(1)}s | height:${inputHeight} | using CRF 23`);
-
+      // Pass the 'attempt' variable into getOutputOptions
       ffmpegCommand = ffmpeg(inputPath)
-        .outputOptions(getOutputOptions(duration, inputHeight))
+        .outputOptions(getOutputOptions(duration, inputHeight, attempt))
         .output(outputPath)
-        .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
-        .on('progress', (p) => {
-          if (p.percent) console.log(`Compress: ${p.percent.toFixed(1)}%`);
-        })
-        .on('end', () => {
-          const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
-          console.log(`Compression done! Size: ${sizeMB.toFixed(2)}MB`);
-          finish();
-        })
+        .on('end', () => finish())
         .on('error', finish);
 
       ffmpegCommand.run();
-    }).catch(finish);
-  });
+    });
+
+    // Check file size after FFmpeg finishes
+    const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
+    if (sizeMB <= 15.5) { // 15.5MB gives a safe 0.5MB buffer for the WhatsApp API
+      console.log(`✅ Compression successful! Size: ${sizeMB.toFixed(2)}MB`);
+      return; 
+    }
+
+    console.log(`⚠️ Attempt ${attempt} failed size check (${sizeMB.toFixed(2)}MB > 15.5MB). Retrying...`);
+    // Loop continues and FFmpeg will overwrite the file with a lower resolution.
+  }
+
+  throw new Error('Video could not be compressed under 16MB even at 540p resolution.');
 }
 
 // Upload to Cloudflare R2
