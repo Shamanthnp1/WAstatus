@@ -218,7 +218,7 @@ function getOutputOptions(videoBitrateK, duration) {
   console.log(`bufsize: ${bufSizeK}k for duration: ${duration}s`);
 
   return [
-    '-vf', "scale='min(if(gte(ih,iw),1080,1920),iw)':trunc(ow/a/2)*2",
+    '-vf', 'scale=1080:trunc(ow/a/2)*2',  // ← COMPETITOR'S EXACT filter
 
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
@@ -235,7 +235,7 @@ function getOutputOptions(videoBitrateK, duration) {
 
     '-movflags', '+faststart',
 
-    '-threads', String(require('os').cpus().length)
+    '-threads', '2'  // ← Safe for Railway with multiple users
   ];
 }
 
