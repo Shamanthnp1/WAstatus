@@ -196,51 +196,69 @@ function getVideoDuration(filePath) {
   });
 }
 
+function getVideoDimensions(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return reject(err);
+      const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+      resolve({
+        width: videoStream?.width || 1080,
+        height: videoStream?.height || 1920
+      });
+    });
+  });
+}
+
+
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
-function getOutputOptions(videoBitrateK, duration) {
-  console.log(`✅ getOutputOptions called! duration: ${duration}s`);
+function getOutputOptions(duration, inputHeight = 1920) {
+  console.log(`✅ getOutputOptions called! duration: ${duration}s inputHeight: ${inputHeight}`);
 
-  // Competitor's exact bufsize logic
   const durationMs = duration * 1000;
   let bufSizeK;
   if (durationMs < 6000) {
-    bufSizeK = Math.round(3800 / 2);
+    bufSizeK = 1900;
   } else if (durationMs < 11000) {
-    bufSizeK = Math.round(3800 / 1.5);
-  } else if (durationMs < 16000) {
     bufSizeK = 3800;
+  } else if (durationMs < 16000) {
+    bufSizeK = 5700;
   } else {
-    bufSizeK = Math.round(3800 * 1.5);
+    bufSizeK = 7600;
   }
 
   console.log(`bufsize: ${bufSizeK}k for duration: ${duration}s`);
 
-  return [
-    '-vf', 'scale=1080:trunc(ow/a/2)*2',  // ← COMPETITOR'S EXACT filter
+  // Premium scale logic - only scale if 4K input
+  let vfFilter;
+  if (inputHeight >= 2160) {
+    vfFilter = 'scale=1080:trunc(ow/a/2)*2';  // 4K → scale to 1080
+  } else {
+    vfFilter = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';  // HD → keep original, just ensure even dimensions
+  }
 
+  console.log(`vf filter: ${vfFilter}`);
+
+  return [
+    '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-
-    '-crf', '18',        // ← Lower CRF = higher quality = higher bitrate
+    '-crf', '23',
     '-maxrate', '3800k',
     '-bufsize', `${bufSizeK}k`,
-
     '-r', '29.97',
-
     '-c:a', 'aac',
     '-ar', '44100',
     '-b:a', '128k',
-
     '-movflags', '+faststart',
-
-    '-threads', '2'  // ← Safe for Railway with multiple users
+    '-f', 'mp4',
+    '-threads', '2',
   ];
 }
 
 // Split video into chunks of maxDuration seconds
-async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
+async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, inputHeight = 1920) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
@@ -295,7 +313,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
           chunkCommand = ffmpeg(inputPath)
             .setStartTime(startTime)
             .setDuration(chunkDuration)
-            .outputOptions(getOutputOptions(videoBitrateK, chunkDuration))  // ← pass chunkDuration
+            .outputOptions(getOutputOptions(chunkDuration, inputHeight))
             .output(chunkPath)
             .on('start', (cmd) =>
               console.log(`Chunk ${index + 1}/${totalChunks} started...`)
@@ -328,7 +346,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29) {
 }
 
 // Compress single video (for short videos under 29s)
-function compressVideo(inputPath, outputPath, knownDuration) {
+function compressVideo(inputPath, outputPath, knownDuration, inputHeight = 1920) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let ffmpegCommand = null;
@@ -355,11 +373,10 @@ function compressVideo(inputPath, outputPath, knownDuration) {
     durationPromise.then((duration) => {
       if (settled) return;
 
-      console.log(`compressVideo → duration:${duration.toFixed(1)}s | using CRF 23`);
-      const videoBitrateK = 3800; // only used for logging, CRF controls quality now
+      console.log(`compressVideo → duration:${duration.toFixed(1)}s | height:${inputHeight} | using CRF 23`);
 
       ffmpegCommand = ffmpeg(inputPath)
-        .outputOptions(getOutputOptions(videoBitrateK, duration))  // ← pass duration
+        .outputOptions(getOutputOptions(duration, inputHeight))
         .output(outputPath)
         .on('start', (cmd) => console.log('FFmpeg cmd:', cmd))
         .on('progress', (p) => {
@@ -644,9 +661,10 @@ app.post('/api/process', limiter, async (req, res) => {
             await deleteFromR2(key);
             console.log(`🗑️  [${index + 1}] Deleted original from R2: ${key}`);
 
-            // ── STEP 3: Get duration ──
+            // ── STEP 3: Get duration & dimensions ──
             const duration = await getVideoDuration(localInputPath);
-            console.log(`⏱️  [${index + 1}] Duration: ${duration.toFixed(1)}s`);
+            const dimensions = await getVideoDimensions(localInputPath);
+            console.log(`⏱️  [${index + 1}] Duration: ${duration.toFixed(1)}s | Dimensions: ${dimensions.width}x${dimensions.height}`);
 
             // ── STEP 4: Compress or Split ──
             if (duration <= 29) {
@@ -655,7 +673,7 @@ app.post('/api/process', limiter, async (req, res) => {
               const outputFileName = `compressed_${uuidv4()}.mp4`;
               const outputPath = path.join('compressed', outputFileName);
 
-              await compressVideo(localInputPath, outputPath, duration);
+              await compressVideo(localInputPath, outputPath, duration, dimensions.height);
 
               const url = await uploadToR2(outputPath, outputFileName);
               await fs.promises.unlink(outputPath).catch(() => { });
@@ -666,7 +684,7 @@ app.post('/api/process', limiter, async (req, res) => {
             } else {
               // LONG VIDEO
               console.log(`✂️  [${index + 1}] Long video (${duration.toFixed(1)}s) — splitting...`);
-              const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29);
+              const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29, dimensions.height);
 
               console.log(`☁️  [${index + 1}] Uploading ${chunkPaths.length} chunks to R2...`);
 
