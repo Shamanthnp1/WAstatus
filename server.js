@@ -214,7 +214,19 @@ function getVideoDimensions(filePath) {
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
-  console.log(`✅ getOutputOptions called! (Strict 3.3Mbps Cap)`);
+  console.log(`✅ getOutputOptions called! (Fixing 0.000s Start Time)`);
+
+  const durationMs = duration * 1000;
+  let bufSizeK;
+  if (durationMs < 6000) {
+    bufSizeK = 1900;
+  } else if (durationMs < 11000) {
+    bufSizeK = 3800;
+  } else if (durationMs < 16000) {
+    bufSizeK = 5700;
+  } else {
+    bufSizeK = 7600;
+  }
 
   let vfFilter = inputHeight >= 2160 ? 'scale=1080:trunc(ow/a/2)*2' : 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
 
@@ -223,12 +235,10 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     
-    // 1. THE AGGRESSIVE BITRATE CHOKE (Crucial Fix)
-    // Pushing CRF to 26 forces the base size smaller.
-    // Hard capping at 3300k ensures we NEVER touch the 4.0 Mbps tripwire.
-    '-crf', '26',
-    '-maxrate', '3300k',
-    '-bufsize', '6600k', 
+    // 1. SAFE BITRATE (Proven to work in last test!)
+    '-crf', '25',
+    '-maxrate', '3500k',
+    '-bufsize', `${bufSizeK}k`,
 
     // 2. FORCE KEYFRAMES (Required for WhatsApp pass-through)
     '-g', '30',
@@ -238,21 +248,16 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-profile:v', 'high',      
     '-level', '4.0',           
     
-    // 4. SPOOF THE MOBILE HANDLERS (This worked in your last test!)
+    // 4. SPOOF THE MOBILE HANDLERS (Proven to work!)
     '-metadata:s:v:0', 'handler_name=VideoHandle',
     '-metadata:s:a:0', 'handler_name=SoundHandle',
     '-metadata:s:v:0', 'language=eng',
     '-metadata:s:a:0', 'language=eng',
     
-    // 5. NUKE THE ENCODER TAGS COMPLETELY
-    // Since manually writing Lavc59 failed, these flags tell FFmpeg 
-    // to output a completely blank encoder field, making it untraceable.
-    '-map_metadata', '-1',
-    '-flags', '+bitexact',
-    '-fflags', '+bitexact',
-    '-use_editlist', '0',
+    // REMOVED: -use_editlist 0 (This caused the 0.066s delay bug)
+    // REMOVED: +bitexact flags (Let FFmpeg build a natural container)
 
-    // 6. STANDARD AUDIO & CONTAINER
+    // 5. STANDARD AUDIO & CONTAINER
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
