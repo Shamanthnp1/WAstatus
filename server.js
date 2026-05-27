@@ -213,7 +213,7 @@ function getVideoDimensions(filePath) {
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
-  console.log(`✅ getOutputOptions called! (Perfect Sync & Spoof)`);
+  console.log(`✅ getOutputOptions called! (Injecting Underscore Bypass)`);
 
   const durationMs = duration * 1000;
   let bufSizeK;
@@ -233,34 +233,21 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-    
-    // 1. SAFE BITRATE (3.6 Mbps worked perfectly in Test 7!)
     '-crf', '25',
     '-maxrate', '3500k',
     '-bufsize', `${bufSizeK}k`,
-
-    // 2. FORCE KEYFRAMES
     '-g', '30',
     '-keyint_min', '30',
-    
-    // 3. MATCH EXACT PROFILE
     '-profile:v', 'high',      
     '-level', '4.0',           
-    
-    // 4. SPOOF MOBILE HANDLERS (Worked perfectly in Test 7!)
     '-metadata:s:v:0', 'handler_name=VideoHandle',
     '-metadata:s:a:0', 'handler_name=SoundHandle',
     '-metadata:s:v:0', 'language=eng',
     '-metadata:s:a:0', 'language=eng',
     
-    // 5. MANUAL ENCODER SPOOFING (Worked perfectly in Test 7!)
-    '-metadata', 'encoder=Lavf59.27.100',
-    '-metadata:s:v:0', 'encoder=Lavc59.37.100',
-    
-    // ❌ REMOVED: -avoid_negative_ts make_zero
-    // (This removal guarantees the timeline will return to 0.000000)
+    // THE UNDERSCORE TRICK: No spaces = No fluent-ffmpeg crashes!
+    '-metadata:s:v:0', 'encoder=Lavc59.37.100_libx264',
 
-    // 6. STANDARD AUDIO & CONTAINER
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
@@ -277,29 +264,37 @@ function getOutputOptions(duration, inputHeight = 1920) {
 function applyBinaryPatch(filePath) {
   try {
     const buffer = fs.readFileSync(filePath);
-    const asciiStr = buffer.toString('ascii'); // Use ASCII just to safely find the index
-    
-    // Regex to find the 12-byte desktop tags (e.g., Lavf60.3.100 or Lavf61.1.100)
-    const regex = /Lavf\d{2}\.\d\.\d{3}/g;
-    let match;
+    const asciiStr = buffer.toString('ascii');
     let patched = false;
     
+    // 1. Patch the global format tag (Lavf60 -> Lavf59)
+    const regex = /Lavf\d{2}\.\d\.\d{3}/g;
+    let match;
     while ((match = regex.exec(asciiStr)) !== null) {
       const matchedString = match[0];
-      const replaceString = "Lavf59.2.100"; // Exactly 12 bytes to match Lavf60.3.100
+      const replaceString = "Lavf59.2.100"; // Exactly 12 bytes
       
       if (matchedString.length === replaceString.length) {
-        // Surgically overwrite the raw buffer at the exact byte index
         buffer.write(replaceString, match.index, replaceString.length, 'ascii');
         patched = true;
-        console.log(`✅ Binary Patch: Overwrote Desktop tag '${matchedString}' with Mobile tag '${replaceString}'`);
+        console.log(`✅ Binary Patch: Overwrote Desktop tag '${matchedString}' with '${replaceString}'`);
       }
     }
 
+    // 2. Fix the Video Stream tag (Replace underscore with space)
+    const lavcSearch = "Lavc59.37.100_libx264";
+    const lavcReplace = "Lavc59.37.100 libx264";
+    const lavcIndex = asciiStr.indexOf(lavcSearch);
+
+    if (lavcIndex !== -1) {
+      buffer.write(lavcReplace, lavcIndex, lavcReplace.length, 'ascii');
+      patched = true;
+      console.log(`✅ Binary Patch: Replaced underscore with space to match WhatsApp Web whitelist!`);
+    }
+
+    // Save if any patches were applied
     if (patched) {
-      fs.writeFileSync(filePath, buffer); // Save the perfectly patched binary back to disk
-    } else {
-      console.log('⚠️ No Lavf desktop tags found to patch. File might already be clean.');
+      fs.writeFileSync(filePath, buffer); 
     }
   } catch (err) {
     console.error('Binary patch failed:', err);
