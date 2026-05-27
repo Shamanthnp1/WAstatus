@@ -249,18 +249,18 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-profile:v', 'high',      
     '-level', '4.0',           
     
-    // 🚨 4. SPOOF THE MP4 ATOMS AND HANDLERS (The Mobile Trap) 🚨
+    // 4. SPOOF THE MP4 ATOMS AND HANDLERS (The Mobile Trap) 
     '-metadata:s:v:0', 'handler_name=VideoHandle',
     '-metadata:s:a:0', 'handler_name=SoundHandle',
     '-metadata:s:v:0', 'language=eng',
     '-metadata:s:a:0', 'language=eng',
     
-    // 🚨 5. CLONE THE COMPETITOR'S EXACT ENCODER VERSION 🚨
-    // Instead of stripping tags, we forge the trusted mobile version.
+    // 5. CLONE THE COMPETITOR'S EXACT ENCODER VERSION 
+    // (FIXED: Space removed to prevent fluent-ffmpeg crash)
     '-metadata', 'encoder=Lavf59.27.100',
-    '-metadata:s:v:0', 'encoder=Lavc59.37.100 libx264',
+    '-metadata:s:v:0', 'encoder=Lavc59.37.100', 
     
-    // 🚨 6. DISABLE EDIT LISTS 🚨
+    // 6. DISABLE EDIT LISTS 
     // Modern FFmpeg adds these. WhatsApp hates them and re-encodes to remove them.
     '-use_editlist', '0',
 
