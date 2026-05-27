@@ -254,13 +254,11 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-metadata:s:v:0', 'language=eng',
     '-metadata:s:a:0', 'language=eng',
     
-    // 5. MANUAL ENCODER SPOOFING (No more +bitexact)
-    // We manually write the Lavc59 tags to hide the Lavc60 server tags.
-    // We add literal double-quotes inside the single-quotes to protect the space!
-    '-metadata', 'encoder="Lavf59.27.100"',
-    '-metadata:s:v:0', 'encoder="Lavc59.37.100 libx264"',
+    // 5. MANUAL ENCODER SPOOFING (Safe, space-free version)
+    '-metadata', 'encoder=Lavf59.27.100',
+    '-metadata:s:v:0', 'encoder=Lavc59.37.100',
     
-    // 6. FORCE TIMELINE TO ZERO
+    // 6. FORCE TIMELINE TO ZERO (This is the magic fix from the last step)
     '-avoid_negative_ts', 'make_zero',
 
     // 7. STANDARD AUDIO & CONTAINER
