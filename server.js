@@ -209,7 +209,6 @@ function getVideoDimensions(filePath) {
   });
 }
 
-
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
@@ -270,6 +269,41 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-f', 'mp4',
     '-threads', '2',
   ];
+}
+
+// ========================
+// THE BINARY MP4 PATCHER (Zero-Corruption Buffer Overwrite)
+// ========================
+function applyBinaryPatch(filePath) {
+  try {
+    const buffer = fs.readFileSync(filePath);
+    const asciiStr = buffer.toString('ascii'); // Use ASCII just to safely find the index
+    
+    // Regex to find the 12-byte desktop tags (e.g., Lavf60.3.100 or Lavf61.1.100)
+    const regex = /Lavf\d{2}\.\d\.\d{3}/g;
+    let match;
+    let patched = false;
+    
+    while ((match = regex.exec(asciiStr)) !== null) {
+      const matchedString = match[0];
+      const replaceString = "Lavf59.2.100"; // Exactly 12 bytes to match Lavf60.3.100
+      
+      if (matchedString.length === replaceString.length) {
+        // Surgically overwrite the raw buffer at the exact byte index
+        buffer.write(replaceString, match.index, replaceString.length, 'ascii');
+        patched = true;
+        console.log(`✅ Binary Patch: Overwrote Desktop tag '${matchedString}' with Mobile tag '${replaceString}'`);
+      }
+    }
+
+    if (patched) {
+      fs.writeFileSync(filePath, buffer); // Save the perfectly patched binary back to disk
+    } else {
+      console.log('⚠️ No Lavf desktop tags found to patch. File might already be clean.');
+    }
+  } catch (err) {
+    console.error('Binary patch failed:', err);
+  }
 }
 
 // Split video into chunks of maxDuration seconds
@@ -340,6 +374,10 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
             chunkCommand.run();
           });
 
+          // 🚨 INJECT BINARY PATCH HERE 🚨
+          // The file is saved locally. We patch it BEFORE checking size and uploading!
+          applyBinaryPatch(chunkPath);
+
           // Size check for the chunk
           const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
           if (sizeMB <= 15.5) {
@@ -398,6 +436,10 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
 
       ffmpegCommand.run();
     });
+
+    // 🚨 INJECT BINARY PATCH HERE 🚨
+    // The file is saved locally. We patch it BEFORE checking size and uploading!
+    applyBinaryPatch(outputPath);
 
     // Check file size after FFmpeg finishes
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
