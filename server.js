@@ -214,7 +214,7 @@ function getVideoDimensions(filePath) {
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
-  console.log(`✅ getOutputOptions called! (Master WhatsApp Bypass)`);
+  console.log(`✅ getOutputOptions called! (Perfect Sync & Spoof)`);
 
   const durationMs = duration * 1000;
   let bufSizeK;
@@ -235,12 +235,12 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     
-    // 1. SAFE BITRATE (Proved successful in Attempt 5)
+    // 1. SAFE BITRATE (Under the 3.8 Mbps limit)
     '-crf', '25',
     '-maxrate', '3500k',
     '-bufsize', `${bufSizeK}k`,
 
-    // 2. FORCE KEYFRAMES (Required for WhatsApp pass-through)
+    // 2. FORCE KEYFRAMES
     '-g', '30',
     '-keyint_min', '30',
     
@@ -248,23 +248,22 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-profile:v', 'high',      
     '-level', '4.0',           
     
-    // 4. SPOOF THE MOBILE HANDLERS (Proved successful in Attempts 3, 4 & 5)
+    // 4. SPOOF MOBILE HANDLERS
     '-metadata:s:v:0', 'handler_name=VideoHandle',
     '-metadata:s:a:0', 'handler_name=SoundHandle',
     '-metadata:s:v:0', 'language=eng',
     '-metadata:s:a:0', 'language=eng',
     
-    // 5. THE FINAL METADATA CLOAK (From Attempt 4)
-    // Strips the "Lavc60" server tag so WhatsApp thinks it's a mobile file.
-    // We removed "-use_editlist 0" to ensure start_pts stays perfectly synced at 0.000000.
-    '-map_metadata', '-1',
-    '-flags', '+bitexact',
-    '-fflags', '+bitexact',
-
-    // FORCE TIMELINE TO START AT EXACTLY 0.000000
+    // 5. MANUAL ENCODER SPOOFING (No more +bitexact)
+    // We manually write the Lavc59 tags to hide the Lavc60 server tags.
+    // We add literal double-quotes inside the single-quotes to protect the space!
+    '-metadata', 'encoder="Lavf59.27.100"',
+    '-metadata:s:v:0', 'encoder="Lavc59.37.100 libx264"',
+    
+    // 6. FORCE TIMELINE TO ZERO
     '-avoid_negative_ts', 'make_zero',
 
-    // 6. STANDARD AUDIO & CONTAINER
+    // 7. STANDARD AUDIO & CONTAINER
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
