@@ -214,8 +214,6 @@ function getVideoDimensions(filePath) {
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
-  console.log(`✅ getOutputOptions called! (Spoofing Mobile MP4 Atoms)`);
-
   const durationMs = duration * 1000;
   let bufSizeK;
   if (durationMs < 6000) {
@@ -234,37 +232,18 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-    
-    // 1. MATCH BITRATE & QUALITY EXACTLY
     '-crf', '23',
     '-maxrate', '3800k',
     '-bufsize', `${bufSizeK}k`,
-
-    // 2. FORCE KEYFRAMES (CRITICAL FOR WHATSAPP PASS-THROUGH)
-    // WhatsApp transcodes videos if keyframes are too far apart.
     '-g', '30',
     '-keyint_min', '30',
-    
-    // 3. MATCH PROFILE EXACTLY
     '-profile:v', 'high',      
     '-level', '4.0',           
-    
-    // 4. SPOOF THE MP4 ATOMS AND HANDLERS (The Mobile Trap) 
     '-metadata:s:v:0', 'handler_name=VideoHandle',
     '-metadata:s:a:0', 'handler_name=SoundHandle',
     '-metadata:s:v:0', 'language=eng',
     '-metadata:s:a:0', 'language=eng',
-    
-    // 5. CLONE THE COMPETITOR'S EXACT ENCODER VERSION 
-    // (FIXED: Space removed to prevent fluent-ffmpeg crash)
-    '-metadata', 'encoder=Lavf59.27.100',
-    '-metadata:s:v:0', 'encoder=Lavc59.37.100', 
-    
-    // 6. DISABLE EDIT LISTS 
-    // Modern FFmpeg adds these. WhatsApp hates them and re-encodes to remove them.
     '-use_editlist', '0',
-
-    // 7. STANDARD AUDIO & CONTAINER
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
