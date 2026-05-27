@@ -214,8 +214,6 @@ function getVideoDimensions(filePath) {
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
-  console.log(`✅ getOutputOptions called! (Bitrate Safety Buffer & Metadata Strip)`);
-
   const durationMs = duration * 1000;
   let bufSizeK;
   if (durationMs < 6000) {
@@ -228,23 +226,38 @@ function getOutputOptions(duration, inputHeight = 1920) {
     bufSizeK = 7600;
   }
 
+  let vfFilter = inputHeight >= 2160 ? 'scale=1080:trunc(ow/a/2)*2' : 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+
   return [
-    '-vf', inputHeight >= 2160 ? 'scale=1080:trunc(ow/a/2)*2' : 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+    '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     
-    // 1. QUALITY & BITRATE SAFETY BUFFER
-    '-crf', '24',              // Bumped to 24 to naturally lower the bitrate slightly
-    '-maxrate', '3500k',       // The critical fix: Hard cap at 3.5 Mbps (Safely under the 3.8 tripwire)
-    '-bufsize', '7000k',       // Buffer must be 2x maxrate to strictly enforce the cap
+    // 1. Bitrate & Quality Profile
+    '-crf', '24',              
+    '-maxrate', '3800k',       
+    '-bufsize', `${bufSizeK}k`,       
     
-    // 2. MATCH COMPETITOR'S EXACT PROFILE
+    // 2. Exact Profile Match
     '-profile:v', 'high',      
     '-level', '4.0',           
     
-    // 3. STRIP THE DESKTOP FINGERPRINT
-    '-map_metadata', '-1',     // Removes the Lavc61 tag completely
+    // 🚨 THE MAGIC SPOOFING FLAGS 🚨
     
+    // Spoof the English Language Tag
+    '-metadata:s:v:0', 'language=eng',
+    '-metadata:s:a:0', 'language=eng',
+    
+    // Spoof the Hardware Handler Name (Handle vs Handler)
+    '-metadata:s:v:0', 'handler_name=VideoHandle',
+    '-metadata:s:a:0', 'handler_name=SoundHandle',
+    
+    // Brutally strip the Desktop FFmpeg Version Tags
+    '-map_metadata', '-1',     // Clears global metadata
+    '-flags', '+bitexact',     // Strips Lavc encoder tag from the video stream
+    '-fflags', '+bitexact',    // Strips Lavf encoder tag from the format container
+    
+    // Standard Audio & Container
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
