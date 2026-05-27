@@ -213,8 +213,8 @@ function getVideoDimensions(filePath) {
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
-function getOutputOptions(duration, inputHeight = 1920, attempt = 1) {
-  console.log(`✅ getOutputOptions called! (Android Clone Profile)`);
+function getOutputOptions(duration, inputHeight = 1920) {
+  console.log(`✅ getOutputOptions called! (Bitrate Safety Buffer & Metadata Strip)`);
 
   const durationMs = duration * 1000;
   let bufSizeK;
@@ -228,35 +228,24 @@ function getOutputOptions(duration, inputHeight = 1920, attempt = 1) {
     bufSizeK = 7600;
   }
 
-  // Force 720p fallback to mimic the app's safe zone
-  let vfFilter = attempt === 0 && inputHeight < 2160 
-    ? 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p' 
-    : 'scale=720:trunc(ow/a/2)*2,format=yuv420p';
-
   return [
-    '-vf', vfFilter,
+    '-vf', inputHeight >= 2160 ? 'scale=1080:trunc(ow/a/2)*2' : 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
     '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
     
-    // 1. FORCE MOBILE HARDWARE COMPATIBILITY
-    '-profile:v', 'baseline',  // Forces the safest profile for WhatsApp Status
-    '-level', '3.0',           // Standard mobile level
+    // 1. QUALITY & BITRATE SAFETY BUFFER
+    '-crf', '24',              // Bumped to 24 to naturally lower the bitrate slightly
+    '-maxrate', '3500k',       // The critical fix: Hard cap at 3.5 Mbps (Safely under the 3.8 tripwire)
+    '-bufsize', '7000k',       // Buffer must be 2x maxrate to strictly enforce the cap
     
-    // 2. LOCK THE COLOR SPACE (BT.709 for HD)
-    '-colorspace', 'bt709',
-    '-color_primaries', 'bt709',
-    '-color_trc', 'bt709',
-    '-color_range', 'tv',      // WhatsApp expects limited TV range, not full PC range
+    // 2. MATCH COMPETITOR'S EXACT PROFILE
+    '-profile:v', 'high',      
+    '-level', '4.0',           
     
-    // 3. STRIP ALL METADATA
-    '-map_metadata', '-1',     // Removes all FFmpeg/Server tags so it looks native
+    // 3. STRIP THE DESKTOP FINGERPRINT
+    '-map_metadata', '-1',     // Removes the Lavc61 tag completely
     
-    // 4. MATCH THE JAVA APP'S QUALITY SETTINGS
-    '-crf', '22',
-    '-maxrate', '3800k',
-    '-bufsize', `${bufSizeK}k`,
     '-r', '29.97',
-    
-    // 5. AUDIO & CONTAINER
     '-c:a', 'aac',
     '-ar', '44100',
     '-b:a', '128k',
