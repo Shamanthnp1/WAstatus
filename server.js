@@ -223,7 +223,7 @@ function getOutputOptions(videoBitrateK, duration) {
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
 
-    '-crf', '23',
+    '-crf', '18',        // ← Lower CRF = higher quality = higher bitrate
     '-maxrate', '3800k',
     '-bufsize', `${bufSizeK}k`,
 
