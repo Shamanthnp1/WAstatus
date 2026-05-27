@@ -235,7 +235,7 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     
-    // 1. SAFE BITRATE (Under the 3.8 Mbps limit)
+    // 1. SAFE BITRATE (3.6 Mbps worked perfectly in Test 7!)
     '-crf', '25',
     '-maxrate', '3500k',
     '-bufsize', `${bufSizeK}k`,
@@ -248,20 +248,20 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-profile:v', 'high',      
     '-level', '4.0',           
     
-    // 4. SPOOF MOBILE HANDLERS
+    // 4. SPOOF MOBILE HANDLERS (Worked perfectly in Test 7!)
     '-metadata:s:v:0', 'handler_name=VideoHandle',
     '-metadata:s:a:0', 'handler_name=SoundHandle',
     '-metadata:s:v:0', 'language=eng',
     '-metadata:s:a:0', 'language=eng',
     
-    // 5. MANUAL ENCODER SPOOFING (Safe, space-free version)
+    // 5. MANUAL ENCODER SPOOFING (Worked perfectly in Test 7!)
     '-metadata', 'encoder=Lavf59.27.100',
     '-metadata:s:v:0', 'encoder=Lavc59.37.100',
     
-    // 6. FORCE TIMELINE TO ZERO (This is the magic fix from the last step)
-    '-avoid_negative_ts', 'make_zero',
+    // ❌ REMOVED: -avoid_negative_ts make_zero
+    // (This removal guarantees the timeline will return to 0.000000)
 
-    // 7. STANDARD AUDIO & CONTAINER
+    // 6. STANDARD AUDIO & CONTAINER
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
