@@ -314,10 +314,12 @@ function remuxWithMP4Box(filePath) {
   return new Promise((resolve, reject) => {
     const tmpPath = filePath + '.mp4box.mp4';
     const args = [
-      '-add', filePath,      // re-import tracks fresh
-      '-new',                // create a brand new container
-      '-inter', '500',       // 500ms audio/video interleave (good for streaming)
-      '-brand', 'mp42',      // set major brand explicitly
+      // Re-import each track with edit lists explicitly stripped
+      '-add', `${filePath}#video:noedit`,
+      '-add', `${filePath}#audio:noedit`,
+      '-new',
+      '-inter', '500',
+      '-brand', 'mp42',
       tmpPath
     ];
 
@@ -338,21 +340,23 @@ function remuxWithMP4Box(filePath) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new Error(`MP4Box spawn failed: ${err.message}. Is GPAC installed?`));
+      if (err.code === 'ENOENT') {
+        console.warn(`⚠️  MP4Box not found, skipping identity-elst strip.`);
+        return resolve();
+      }
+      reject(new Error(`MP4Box spawn failed: ${err.message}`));
     });
 
     proc.on('close', (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-
       if (code !== 0) {
         try { fs.unlinkSync(tmpPath); } catch (e) {}
         return reject(new Error(`MP4Box exited ${code}: ${stderr.slice(-500)}`));
       }
-
       try {
-        fs.renameSync(tmpPath, filePath);  // atomic replace
+        fs.renameSync(tmpPath, filePath);
         console.log(`📦 MP4Box remux done: ${path.basename(filePath)}`);
         resolve();
       } catch (e) {
