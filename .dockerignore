@@ -1,0 +1,10 @@
+node_modules
+uploads
+compressed
+.git
+.env
+*.log
+.DS_Store
+.wrangler
+*.md
+.gitignore
