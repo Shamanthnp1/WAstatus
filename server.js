@@ -14,6 +14,10 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const compression = require('compression');
 require('dotenv').config();
 
+// Add the Crypto library and Global Cache
+const crypto = require('crypto');
+const processedVideosCache = new Map(); // Stores fileHash -> [{ fileName, url }]
+
 // ========================
 // APP SETUP
 // ========================
@@ -439,6 +443,14 @@ async function uploadToR2(filePath, fileName) {
 
 // Delete from R2
 async function deleteFromR2(fileName) {
+  // Safeguard: Check if this file is in the processed videos cache before deleting
+  for (const resultFiles of processedVideosCache.values()) {
+    if (resultFiles.some(f => f.fileName === fileName)) {
+      console.log(`⚡ [CACHE SAFEGUARD] Skipping R2 deletion for cached file: ${fileName}`);
+      return;
+    }
+  }
+
   const command = new DeleteObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: fileName,
@@ -634,6 +646,7 @@ app.post('/api/process', limiter, async (req, res) => {
           console.log(`📹 [${index + 1}/${files.length}] Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
 
           const localInputPath = path.join('uploads', `input_${uuidv4()}${path.extname(originalName)}`);
+          let fileHash;
 
           try {
             // ── STEP 1: Download from R2 ──
@@ -656,6 +669,21 @@ app.post('/api/process', limiter, async (req, res) => {
             const downloadDuration = ((Date.now() - downloadStart) / 1000).toFixed(2);
             console.log(`✅ [${index + 1}] Downloaded in ${downloadDuration}s`);
 
+            // 🟢 NEW CODE: CALCULATE HASH AND CHECK CACHE 🟢
+            const fileBuffer = await fs.promises.readFile(localInputPath);
+            fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+            if (processedVideosCache.has(fileHash)) {
+              console.log(`⚡ [DEDUPLICATION] Match found for hash: ${fileHash}. Skipping FFmpeg!`);
+              
+              // Delete the raw original file from R2 (we don't need it)
+              await deleteFromR2(key);
+              
+              // Instantly return the pre-processed R2 URLs
+              return processedVideosCache.get(fileHash); 
+            }
+            // 🟢 END NEW CODE 🟢
+
             // ── STEP 2: Delete original from R2 ──
             await deleteFromR2(key);
             console.log(`🗑️  [${index + 1}] Deleted original from R2: ${key}`);
@@ -677,8 +705,13 @@ app.post('/api/process', limiter, async (req, res) => {
               const url = await uploadToR2(outputPath, outputFileName);
               await fs.promises.unlink(outputPath).catch(() => { });
 
+              const resultFiles = [{ fileName: outputFileName, url }];
+
+              // 🟢 NEW: Save to cache
+              processedVideosCache.set(fileHash, resultFiles); 
+
               console.log(`✅ [${index + 1}] R2 upload done: ${outputFileName}`);
-              return [{ fileName: outputFileName, url }];
+              return resultFiles;
 
             } else {
               // LONG VIDEO
@@ -699,6 +732,9 @@ app.post('/api/process', limiter, async (req, res) => {
                 console.log(`✅ [${index + 1}] Chunk ${i + 1}/${chunkPaths.length} uploaded: ${chunkFileName}`);
                 chunkResults.push({ fileName: chunkFileName, url });
               }
+
+              // 🟢 NEW: Save all chunks to cache under the same original hash
+              processedVideosCache.set(fileHash, chunkResults); 
 
               return chunkResults;
             }
@@ -953,8 +989,8 @@ app.post('/webhook', async (req, res) => {
       // ✅ ALWAYS clean R2, even if send fails
       for (const file of session.files) {
         try {
-          await deleteFromR2(file.fileName);
-          console.log(`R2 deleted after send: ${file.fileName}`);
+          // await deleteFromR2(file.fileName);
+          console.log(`R2 deleted after send (skipped due to cache): ${file.fileName}`);
         } catch (err) {
           console.error('R2 delete error:', err.message);
         }
