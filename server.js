@@ -260,6 +260,53 @@ async function fetchAndHashWhatsAppMedia(mediaId) {
   };
 }
 
+// Remux to strip edit lists (elst atoms) — critical for WhatsApp Status bypass
+function stripEditLists(filePath) {
+  return new Promise((resolve, reject) => {
+    const tmpPath = filePath + '.noedit.mp4';
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('stripEditLists timeout after 60s'));
+    }, 60000);
+
+    ffmpeg(filePath)
+      .inputOptions([
+        '-ignore_editlist', '1',     // ← reads through edit lists, flattening them
+      ])
+      .outputOptions([
+        '-c', 'copy',                // stream copy, no re-encode
+        '-map_metadata', '0',
+        '-movflags', '+faststart',
+        '-fflags', '+bitexact',
+        '-f', 'mp4',
+      ])
+      .output(tmpPath)
+      .on('end', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          fs.renameSync(tmpPath, filePath);  // atomic replace
+          console.log(`✂️  Edit lists stripped: ${path.basename(filePath)}`);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      })
+      .on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { fs.unlinkSync(tmpPath); } catch (e) {}
+        reject(err);
+      })
+      .run();
+  });
+}
+
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
@@ -276,20 +323,20 @@ function getOutputOptions(duration, inputHeight = 1920) {
     bufSizeK = 7600;
   }
 
-  let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1:1,scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
 
   return [
-    '-vf', vfFilter,
+    '-vf', vfFilter + ',setsar=1:1',   // 🆕 force square pixels
 
-    // 🆕 Kill edit lists and negative timestamps
+    // 🆕 Clean timestamps before muxing
     '-avoid_negative_ts', 'make_zero',
     '-fflags', '+genpts',
+    '-vsync', 'cfr',                    // 🆕 constant frame rate (no VFR leaks)
 
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
 
-    // 🔧 Use a self-consistent color set (bt709 across the board)
-    // Your old bt470bg + bt709 trc combo was internally contradictory
+    // 🔧 Self-consistent bt709 (your old mix was contradictory)
     '-color_range', 'tv',
     '-color_primaries', 'bt709',
     '-color_trc', 'bt709',
@@ -305,12 +352,12 @@ function getOutputOptions(duration, inputHeight = 1920) {
 
     '-r', '29.97',
     '-c:a', 'aac',
-    '-profile:a', 'aac_low',   // 🆕 Force AAC-LC, never HE-AAC
+    '-profile:a', 'aac_low',           // 🆕 explicit AAC-LC
     '-ar', '44100',
-    '-ac', '2',                // 🆕 Force stereo (some sources are mono → re-encode trigger)
+    '-ac', '2',                        // 🆕 force stereo
     '-b:a', '128k',
 
-    '-movflags', '+faststart+use_metadata_tags',
+    '-movflags', '+faststart',
     '-f', 'mp4',
     '-threads', '2',
   ];
@@ -388,6 +435,9 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
 
 
 
+          // 🆕 Strip edit lists — critical for Status bypass
+          await stripEditLists(chunkPath);
+
           // Size check for the chunk
           const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
           if (sizeMB <= 15.5) {
@@ -447,11 +497,14 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
       ffmpegCommand.run();
     });
 
+    // 🆕 Strip edit lists — critical for Status bypass
+    await stripEditLists(outputPath);
+
     // 🔬 DIAGNOSTIC: hash post-FFmpeg output
     const postFFmpegSha = await sha256File(outputPath);
     console.log(`🔬 [HASH] Post-FFmpeg local file: ${postFFmpegSha}`);
 
-    // Check file size after FFmpeg finishes
+    // Check file size after FFmpeg + remux
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
     if (sizeMB <= 15.5) { // 15.5MB gives a safe 0.5MB buffer for the WhatsApp API
       console.log(`✅ Compression successful! Size: ${sizeMB.toFixed(2)}MB`);
