@@ -349,6 +349,8 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-keyint_min', '30',
     '-profile:v', 'high',
     '-level:v', '4.0',
+    '-bf', '0',                        // 🆕 no B-frames → no video edit list
+    '-refs', '3',                      // 🆕 explicit reference frames (default is fine, just being deterministic)
 
     '-r', '29.97',
     '-c:a', 'aac',
