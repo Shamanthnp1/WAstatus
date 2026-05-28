@@ -13,6 +13,7 @@ const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = re
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const compression = require('compression');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 require('dotenv').config();
 
 // ========================
@@ -307,6 +308,60 @@ function stripEditLists(filePath) {
   });
 }
 
+// Re-mux through MP4Box to strip identity edit lists
+// FFmpeg's mp4 muxer always writes no-op elst entries; MP4Box doesn't.
+function remuxWithMP4Box(filePath) {
+  return new Promise((resolve, reject) => {
+    const tmpPath = filePath + '.mp4box.mp4';
+    const args = [
+      '-add', filePath,      // re-import tracks fresh
+      '-new',                // create a brand new container
+      '-inter', '500',       // 500ms audio/video interleave (good for streaming)
+      '-brand', 'mp42',      // set major brand explicitly
+      tmpPath
+    ];
+
+    let stderr = '';
+    let settled = false;
+    const proc = spawn('MP4Box', args);
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { proc.kill('SIGKILL'); } catch (e) {}
+      reject(new Error('MP4Box timeout after 60s'));
+    }, 60000);
+
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`MP4Box spawn failed: ${err.message}. Is GPAC installed?`));
+    });
+
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+
+      if (code !== 0) {
+        try { fs.unlinkSync(tmpPath); } catch (e) {}
+        return reject(new Error(`MP4Box exited ${code}: ${stderr.slice(-500)}`));
+      }
+
+      try {
+        fs.renameSync(tmpPath, filePath);  // atomic replace
+        console.log(`📦 MP4Box remux done: ${path.basename(filePath)}`);
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+}
+
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
@@ -440,6 +495,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
 
           // 🆕 Strip edit lists — critical for Status bypass
           await stripEditLists(chunkPath);
+          await remuxWithMP4Box(chunkPath);    // 🆕 second pass for clean elst removal
 
           // Size check for the chunk
           const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
@@ -501,13 +557,14 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
     });
 
     // 🆕 Strip edit lists — critical for Status bypass
-    await stripEditLists(outputPath);
+    await stripEditLists(outputPath);    // pass 1: FFmpeg flatten
+    await remuxWithMP4Box(outputPath);   // pass 2: MP4Box rebuild without identity elst
 
     // 🔬 DIAGNOSTIC: hash post-FFmpeg output
     const postFFmpegSha = await sha256File(outputPath);
     console.log(`🔬 [HASH] Post-FFmpeg local file: ${postFFmpegSha}`);
 
-    // Check file size after FFmpeg + remux
+    // Check file size after both remux passes
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
     if (sizeMB <= 15.5) { // 15.5MB gives a safe 0.5MB buffer for the WhatsApp API
       console.log(`✅ Compression successful! Size: ${sizeMB.toFixed(2)}MB`);
