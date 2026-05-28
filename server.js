@@ -12,6 +12,7 @@ const rateLimit = require('express-rate-limit');
 const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const compression = require('compression');
+const crypto = require('crypto');
 require('dotenv').config();
 
 // ========================
@@ -207,6 +208,56 @@ function getVideoDimensions(filePath) {
       });
     });
   });
+}
+
+// Hash a local file (used to capture the bytes we hand to WhatsApp)
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
+// Hash a Buffer
+function sha256Buffer(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+// Fetch the WhatsApp-stored copy of an uploaded media ID and hash it
+async function fetchAndHashWhatsAppMedia(mediaId) {
+  // Step 1: get download URL for the media
+  const meta = await axios.get(
+    `https://graph.facebook.com/v25.0/${mediaId}`,
+    {
+      headers: { 'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}` }
+    }
+  );
+  const downloadUrl = meta.data.url;
+  const declaredSize = meta.data.file_size;
+  const declaredMime = meta.data.mime_type;
+  const declaredSha = meta.data.sha256; // WhatsApp returns this directly!
+
+  // Step 2: download the bytes
+  const dl = await axios.get(downloadUrl, {
+    headers: { 'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}` },
+    responseType: 'arraybuffer',
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+  });
+
+  const buf = Buffer.from(dl.data);
+  const computedSha = sha256Buffer(buf);
+
+  return {
+    declaredSize,
+    declaredMime,
+    declaredSha,        // what WhatsApp says the hash is
+    computedSha,        // what we compute from the bytes they served back
+    actualSize: buf.length,
+  };
 }
 
 // ========================
@@ -446,6 +497,10 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
     // The file is saved locally. We patch it BEFORE checking size and uploading!
     applyBinaryPatch(outputPath);
 
+    // 🔬 DIAGNOSTIC: hash after patch
+    const postPatchSha = await sha256File(outputPath);
+    console.log(`🔬 [HASH] Post-FFmpeg + post-patch local file: ${postPatchSha}`);
+
     // Check file size after FFmpeg finishes
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
     if (sizeMB <= 15.5) { // 15.5MB gives a safe 0.5MB buffer for the WhatsApp API
@@ -539,17 +594,24 @@ async function sendWhatsAppMessage(to, message) {
   }
 }
 
-// Upload video to WhatsApp Media
+// Upload video to WhatsApp Media (with diagnostic hashing)
 async function uploadToWhatsAppMedia(videoUrl) {
-  // Download from R2 first
-  const response = await axios.get(videoUrl, {
-    responseType: 'stream'
+  // Download from R2 into a buffer (so we can hash AND upload the same bytes)
+  const r2Response = await axios.get(videoUrl, {
+    responseType: 'arraybuffer',
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
   });
+  const fileBuffer = Buffer.from(r2Response.data);
+
+  // 🔬 DIAGNOSTIC: hash the bytes we are about to hand to Meta
+  const preUploadSha = sha256Buffer(fileBuffer);
+  console.log(`🔬 [HASH] Pre-upload (R2 bytes):  ${preUploadSha}  size=${fileBuffer.length}`);
 
   // Upload to WhatsApp
   const FormData = require('form-data');
   const form = new FormData();
-  form.append('file', response.data, {
+  form.append('file', fileBuffer, {
     filename: 'video.mp4',
     contentType: 'video/mp4'
   });
@@ -569,7 +631,25 @@ async function uploadToWhatsAppMedia(videoUrl) {
     }
   );
 
-  return uploadResponse.data.id; // media ID
+  const mediaId = uploadResponse.data.id;
+
+  // 🔬 DIAGNOSTIC: pull the file back from WhatsApp and compare
+  try {
+    const stored = await fetchAndHashWhatsAppMedia(mediaId);
+    console.log(`🔬 [HASH] WhatsApp declared SHA: ${stored.declaredSha}`);
+    console.log(`🔬 [HASH] WhatsApp computed SHA: ${stored.computedSha}  size=${stored.actualSize}  mime=${stored.declaredMime}`);
+
+    if (preUploadSha === stored.computedSha) {
+      console.log(`✓ [HASH] MATCH — Meta stored your bytes UNTOUCHED. Bypass failure is CDN-trust, not transcoding.`);
+    } else {
+      console.log(`✗ [HASH] MISMATCH — Meta MODIFIED your file server-side. Your binary patches are being wiped here.`);
+      console.log(`         Size delta: ${stored.actualSize - fileBuffer.length} bytes`);
+    }
+  } catch (diagErr) {
+    console.error('🔬 [HASH] Diagnostic fetch failed:', diagErr.response?.data || diagErr.message);
+  }
+
+  return mediaId;
 }
 
 // Send WhatsApp video using media ID
