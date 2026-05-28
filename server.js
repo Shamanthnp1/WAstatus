@@ -264,8 +264,6 @@ async function fetchAndHashWhatsAppMedia(mediaId) {
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
-  console.log(`✅ getOutputOptions called! (Injecting Underscore Bypass)`);
-
   const durationMs = duration * 1000;
   let bufSizeK;
   if (durationMs < 6000) {
@@ -278,89 +276,47 @@ function getOutputOptions(duration, inputHeight = 1920) {
     bufSizeK = 7600;
   }
 
-  // 1. Strict Boundaries: NEVER exceed 1080x1920. 
-  // If it's taller, it shrinks it proportionally and pads it with black bars to prevent stretching.
-  let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1:1,scale=trunc(iw/2)*2:trunc(ih/2)*2';
 
   return [
     '-vf', vfFilter,
+
+    // 🆕 Kill edit lists and negative timestamps
+    '-avoid_negative_ts', 'make_zero',
+    '-fflags', '+genpts',
+
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-    
-    // Inject the exact Status-Safe Color DNA
+
+    // 🔧 Use a self-consistent color set (bt709 across the board)
+    // Your old bt470bg + bt709 trc combo was internally contradictory
     '-color_range', 'tv',
-    '-color_primaries', 'bt470bg',
+    '-color_primaries', 'bt709',
     '-color_trc', 'bt709',
-    '-colorspace', 'bt470bg',
+    '-colorspace', 'bt709',
 
     '-crf', '25',
     '-maxrate', '3500k',
     '-bufsize', `${bufSizeK}k`,
     '-g', '30',
     '-keyint_min', '30',
-    '-profile:v', 'high',      
-    '-level:v', '4.0',           
-    
-    '-metadata:s:v:0', 'handler_name=VideoHandle',
-    '-metadata:s:a:0', 'handler_name=SoundHandle',
-    '-metadata:s:v:0', 'language=eng',
-    '-metadata:s:a:0', 'language=eng',
-    
-    // THE UNDERSCORE TRICK
-    '-metadata:s:v:0', 'encoder=Lavc59.37.100_libx264',
+    '-profile:v', 'high',
+    '-level:v', '4.0',
 
     '-r', '29.97',
     '-c:a', 'aac',
+    '-profile:a', 'aac_low',   // 🆕 Force AAC-LC, never HE-AAC
     '-ar', '44100',
+    '-ac', '2',                // 🆕 Force stereo (some sources are mono → re-encode trigger)
     '-b:a', '128k',
-    '-movflags', '+faststart',
+
+    '-movflags', '+faststart+use_metadata_tags',
     '-f', 'mp4',
     '-threads', '2',
   ];
 }
 
-// ========================
-// THE BINARY MP4 PATCHER (Zero-Corruption Buffer Overwrite)
-// ========================
-function applyBinaryPatch(filePath) {
-  try {
-    const buffer = fs.readFileSync(filePath);
-    const asciiStr = buffer.toString('ascii');
-    let patched = false;
-    
-    // 1. Patch the global format tag (Lavf60 -> Lavf59)
-    const regex = /Lavf\d{2}\.\d\.\d{3}/g;
-    let match;
-    while ((match = regex.exec(asciiStr)) !== null) {
-      const matchedString = match[0];
-      const replaceString = "Lavf59.2.100"; // Exactly 12 bytes
-      
-      if (matchedString.length === replaceString.length) {
-        buffer.write(replaceString, match.index, replaceString.length, 'ascii');
-        patched = true;
-        console.log(`✅ Binary Patch: Overwrote Desktop tag '${matchedString}' with '${replaceString}'`);
-      }
-    }
 
-    // 2. Fix the Video Stream tag (Replace underscore with space)
-    const lavcSearch = "Lavc59.37.100_libx264";
-    const lavcReplace = "Lavc59.37.100 libx264";
-    const lavcIndex = asciiStr.indexOf(lavcSearch);
-
-    if (lavcIndex !== -1) {
-      buffer.write(lavcReplace, lavcIndex, lavcReplace.length, 'ascii');
-      patched = true;
-      console.log(`✅ Binary Patch: Replaced underscore with space to match WhatsApp Web whitelist!`);
-    }
-
-    // Save if any patches were applied
-    if (patched) {
-      fs.writeFileSync(filePath, buffer); 
-    }
-  } catch (err) {
-    console.error('Binary patch failed:', err);
-  }
-}
 
 // Split video into chunks of maxDuration seconds
 async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, inputHeight = 1920) {
@@ -430,9 +386,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
             chunkCommand.run();
           });
 
-          // 🚨 INJECT BINARY PATCH HERE 🚨
-          // The file is saved locally. We patch it BEFORE checking size and uploading!
-          applyBinaryPatch(chunkPath);
+
 
           // Size check for the chunk
           const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
@@ -493,13 +447,9 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
       ffmpegCommand.run();
     });
 
-    // 🚨 INJECT BINARY PATCH HERE 🚨
-    // The file is saved locally. We patch it BEFORE checking size and uploading!
-    applyBinaryPatch(outputPath);
-
-    // 🔬 DIAGNOSTIC: hash after patch
-    const postPatchSha = await sha256File(outputPath);
-    console.log(`🔬 [HASH] Post-FFmpeg + post-patch local file: ${postPatchSha}`);
+    // 🔬 DIAGNOSTIC: hash post-FFmpeg output
+    const postFFmpegSha = await sha256File(outputPath);
+    console.log(`🔬 [HASH] Post-FFmpeg local file: ${postFFmpegSha}`);
 
     // Check file size after FFmpeg finishes
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
