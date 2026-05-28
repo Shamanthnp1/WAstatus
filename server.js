@@ -360,6 +360,7 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-b:a', '128k',
 
     '-movflags', '+faststart',
+    '-shortest',                       // 🆕 trim to shortest stream
     '-f', 'mp4',
     '-threads', '2',
   ];
