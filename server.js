@@ -14,10 +14,6 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const compression = require('compression');
 require('dotenv').config();
 
-// Add the Crypto library and Global Cache
-const crypto = require('crypto');
-const processedVideosCache = new Map(); // Stores fileHash -> [{ fileName, url }]
-
 // ========================
 // APP SETUP
 // ========================
@@ -216,43 +212,104 @@ function getVideoDimensions(filePath) {
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
-function getOutputOptions(duration) {
-  console.log(`✅ getOutputOptions called! (PureStatus Clone - Safe Bitrate)`);
+function getOutputOptions(duration, inputHeight = 1920) {
+  console.log(`✅ getOutputOptions called! (Injecting Underscore Bypass)`);
 
   const durationMs = duration * 1000;
-  
-  // Scaled down buffer math to match the 3500k maxrate limit
   let bufSizeK;
   if (durationMs < 6000) {
-    bufSizeK = 1750;
+    bufSizeK = 1900;
   } else if (durationMs < 11000) {
-    bufSizeK = 2333; 
+    bufSizeK = 3800;
   } else if (durationMs < 16000) {
-    bufSizeK = 3500;
+    bufSizeK = 5700;
   } else {
-    bufSizeK = 5250;
+    bufSizeK = 7600;
   }
 
+  // 1. Strict Boundaries: NEVER exceed 1080x1920. 
+  // If it's taller, it shrinks it proportionally and pads it with black bars to prevent stretching.
+  let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
+
   return [
-    '-vf', 'scale=1080:trunc(ow/a/2)*2',
+    '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     
-    // THE SAFE BITRATE CHOKE (Compensating for FFmpeg 6.0)
+    // Inject the exact Status-Safe Color DNA
+    '-color_range', 'tv',
+    '-color_primaries', 'bt470bg',
+    '-color_trc', 'bt709',
+    '-colorspace', 'bt470bg',
+
     '-crf', '25',
     '-maxrate', '3500k',
     '-bufsize', `${bufSizeK}k`,
+    '-g', '30',
+    '-keyint_min', '30',
+    '-profile:v', 'high',      
+    '-level:v', '4.0',           
     
-    // STANDARD AUDIO & CONTAINER (No Hacks)
+    '-metadata:s:v:0', 'handler_name=VideoHandle',
+    '-metadata:s:a:0', 'handler_name=SoundHandle',
+    '-metadata:s:v:0', 'language=eng',
+    '-metadata:s:a:0', 'language=eng',
+    
+    // THE UNDERSCORE TRICK
+    '-metadata:s:v:0', 'encoder=Lavc59.37.100_libx264',
+
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
     '-b:a', '128k',
     '-movflags', '+faststart',
+    '-f', 'mp4',
     '-threads', '2',
   ];
 }
 
+// ========================
+// THE BINARY MP4 PATCHER (Zero-Corruption Buffer Overwrite)
+// ========================
+function applyBinaryPatch(filePath) {
+  try {
+    const buffer = fs.readFileSync(filePath);
+    const asciiStr = buffer.toString('ascii');
+    let patched = false;
+    
+    // 1. Patch the global format tag (Lavf60 -> Lavf59)
+    const regex = /Lavf\d{2}\.\d\.\d{3}/g;
+    let match;
+    while ((match = regex.exec(asciiStr)) !== null) {
+      const matchedString = match[0];
+      const replaceString = "Lavf59.2.100"; // Exactly 12 bytes
+      
+      if (matchedString.length === replaceString.length) {
+        buffer.write(replaceString, match.index, replaceString.length, 'ascii');
+        patched = true;
+        console.log(`✅ Binary Patch: Overwrote Desktop tag '${matchedString}' with '${replaceString}'`);
+      }
+    }
+
+    // 2. Fix the Video Stream tag (Replace underscore with space)
+    const lavcSearch = "Lavc59.37.100_libx264";
+    const lavcReplace = "Lavc59.37.100 libx264";
+    const lavcIndex = asciiStr.indexOf(lavcSearch);
+
+    if (lavcIndex !== -1) {
+      buffer.write(lavcReplace, lavcIndex, lavcReplace.length, 'ascii');
+      patched = true;
+      console.log(`✅ Binary Patch: Replaced underscore with space to match WhatsApp Web whitelist!`);
+    }
+
+    // Save if any patches were applied
+    if (patched) {
+      fs.writeFileSync(filePath, buffer); 
+    }
+  } catch (err) {
+    console.error('Binary patch failed:', err);
+  }
+}
 
 // Split video into chunks of maxDuration seconds
 async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, inputHeight = 1920) {
@@ -322,6 +379,9 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
             chunkCommand.run();
           });
 
+          // 🚨 INJECT BINARY PATCH HERE 🚨
+          // The file is saved locally. We patch it BEFORE checking size and uploading!
+          applyBinaryPatch(chunkPath);
 
           // Size check for the chunk
           const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
@@ -382,6 +442,9 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
       ffmpegCommand.run();
     });
 
+    // 🚨 INJECT BINARY PATCH HERE 🚨
+    // The file is saved locally. We patch it BEFORE checking size and uploading!
+    applyBinaryPatch(outputPath);
 
     // Check file size after FFmpeg finishes
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
@@ -443,14 +506,6 @@ async function uploadToR2(filePath, fileName) {
 
 // Delete from R2
 async function deleteFromR2(fileName) {
-  // Safeguard: Check if this file is in the processed videos cache before deleting
-  for (const resultFiles of processedVideosCache.values()) {
-    if (resultFiles.some(f => f.fileName === fileName)) {
-      console.log(`⚡ [CACHE SAFEGUARD] Skipping R2 deletion for cached file: ${fileName}`);
-      return;
-    }
-  }
-
   const command = new DeleteObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: fileName,
@@ -646,7 +701,6 @@ app.post('/api/process', limiter, async (req, res) => {
           console.log(`📹 [${index + 1}/${files.length}] Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
 
           const localInputPath = path.join('uploads', `input_${uuidv4()}${path.extname(originalName)}`);
-          let fileHash;
 
           try {
             // ── STEP 1: Download from R2 ──
@@ -669,21 +723,6 @@ app.post('/api/process', limiter, async (req, res) => {
             const downloadDuration = ((Date.now() - downloadStart) / 1000).toFixed(2);
             console.log(`✅ [${index + 1}] Downloaded in ${downloadDuration}s`);
 
-            // 🟢 NEW CODE: CALCULATE HASH AND CHECK CACHE 🟢
-            const fileBuffer = await fs.promises.readFile(localInputPath);
-            fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-
-            if (processedVideosCache.has(fileHash)) {
-              console.log(`⚡ [DEDUPLICATION] Match found for hash: ${fileHash}. Skipping FFmpeg!`);
-              
-              // Delete the raw original file from R2 (we don't need it)
-              await deleteFromR2(key);
-              
-              // Instantly return the pre-processed R2 URLs
-              return processedVideosCache.get(fileHash); 
-            }
-            // 🟢 END NEW CODE 🟢
-
             // ── STEP 2: Delete original from R2 ──
             await deleteFromR2(key);
             console.log(`🗑️  [${index + 1}] Deleted original from R2: ${key}`);
@@ -705,13 +744,8 @@ app.post('/api/process', limiter, async (req, res) => {
               const url = await uploadToR2(outputPath, outputFileName);
               await fs.promises.unlink(outputPath).catch(() => { });
 
-              const resultFiles = [{ fileName: outputFileName, url }];
-
-              // 🟢 NEW: Save to cache
-              processedVideosCache.set(fileHash, resultFiles); 
-
               console.log(`✅ [${index + 1}] R2 upload done: ${outputFileName}`);
-              return resultFiles;
+              return [{ fileName: outputFileName, url }];
 
             } else {
               // LONG VIDEO
@@ -732,9 +766,6 @@ app.post('/api/process', limiter, async (req, res) => {
                 console.log(`✅ [${index + 1}] Chunk ${i + 1}/${chunkPaths.length} uploaded: ${chunkFileName}`);
                 chunkResults.push({ fileName: chunkFileName, url });
               }
-
-              // 🟢 NEW: Save all chunks to cache under the same original hash
-              processedVideosCache.set(fileHash, chunkResults); 
 
               return chunkResults;
             }
@@ -989,8 +1020,8 @@ app.post('/webhook', async (req, res) => {
       // ✅ ALWAYS clean R2, even if send fails
       for (const file of session.files) {
         try {
-          // await deleteFromR2(file.fileName);
-          console.log(`R2 deleted after send (skipped due to cache): ${file.fileName}`);
+          await deleteFromR2(file.fileName);
+          console.log(`R2 deleted after send: ${file.fileName}`);
         } catch (err) {
           console.error('R2 delete error:', err.message);
         }
