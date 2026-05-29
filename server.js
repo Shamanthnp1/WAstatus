@@ -201,7 +201,7 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-profile:v', 'high',
     '-level:v', '4.0',
     '-x264-params', 'sei=0',
-    '-r', '29.97',
+    // '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
     '-ac', '2',
@@ -587,7 +587,7 @@ async function handleIncomingMessage(from, text) {
       if (i === 0 && session.caption) {
         // First video/part — use user's caption
         videoCaption = session.caption;
-      } 
+      }
       // All other parts (i > 0) — no caption at all (empty string)
 
       await sendWhatsAppVideo(from, file.url, videoCaption);
