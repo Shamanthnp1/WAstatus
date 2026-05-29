@@ -558,14 +558,17 @@ async function handleIncomingMessage(from, text) {
   sessions.set(code, session);
 
   try {
+    const isMultiple = session.files.length > 1;
     await sendWhatsAppMessage(from,
-      '✓ Code verified!' +
-      `Sending ${session.files.length} video${session.files.length > 1 ? 's' : ''} now...
-
-` +
-      (session.files.length > 1 ? `📱 Your video was split into ${session.files.length} parts for WhatsApp Status!
-
-` : '') +
+      '✓ Code verified!\n\n' +
+      `Sending ${session.files.length} video${isMultiple ? 's' : ''} now...\n\n` +
+      (isMultiple ? `📱 Your video was split into ${session.files.length} parts for WhatsApp Status!\n\n` : '') +
+      '📱 *How to post as HD Status:*\n' +
+      '1. Tap & hold the video\n' +
+      '2. Tap "Forward"\n' +
+      '3. Select "My Status"\n' +
+      '4. Post directly — done!\n\n' +
+      '⚠️ *Important:* Do NOT edit or trim the video in WhatsApp before posting. Any editing will re-compress it and reduce quality. Just forward it as-is for full HD!\n\n' +
       'Please wait a moment! 🎬'
     );
   } catch (err) {
@@ -579,25 +582,15 @@ async function handleIncomingMessage(from, text) {
       const isMultiple = session.files.length > 1;
       const videoSendStart = Date.now();
 
-      await sendWhatsAppVideo(
-        from,
-        file.url,
-        `🎬 ${isMultiple ? `Status Part ${i + 1}/${session.files.length}` : 'HD Status Video'}
+      // Build caption: user caption on FIRST part only, nothing on subsequent parts
+      let videoCaption = '';
+      if (i === 0 && session.caption) {
+        // First video/part — use user's caption
+        videoCaption = session.caption;
+      } 
+      // All other parts (i > 0) — no caption at all (empty string)
 
-` +
-        `✓ How to post as Status:
-` +
-        `1. Tap & hold this video
-` +
-        `2. Tap "Forward"
-` +
-        `3. Select "My Status"
-` +
-        `4. Done! 🎉
-
-` +
-        `Powered by StatusDrop 💚`
-      );
+      await sendWhatsAppVideo(from, file.url, videoCaption);
 
       console.log(`✓ Video ${i + 1}/${session.files.length} sent (${((Date.now() - videoSendStart) / 1000).toFixed(2)}s)`);
       if (i < session.files.length - 1) {
@@ -783,11 +776,15 @@ app.post('/api/process', limiter, async (req, res) => {
         }
       }, 300000);
 
+      // Get user caption (optional)
+      const userCaption = req.body.caption?.trim() || '';
+
       sessions.set(activationCode, {
         files: r2Files,
         createdAt: Date.now(),
         status: 'pending',
         expiryTimer: expiryTimer,
+        caption: userCaption,  // 🆕 store user's caption
       });
 
       const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
