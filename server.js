@@ -268,13 +268,6 @@ async function fetchAndHashWhatsAppMedia(mediaId) {
 function getOutputOptions(duration, inputHeight = 1920) {
   console.log(`✓ getOutputOptions called!`);
 
-  const durationMs = duration * 1000;
-  let bufSizeK;
-  if (durationMs < 6000) bufSizeK = 1900;
-  else if (durationMs < 11000) bufSizeK = 3800;
-  else if (durationMs < 16000) bufSizeK = 5700;
-  else bufSizeK = 7600;
-
   // Match competitor exactly: scale + pad, NO setsar
   let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
 
@@ -289,9 +282,9 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-color_trc', 'bt709',
     '-colorspace', 'bt470bg',
 
-    '-crf', '25',
-    '-maxrate', '3500k',
-    '-bufsize', `${bufSizeK}k`,
+    '-crf', '23',
+    '-maxrate', '3800k',
+    '-bufsize', '5700k',
 
     // 🆕 Default GOP (~9s like competitor), NOT 1s
     '-g', '250',
