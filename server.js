@@ -299,6 +299,7 @@ function getOutputOptions(duration, inputHeight = 1920) {
 
     '-profile:v', 'high',
     '-level:v', '4.0',
+    '-x264-params', 'sei=0',
     // 🆕 NO -bf 0 — let x264 use default 3 B-frames
 
     '-r', '29.97',
