@@ -22,6 +22,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 require('dotenv').config();
+const MAINTENANCE_MODE = process.env.MAINTENANCE_MODE === 'true';
 
 // ========================
 // APP SETUP
@@ -55,6 +56,17 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+// Maintenance Mode Middleware
+app.use((req, res, next) => {
+  if (MAINTENANCE_MODE && req.path !== '/maintenance.html') {
+    return res.sendFile(
+      path.join(__dirname, 'public', 'maintenance.html')
+    );
+  }
+  next();
+});
+
 app.use(express.static('public'));
 app.use((req, res, next) => {
   req.on('aborted', () => {
