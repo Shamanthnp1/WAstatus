@@ -9,10 +9,18 @@ const ffmpegStatic = require('ffmpeg-static');
 const ffprobePath = require('ffprobe-static').path;
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
-const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const compression = require('compression');
 const crypto = require('crypto');
+const pino = require('pino');
+const qrcode = require('qrcode-terminal');
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  Browsers,
+} = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
 require('dotenv').config();
 
 // ========================
@@ -21,7 +29,6 @@ require('dotenv').config();
 const app = express();
 app.use(compression());
 const PORT = process.env.PORT || 3000;
-
 app.set('trust proxy', 1);
 
 if (!ffmpegStatic) {
@@ -31,11 +38,7 @@ if (!ffmpegStatic) {
 
 console.log('FFmpeg path:', ffmpegStatic);
 console.log('FFprobe path:', ffprobePath);
-
-// Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegStatic);
-
-// Set ffprobe path
 ffmpeg.setFfprobePath(ffprobePath);
 
 // ========================
@@ -61,14 +64,10 @@ app.use((req, res, next) => {
 });
 
 // ========================
-// CREATE REQUIRED FOLDERS
+// FOLDERS
 // ========================
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads', { recursive: true });
-}
-if (!fs.existsSync('compressed')) {
-  fs.mkdirSync('compressed', { recursive: true });
-}
+if (!fs.existsSync('uploads')) fs.mkdirSync('uploads', { recursive: true });
+if (!fs.existsSync('compressed')) fs.mkdirSync('compressed', { recursive: true });
 
 // ========================
 // CLOUDFLARE R2 SETUP
@@ -86,15 +85,12 @@ const r2Client = new S3Client({
 // SESSION STORAGE
 // ========================
 const sessions = new Map();
-const recentlySentCodes = new Set(); // ✅ Track recently sent codes for duplicate handling
+const recentlySentCodes = new Set();
 
-// Auto cleanup every 1 minute
 setInterval(async () => {
   const now = Date.now();
   for (const [code, session] of sessions.entries()) {
-    if (now - session.createdAt > 300000) { // 5 minutes = 300000ms
-
-      // Delete from R2
+    if (now - session.createdAt > 300000) {
       for (const file of session.files) {
         try {
           await deleteFromR2(file.fileName);
@@ -103,70 +99,27 @@ setInterval(async () => {
           console.error('R2 cleanup error:', err.message);
         }
       }
-
-      // Delete session from memory
       sessions.delete(code);
       console.log(`Session expired & R2 cleaned: ${code}`);
     }
   }
-}, 60000); // Check every 1 minute
+}, 60000);
 
 // =======================
 // RATE LIMITING
 // =======================
 const limiter = rateLimit({
-  windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 50,                         // ✅ 50 uploads per day
-  message: {
-    error: 'Daily limit reached! Try again tomorrow.'
-  },
-  standardHeaders: true,  // ✅ Sends limit info in headers
-  legacyHeaders: false,   // ✅ Cleaner response
-  skip: (req) => {
-    // ✅ Skip rate limit for health checks
-    return req.path === '/api/health';
-  }
-});
-
-// ========================
-// FILE UPLOAD SETUP
-// ========================
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => {
-    const filename = uuidv4() + path.extname(file.originalname);
-    req.uploadFilePaths = req.uploadFilePaths || [];
-    req.uploadFilePaths.push(path.join('uploads', filename));
-    cb(null, filename);
-  }
-});
-
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = /mp4|mov|avi|mkv|3gp|wmv/;
-  const extname = allowedTypes.test(
-    path.extname(file.originalname).toLowerCase()
-  );
-  if (extname) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only video files allowed!'));
-  }
-};
-
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 300 * 1024 * 1024,  // 300MB per file
-    files: 3                        // ✅ Max 3 files
-  },
-  fileFilter: fileFilter
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 50,
+  message: { error: 'Daily limit reached! Try again tomorrow.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === '/api/health',
 });
 
 // ========================
 // HELPER FUNCTIONS
 // ========================
-
-// Generate activation code
 function generateCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let code = '';
@@ -176,7 +129,6 @@ function generateCode() {
   return code;
 }
 
-// Get video duration in seconds
 function getVideoDuration(filePath) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -184,7 +136,6 @@ function getVideoDuration(filePath) {
       settled = true;
       reject(new Error('ffprobe timeout after 30s'));
     }, 30000);
-
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (settled) return;
       settled = true;
@@ -201,126 +152,70 @@ function getVideoDimensions(filePath) {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) return reject(err);
-      const videoStream = metadata.streams.find(s => s.codec_type === 'video');
-      resolve({
-        width: videoStream?.width || 1080,
-        height: videoStream?.height || 1920
-      });
+      const v = metadata.streams.find(s => s.codec_type === 'video');
+      resolve({ width: v?.width || 1080, height: v?.height || 1920 });
     });
   });
 }
 
-// Hash a local file (used to capture the bytes we hand to WhatsApp)
 function sha256File(filePath) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
     const stream = fs.createReadStream(filePath);
-    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('data', (c) => hash.update(c));
     stream.on('end', () => resolve(hash.digest('hex')));
     stream.on('error', reject);
   });
 }
 
-// Hash a Buffer
-function sha256Buffer(buf) {
-  return crypto.createHash('sha256').update(buf).digest('hex');
+// Convert phone number to Baileys JID
+function toJid(numberOrJid) {
+  if (!numberOrJid) return null;
+  if (numberOrJid.includes('@')) return numberOrJid;
+  return `${numberOrJid.replace(/^\+/, '').replace(/\D/g, '')}@s.whatsapp.net`;
 }
 
-// Fetch the WhatsApp-stored copy of an uploaded media ID and hash it
-async function fetchAndHashWhatsAppMedia(mediaId) {
-  // Step 1: get download URL for the media
-  const meta = await axios.get(
-    `https://graph.facebook.com/v25.0/${mediaId}`,
-    {
-      headers: { 'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}` }
-    }
-  );
-  const downloadUrl = meta.data.url;
-  const declaredSize = meta.data.file_size;
-  const declaredMime = meta.data.mime_type;
-  const declaredSha = meta.data.sha256; // WhatsApp returns this directly!
-
-  // Step 2: download the bytes
-  const dl = await axios.get(downloadUrl, {
-    headers: { 'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}` },
-    responseType: 'arraybuffer',
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
-  });
-
-  const buf = Buffer.from(dl.data);
-  const computedSha = sha256Buffer(buf);
-
-  return {
-    declaredSize,
-    declaredMime,
-    declaredSha,        // what WhatsApp says the hash is
-    computedSha,        // what we compute from the bytes they served back
-    actualSize: buf.length,
-  };
+// Extract phone number from JID
+function jidToNumber(jid) {
+  return jid.split('@')[0];
 }
-
-
 
 // ========================
-// SHARED FFMPEG OPTIONS
+// FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
   console.log(`✓ getOutputOptions called!`);
-
-  // Match competitor exactly: scale + pad, NO setsar
   let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
-
   return [
     '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-
-    // 🔧 Match competitor's "inconsistent" color combo (it's what works)
     '-color_range', 'tv',
     '-color_primaries', 'bt470bg',
     '-color_trc', 'bt709',
     '-colorspace', 'bt470bg',
-
     '-crf', '23',
     '-maxrate', '3800k',
     '-bufsize', '5700k',
-
-    // 🆕 Default GOP (~9s like competitor), NOT 1s
     '-g', '250',
-    // remove -keyint_min entirely
-
     '-profile:v', 'high',
     '-level:v', '4.0',
     '-x264-params', 'sei=0',
-    // 🆕 NO -bf 0 — let x264 use default 3 B-frames
-
     '-r', '29.97',
     '-c:a', 'aac',
     '-ar', '44100',
     '-ac', '2',
     '-b:a', '128k',
-
-    // 🆕 isom brand to match competitor
     '-brand', 'isom',
     '-movflags', '+faststart',
-
-    // 🆕 NO -shortest (let audio extend slightly like competitor)
-
     '-f', 'mp4',
     '-threads', '2',
   ];
 }
 
-
-
-// Split video into chunks of maxDuration seconds
 async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, inputHeight = 1920) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
-
-  console.log(`splitVideo → chunkDuration:${chunkDuration}s | using CRF 23`);
-  const videoBitrateK = 3800; // only for reference
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -337,25 +232,17 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
   console.log(`Total chunks: ${totalChunks} → BATCH_SIZE: ${BATCH_SIZE}`);
 
   const chunkPaths = [];
-
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
     const batch = chunks.slice(i, i + BATCH_SIZE);
-    console.log(
-      `Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/` +
-      `${Math.ceil(chunks.length / BATCH_SIZE)} ` +
-      `(chunks ${i + 1}-${Math.min(i + BATCH_SIZE, chunks.length)})`
-    );
+    console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)}`);
 
     const batchResults = await Promise.all(
       batch.map(async ({ index, startTime, chunkPath }) => {
-        
         let startAttempt = (chunkDuration >= 59) ? 1 : 0;
-
         for (let attempt = startAttempt; attempt < 3; attempt++) {
           await new Promise((res, rej) => {
             let settled = false;
             let chunkCommand = null;
-
             const finishChunk = (err) => {
               if (settled) return;
               settled = true;
@@ -363,63 +250,44 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
               if (err) { rej(err); return; }
               res();
             };
-
             const chunkTimer = setTimeout(() => {
-              if (chunkCommand) {
-                try { chunkCommand.kill('SIGKILL'); } catch (e) { }
-              }
+              if (chunkCommand) { try { chunkCommand.kill('SIGKILL'); } catch (e) { } }
               finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
             }, 300000);
-
             chunkCommand = ffmpeg(inputPath)
               .setStartTime(startTime)
               .setDuration(chunkDuration)
-              .outputOptions(getOutputOptions(chunkDuration, inputHeight, attempt)) // Pass attempt here
+              .outputOptions(getOutputOptions(chunkDuration, inputHeight, attempt))
               .output(chunkPath)
               .on('end', () => finishChunk(null))
               .on('error', (err) => finishChunk(err));
-
             chunkCommand.run();
           });
 
-
-
-
-
-          // Size check for the chunk
           const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
           if (sizeMB <= 15.5) {
-            console.log(`✅ Chunk ${index + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
-            return chunkPath; // Success, move to next chunk
+            console.log(`✓ Chunk ${index + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
+            return chunkPath;
           }
-
           console.log(`⚠️ Chunk ${index + 1} failed size check (${sizeMB.toFixed(2)}MB > 15.5MB). Retrying...`);
         }
-
         throw new Error(`Chunk ${index + 1} could not be compressed under 16MB.`);
       })
     );
-
     chunkPaths.push(...batchResults);
   }
-
   return chunkPaths;
 }
 
-// Compress single video with Multi-Pass Fallback
 async function compressVideo(inputPath, outputPath, knownDuration, inputHeight = 1920) {
   const duration = Number.isFinite(knownDuration) ? knownDuration : await getVideoDuration(inputPath);
-  
-  // The 60-Second Rule: Skip 1080p completely if the video is roughly 60 seconds.
   let startAttempt = (duration >= 59) ? 1 : 0;
 
   for (let attempt = startAttempt; attempt < 3; attempt++) {
     console.log(`🎬 compressVideo → Attempt ${attempt} | height:${inputHeight}`);
-
     await new Promise((resolve, reject) => {
       let settled = false;
       let ffmpegCommand = null;
-
       const finish = (err) => {
         if (settled) return;
         settled = true;
@@ -427,45 +295,31 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
         if (err) return reject(err);
         resolve();
       };
-
       const timeoutId = setTimeout(() => {
-        if (ffmpegCommand) {
-          try { ffmpegCommand.kill('SIGKILL'); } catch (e) { }
-        }
+        if (ffmpegCommand) { try { ffmpegCommand.kill('SIGKILL'); } catch (e) { } }
         finish(new Error(`compressVideo timeout after 10 minutes on attempt ${attempt}`));
       }, 600000);
-
-      // Pass the 'attempt' variable into getOutputOptions
       ffmpegCommand = ffmpeg(inputPath)
         .outputOptions(getOutputOptions(duration, inputHeight, attempt))
         .output(outputPath)
         .on('end', () => finish())
         .on('error', finish);
-
       ffmpegCommand.run();
     });
 
-
-
-    // 🔬 DIAGNOSTIC: hash post-FFmpeg output
     const postFFmpegSha = await sha256File(outputPath);
     console.log(`🔬 [HASH] Post-FFmpeg local file: ${postFFmpegSha}`);
 
-    // Check file size after both remux passes
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
-    if (sizeMB <= 15.5) { // 15.5MB gives a safe 0.5MB buffer for the WhatsApp API
-      console.log(`✅ Compression successful! Size: ${sizeMB.toFixed(2)}MB`);
-      return; 
+    if (sizeMB <= 15.5) {
+      console.log(`✓ Compression successful! Size: ${sizeMB.toFixed(2)}MB`);
+      return;
     }
-
     console.log(`⚠️ Attempt ${attempt} failed size check (${sizeMB.toFixed(2)}MB > 15.5MB). Retrying...`);
-    // Loop continues and FFmpeg will overwrite the file with a lower resolution.
   }
-
   throw new Error('Video could not be compressed under 16MB even at 540p resolution.');
 }
 
-// Upload to Cloudflare R2
 async function uploadToR2(filePath, fileName) {
   try {
     const r2Start = Date.now();
@@ -479,7 +333,6 @@ async function uploadToR2(filePath, fileName) {
       ContentLength: stats.size,
       ContentType: 'video/mp4',
     });
-
     const abortController = new AbortController();
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
@@ -489,19 +342,16 @@ async function uploadToR2(filePath, fileName) {
         reject(new Error('R2 upload timeout after 5 minutes'));
       }, 300000);
     });
-
     try {
       await Promise.race([
         r2Client.send(command, { abortSignal: abortController.signal }),
-        timeoutPromise
+        timeoutPromise,
       ]);
     } finally {
       clearTimeout(timeoutId);
     }
-
     const publicUrl = `${process.env.R2_PUBLIC_URL}/${fileName}`;
-    const r2Duration = ((Date.now() - r2Start) / 1000).toFixed(2);
-    console.log(`R2 Upload success! ✅ (${r2Duration}s) ${publicUrl}`);
+    console.log(`R2 Upload success! ✓ (${((Date.now() - r2Start) / 1000).toFixed(2)}s)`);
     return publicUrl;
   } catch (error) {
     console.error('R2 Upload Error:', error.message);
@@ -509,239 +359,354 @@ async function uploadToR2(filePath, fileName) {
   }
 }
 
-// Delete from R2
 async function deleteFromR2(fileName) {
-  const command = new DeleteObjectCommand({
+  await r2Client.send(new DeleteObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: fileName,
-  });
-  await r2Client.send(command);
+  }));
 }
 
-// Send WhatsApp message
-async function sendWhatsAppMessage(to, message) {
+// ========================
+// BAILEYS WHATSAPP TRANSPORT
+// ========================
+let sock = null;
+let baileysConnected = false;
+let reconnecting = false;
+
+async function startBaileys() {
+  if (reconnecting) return;
+  reconnecting = true;
+
   try {
-    await axios.post(
-      `https://graph.facebook.com/v25.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        to: to,
-        type: 'text',
-        text: { body: message }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-          'Content-Type': 'application/json'
+    const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
+
+    sock = makeWASocket({
+      auth: state,
+      logger: pino({ level: 'silent' }),
+      browser: Browsers.appropriate('Chrome'),
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
+      generateHighQualityLinkPreview: false,
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update;
+      if (qr) {
+        console.log('=========================================');
+        console.log('  SCAN THIS QR CODE WITH WHATSAPP BUSINESS');
+        console.log('  (Settings → Linked Devices → Link a Device)');
+        console.log('=========================================');
+        qrcode.generate(qr, { small: true });
+      }
+      if (connection === 'close') {
+        baileysConnected = false;
+        const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        const shouldReconnect = code !== DisconnectReason.loggedOut;
+        console.log(`Baileys closed (code ${code}). Reconnect: ${shouldReconnect}`);
+        reconnecting = false;
+        if (shouldReconnect) {
+          setTimeout(() => startBaileys().catch(e => console.error('Reconnect failed:', e)), 3000);
+        } else {
+          console.error('!!! Baileys logged out — delete /app/baileys_auth and re-scan QR');
+        }
+      } else if (connection === 'open') {
+        baileysConnected = true;
+        reconnecting = false;
+        console.log('✓ Baileys connected to WhatsApp');
+      }
+    });
+
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const msg of messages) {
+        if (!msg.message || msg.key.fromMe) continue;
+        const from = msg.key.remoteJid;
+        if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
+        const text = msg.message.conversation
+          || msg.message.extendedTextMessage?.text
+          || msg.message.imageMessage?.caption
+          || msg.message.videoMessage?.caption
+          || '';
+        try {
+          await handleIncomingMessage(from, text.trim());
+        } catch (err) {
+          console.error('Message handler error:', err.message);
         }
       }
-    );
+    });
   } catch (err) {
-    console.error('SendMessage failed!');
-    console.error('To:', to);
-    console.error('Error:', JSON.stringify(err.response?.data));
-    throw err;
+    reconnecting = false;
+    console.error('Baileys startup error:', err);
+    setTimeout(() => startBaileys().catch(e => console.error('Restart failed:', e)), 5000);
   }
 }
 
-// Upload video to WhatsApp Media (with diagnostic hashing)
-async function uploadToWhatsAppMedia(videoUrl) {
-  // Download from R2 into a buffer (so we can hash AND upload the same bytes)
+async function sendWhatsAppMessage(to, message) {
+  if (!sock || !baileysConnected) throw new Error('Baileys not connected');
+  const jid = toJid(to);
+  await sock.sendMessage(jid, { text: message });
+}
+
+async function sendWhatsAppVideo(to, videoUrl, caption) {
+  if (!sock || !baileysConnected) throw new Error('Baileys not connected');
+  const jid = toJid(to);
+
+  // Download from R2 into a buffer
   const r2Response = await axios.get(videoUrl, {
     responseType: 'arraybuffer',
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
   });
-  const fileBuffer = Buffer.from(r2Response.data);
+  const videoBuffer = Buffer.from(r2Response.data);
 
-  // 🔬 DIAGNOSTIC: hash the bytes we are about to hand to Meta
-  const preUploadSha = sha256Buffer(fileBuffer);
-  console.log(`🔬 [HASH] Pre-upload (R2 bytes):  ${preUploadSha}  size=${fileBuffer.length}`);
-
-  // Upload to WhatsApp
-  const FormData = require('form-data');
-  const form = new FormData();
-  form.append('file', fileBuffer, {
-    filename: 'video.mp4',
-    contentType: 'video/mp4'
+  await sock.sendMessage(jid, {
+    video: videoBuffer,
+    caption: caption,
+    mimetype: 'video/mp4',
   });
-  form.append('messaging_product', 'whatsapp');
-  form.append('type', 'video/mp4');
+  console.log('Video sent via Baileys! ✓');
+}
 
-  const uploadResponse = await axios.post(
-    `https://graph.facebook.com/v25.0/${process.env.WHATSAPP_PHONE_ID}/media`,
-    form,
-    {
-      headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        ...form.getHeaders()
-      },
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
+// ========================
+// INCOMING MESSAGE HANDLER
+// (your old webhook logic, transport-swapped)
+// ========================
+async function handleIncomingMessage(from, text) {
+  console.log(`Message from ${jidToNumber(from)}: ${text}`);
+
+  const codeMatch = text?.match(/Activation Code[:\s]+([A-Z0-9]{9})/i)
+    || text?.match(/\b([A-Z0-9]{9})\b/i);
+
+  if (!codeMatch) {
+    try {
+      await sendWhatsAppMessage(from,
+        '👋 Welcome to StatusDrop!' +
+        'Please visit our website to compress and receive your HD videos!' +
+        '🌐 https://wastatusvideo.com'
+      );
+    } catch (err) {
+      console.error('Failed welcome message:', err.message);
     }
-  );
-
-  const mediaId = uploadResponse.data.id;
-
-  // 🔬 DIAGNOSTIC: pull the file back from WhatsApp and compare
-  try {
-    const stored = await fetchAndHashWhatsAppMedia(mediaId);
-    console.log(`🔬 [HASH] WhatsApp declared SHA: ${stored.declaredSha}`);
-    console.log(`🔬 [HASH] WhatsApp computed SHA: ${stored.computedSha}  size=${stored.actualSize}  mime=${stored.declaredMime}`);
-
-    if (preUploadSha === stored.computedSha) {
-      console.log(`✓ [HASH] MATCH — Meta stored your bytes UNTOUCHED. Bypass failure is CDN-trust, not transcoding.`);
-    } else {
-      console.log(`✗ [HASH] MISMATCH — Meta MODIFIED your file server-side.`);
-      console.log(`         Size delta: ${stored.actualSize - fileBuffer.length} bytes`);
-    }
-  } catch (diagErr) {
-    console.error('🔬 [HASH] Diagnostic fetch failed:', diagErr.response?.data || diagErr.message);
+    return;
   }
 
-  return mediaId;
-}
+  const code = codeMatch[1].toUpperCase();
 
-// Send WhatsApp video using media ID
-async function sendWhatsAppVideo(to, videoUrl, caption) {
-  console.log('Uploading video to WhatsApp Media...');
-  const mediaId = await uploadToWhatsAppMedia(videoUrl);
-  console.log('Media ID:', mediaId);
+  if (recentlySentCodes.has(code)) {
+    console.log(`Duplicate for sent code: ${code} — ignored!`);
+    return;
+  }
 
-  await axios.post(
-    `https://graph.facebook.com/v25.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: to,
-      type: 'video',
-      video: {
-        id: mediaId,
-        caption: caption
-      }
-    },
-    {
-      headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
+  const session = sessions.get(code);
+
+  if (!session) {
+    try {
+      await sendWhatsAppMessage(from,
+        '✗ Invalid or expired code!' +
+        'Please compress your video again at our website.'
+      );
+    } catch (err) {
+      console.error('Failed to send expired message:', err.message);
+    }
+    return;
+  }
+
+  if (session.status === 'sent') {
+    console.log(`Duplicate webhook for code: ${code} — ignoring!`);
+    return;
+  }
+  if (session.status === 'processing') {
+    console.log(`Duplicate webhook for code: ${code} while processing - ignoring!`);
+    return;
+  }
+  if (session.status === 'failed') {
+    try {
+      await sendWhatsAppMessage(from,
+        'Failed to send your video.' +
+        'Please compress your video again and try with a new code.'
+      );
+    } catch (err) {
+      console.error('Failed retry message:', err.message);
+    }
+    return;
+  }
+
+  session.status = 'processing';
+  sessions.set(code, session);
+
+  try {
+    await sendWhatsAppMessage(from,
+      '✓ Code verified!' +
+      `Sending ${session.files.length} video${session.files.length > 1 ? 's' : ''} now...
+
+` +
+      (session.files.length > 1 ? `📱 Your video was split into ${session.files.length} parts for WhatsApp Status!
+
+` : '') +
+      'Please wait a moment! 🎬'
+    );
+  } catch (err) {
+    console.error('Failed code verified message:', err.message);
+  }
+
+  const waStartTime = Date.now();
+  try {
+    for (let i = 0; i < session.files.length; i++) {
+      const file = session.files[i];
+      const isMultiple = session.files.length > 1;
+      const videoSendStart = Date.now();
+
+      await sendWhatsAppVideo(
+        from,
+        file.url,
+        `🎬 ${isMultiple ? `Status Part ${i + 1}/${session.files.length}` : 'HD Status Video'}
+
+` +
+        `✓ How to post as Status:
+` +
+        `1. Tap & hold this video
+` +
+        `2. Tap "Forward"
+` +
+        `3. Select "My Status"
+` +
+        `4. Done! 🎉
+
+` +
+        `Powered by StatusDrop 💚`
+      );
+
+      console.log(`✓ Video ${i + 1}/${session.files.length} sent (${((Date.now() - videoSendStart) / 1000).toFixed(2)}s)`);
+      if (i < session.files.length - 1) {
+        await new Promise(r => setTimeout(r, 1500));
       }
     }
-  );
-  console.log('Video sent via media ID! ✅');
+    console.log(`✓ All sends completed (${((Date.now() - waStartTime) / 1000).toFixed(2)}s)`);
+    session.status = 'sent';
+  } catch (err) {
+    session.status = 'failed';
+    sessions.set(code, session);
+    console.error('Video send failed:', err.message);
+    try {
+      await sendWhatsAppMessage(from,
+        'Failed to send your video.' +
+        'Please compress your video again and try with a new code.'
+      );
+    } catch (messageErr) {
+      console.error('Failed send-failure message:', messageErr.message);
+    }
+  } finally {
+    for (const file of session.files) {
+      try {
+        await deleteFromR2(file.fileName);
+        console.log(`R2 deleted after send: ${file.fileName}`);
+      } catch (err) {
+        console.error('R2 delete error:', err.message);
+      }
+    }
+  }
+
+  if (session.expiryTimer) {
+    clearTimeout(session.expiryTimer);
+    console.log(`Original timer cancelled for: ${code}`);
+  }
+  const newTimer = setTimeout(() => {
+    sessions.delete(code);
+    console.log(`Session cleaned after ${session.status}: ${code}`);
+  }, 300000);
+  session.files = [];
+  session.createdAt = Date.now();
+  session.expiryTimer = newTimer;
+  sessions.set(code, session);
+
+  if (session.status === 'sent') {
+    recentlySentCodes.add(code);
+    setTimeout(() => recentlySentCodes.delete(code), 600000);
+  }
 }
 
-// ✅ Increase server timeout for long processing
+// ========================
+// EXPRESS ROUTES
+// ========================
 app.use((req, res, next) => {
-  // Set timeout to 15 minutes for /api/process
   if (req.path === '/api/process') {
-    req.setTimeout(900000); // 15 minutes
+    req.setTimeout(900000);
     res.setTimeout(900000);
   }
   next();
 });
 
-// ========================
-// ROUTES
-// ========================
-
-// Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: '✅ Server Running!' });
+  res.json({
+    status: '✓ Server Running!',
+    baileys: baileysConnected ? 'connected' : 'disconnected',
+  });
 });
 
-// Privacy Policy
 app.get('/privacy', (req, res) => {
-  res.sendFile(path.join(__dirname,
-    'public', 'privacy.html'));
+  res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
 });
 
-// Replace /api/presign with this simpler endpoint
 app.post('/api/upload-url', limiter, async (req, res) => {
   try {
     const { filename, contentType, fileSize } = req.body;
     const numericFileSize = Number(fileSize);
-
     if (!filename || !contentType || !Number.isFinite(numericFileSize)) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-
     if (numericFileSize > 300 * 1024 * 1024) {
       return res.status(400).json({ error: 'File too large! Max 300MB.' });
     }
-
     const allowed = [
       'video/mp4', 'video/quicktime', 'video/x-msvideo',
       'video/x-matroska', 'video/3gpp', 'video/x-ms-wmv'
     ];
-
     if (!allowed.includes(contentType)) {
       return res.status(400).json({ error: 'Only video files allowed!' });
     }
-
     const ext = path.extname(filename).toLowerCase();
     const key = `uploads/${uuidv4()}${ext}`;
-
-    // Return the Worker URL — no signing needed
     res.json({
       uploadUrl: `https://upload.wastatusvideo.com/upload/${key}`,
       key,
     });
-
   } catch (error) {
     console.error('Upload URL error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Process already-uploaded videos from R2
 app.post('/api/process', limiter, async (req, res) => {
   try {
     const { files } = req.body;
-
     if (!files || files.length === 0) {
       return res.status(400).json({ error: 'No files provided!' });
     }
-
     if (files.length > 3) {
       return res.status(400).json({ error: 'Max 3 files allowed!' });
     }
-
-    // Total size check
     const totalSizeMB = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
     console.log(`📥 Processing ${files.length} file(s) — Total: ${totalSizeMB.toFixed(1)}MB`);
-
     if (totalSizeMB > 300) {
-      return res.status(400).json({
-        error: `Total size ${totalSizeMB.toFixed(0)}MB exceeds 300MB!`
-      });
+      return res.status(400).json({ error: `Total size ${totalSizeMB.toFixed(0)}MB exceeds 300MB!` });
     }
 
     const activationCode = generateCode();
     const r2Files = [];
     const uploadedKeys = files.map(f => f.key);
 
-    console.log(`🔧 Processing ${files.length} file(s) in parallel...`);
-
     try {
-      // ✅ Process ALL files in parallel
       const allGroupResults = await Promise.all(
         files.map(async (fileInfo, index) => {
           const { key, originalName, size } = fileInfo;
           const inputUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
-
           console.log(`📹 [${index + 1}/${files.length}] Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
-
           const localInputPath = path.join('uploads', `input_${uuidv4()}${path.extname(originalName)}`);
 
           try {
-            // ── STEP 1: Download from R2 ──
-            console.log(`⬇️  [${index + 1}] Downloading from R2: ${key}`);
-            const downloadStart = Date.now();
-
-            const response = await axios.get(inputUrl, {
-              responseType: 'stream',
-              timeout: 300000,
-            });
-
+            const response = await axios.get(inputUrl, { responseType: 'stream', timeout: 300000 });
             await new Promise((resolve, reject) => {
               const writer = fs.createWriteStream(localInputPath);
               response.data.pipe(writer);
@@ -749,84 +714,48 @@ app.post('/api/process', limiter, async (req, res) => {
               writer.on('error', reject);
               response.data.on('error', reject);
             });
-
-            const downloadDuration = ((Date.now() - downloadStart) / 1000).toFixed(2);
-            console.log(`✅ [${index + 1}] Downloaded in ${downloadDuration}s`);
-
-            // ── STEP 2: Delete original from R2 ──
             await deleteFromR2(key);
-            console.log(`🗑️  [${index + 1}] Deleted original from R2: ${key}`);
 
-            // ── STEP 3: Get duration & dimensions ──
             const duration = await getVideoDuration(localInputPath);
             const dimensions = await getVideoDimensions(localInputPath);
-            console.log(`⏱️  [${index + 1}] Duration: ${duration.toFixed(1)}s | Dimensions: ${dimensions.width}x${dimensions.height}`);
 
-            // ── STEP 4: Compress or Split ──
             if (duration <= 29) {
-              // SHORT VIDEO
-              console.log(`🎬 [${index + 1}] Short video — compressing...`);
               const outputFileName = `compressed_${uuidv4()}.mp4`;
               const outputPath = path.join('compressed', outputFileName);
-
               await compressVideo(localInputPath, outputPath, duration, dimensions.height);
-
               const url = await uploadToR2(outputPath, outputFileName);
               await fs.promises.unlink(outputPath).catch(() => { });
-
-              console.log(`✅ [${index + 1}] R2 upload done: ${outputFileName}`);
               return [{ fileName: outputFileName, url }];
-
             } else {
-              // LONG VIDEO
-              console.log(`✂️  [${index + 1}] Long video (${duration.toFixed(1)}s) — splitting...`);
               const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29, dimensions.height);
-
-              console.log(`☁️  [${index + 1}] Uploading ${chunkPaths.length} chunks to R2...`);
-
-              // ✅ Upload chunks sequentially to avoid overwhelming R2
               const chunkResults = [];
               for (let i = 0; i < chunkPaths.length; i++) {
                 const chunkPath = chunkPaths[i];
                 const chunkFileName = path.basename(chunkPath);
-
                 const url = await uploadToR2(chunkPath, chunkFileName);
                 await fs.promises.unlink(chunkPath).catch(() => { });
-
-                console.log(`✅ [${index + 1}] Chunk ${i + 1}/${chunkPaths.length} uploaded: ${chunkFileName}`);
                 chunkResults.push({ fileName: chunkFileName, url });
               }
-
               return chunkResults;
             }
-
           } finally {
-            // ✅ Always clean local temp file
             await fs.promises.unlink(localInputPath).catch(() => { });
           }
         })
       );
 
-      // ── STEP 5: Flatten results ──
       for (const group of allGroupResults) {
         for (const { fileName, url } of group) {
           r2Files.push({ fileName, url });
         }
       }
-
       console.log(`🎉 All ${r2Files.length} file(s) ready!`);
 
-      // ── STEP 6: Store session ──
       const expiryTimer = setTimeout(async () => {
         const session = sessions.get(activationCode);
         if (session) {
           for (const file of session.files) {
-            try {
-              await deleteFromR2(file.fileName);
-              console.log(`🗑️  R2 deleted (expired): ${file.fileName}`);
-            } catch (err) {
-              console.error('R2 cleanup error:', err.message);
-            }
+            try { await deleteFromR2(file.fileName); } catch (err) { console.error('R2 cleanup:', err.message); }
           }
           sessions.delete(activationCode);
           console.log(`⏰ Session expired: ${activationCode}`);
@@ -837,257 +766,23 @@ app.post('/api/process', limiter, async (req, res) => {
         files: r2Files,
         createdAt: Date.now(),
         status: 'pending',
-        expiryTimer: expiryTimer
+        expiryTimer: expiryTimer,
       });
 
-      // ── STEP 7: Return success ──
       const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
       const waLink = `https://wa.me/${cleanNumber}?text=Activation%20Code%3A%20${activationCode}`;
-
-      res.json({
-        success: true,
-        activationCode,
-        waLink,
-        fileCount: r2Files.length
-      });
+      res.json({ success: true, activationCode, waLink, fileCount: r2Files.length });
 
     } catch (processingError) {
-      // ✅ Cleanup uploaded files on error
-      console.error('❌ Processing error, cleaning up R2 uploads...');
+      console.error('✗ Processing error, cleaning up R2 uploads...');
       for (const key of uploadedKeys) {
-        try {
-          await deleteFromR2(key);
-          console.log(`🗑️  Cleaned up: ${key}`);
-        } catch (cleanupErr) {
-          console.error(`Failed to cleanup ${key}:`, cleanupErr.message);
-        }
+        try { await deleteFromR2(key); } catch (cleanupErr) { console.error(`Failed cleanup ${key}:`, cleanupErr.message); }
       }
       throw processingError;
     }
-
   } catch (error) {
-    console.error('❌ Process error:', error);
+    console.error('✗ Process error:', error);
     res.status(500).json({ error: error.message });
-  }
-});
-
-// ========================
-// WEBHOOK ROUTES
-// ========================
-
-// Webhook verification
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === process.env.WEBHOOK_VERIFY_TOKEN) {
-    console.log('Webhook verified! ✅');
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
-  }
-});
-
-// Webhook receive messages
-app.post('/webhook', async (req, res) => {
-  try {
-    const body = req.body;
-
-    if (body.object !== 'whatsapp_business_account') {
-      return res.sendStatus(404);
-    }
-
-    const entry = body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-    const messages = value?.messages;
-
-    if (!messages || messages.length === 0) {
-      return res.sendStatus(200);
-    }
-
-    const message = messages[0];
-    const from = message.from;
-    const text = message.text?.body?.trim();
-
-    console.log(`Message from ${from}: ${text}`);
-
-    // Extract activation code
-    const codeMatch = text?.match(
-      /Activation Code[:\s]+([A-Z0-9]{9})/i
-    ) || text?.match(
-      /\b([A-Z0-9]{9})\b/i
-    );
-
-    if (!codeMatch) {
-      try {
-        await sendWhatsAppMessage(
-          from,
-          '👋 Welcome to StatusDrop!\n\n' +
-          'Please visit our website to compress and receive your HD videos!\n\n' +
-          '🌐 https://wastatusvideo.com'
-        );
-      } catch (err) {
-        console.error('Failed welcome message:', err.message);
-      }
-
-      return res.sendStatus(200);
-    }
-
-    const code = codeMatch[1].toUpperCase();
-
-    // ✅ Check for post-deletion duplicates BEFORE sessions.get()
-    if (recentlySentCodes.has(code)) {
-      console.log(`Duplicate for sent code: ${code} — ignored!`);
-      return res.sendStatus(200); // ✅ Silent ignore
-    }
-
-    const session = sessions.get(code);
-
-    if (!session) {
-      try {
-        await sendWhatsAppMessage(
-          from,
-          '❌ Invalid or expired code!\n\n' +
-          'Please compress your video again at our website.'
-        );
-      } catch (err) {
-        console.error('Failed to send expired message:', err.message);
-      }
-
-      return res.sendStatus(200);
-    }
-
-    if (session.status === 'sent') {
-      // ✅ Don't send any message!
-      // Videos already delivered — just silently ignore
-      console.log(`Duplicate webhook for code: ${code} — ignoring!`);
-      return res.sendStatus(200);
-    }
-
-    if (session.status === 'processing') {
-      console.log(`Duplicate webhook for code: ${code} while processing - ignoring!`);
-      return res.sendStatus(200);
-    }
-
-    if (session.status === 'failed') {
-      try {
-        await sendWhatsAppMessage(
-          from,
-          'Failed to send your video.\n\n' +
-          'Please compress your video again and try with a new code.'
-        );
-      } catch (err) {
-        console.error('Failed retry message:', err.message);
-      }
-
-      return res.sendStatus(200);
-    }
-
-    // Mark as processing
-    session.status = 'processing';
-    sessions.set(code, session);
-
-    // Send confirmation
-    try {
-      await sendWhatsAppMessage(
-        from,
-        '✅ Code verified!\n\n' +
-        `Sending ${session.files.length} video${session.files.length > 1 ? 's' : ''} now...\n\n` +
-        (session.files.length > 1 ? `📱 Your video was split into ${session.files.length} parts for WhatsApp Status!\n\n` : '') +
-        'Please wait a moment! 🎬'
-      );
-    } catch (err) {
-      console.error('Failed code verified message:', err.message);
-    }
-
-    // ✅ FIX — wrap send loop in try/finally
-    const waStartTime = Date.now();
-    try {
-      for (let i = 0; i < session.files.length; i++) {
-        const file = session.files[i];
-        const isMultiple = session.files.length > 1;
-        const videoSendStart = Date.now();
-
-        await sendWhatsAppVideo(
-          from,
-          file.url,
-          `🎬 ${isMultiple ? `Status Part ${i + 1}/${session.files.length}` : 'HD Status Video'}\n\n` +
-          `✅ How to post as Status:\n` +
-          `1. Tap & hold this video\n` +
-          `2. Tap "Forward"\n` +
-          `3. Select "My Status"\n` +
-          `4. Done! 🎉\n\n` +
-          `Powered by StatusDrop 💚`
-        );
-
-        const videoSendDuration = ((Date.now() - videoSendStart) / 1000).toFixed(2);
-        console.log(`✅ WhatsApp video ${i + 1}/${session.files.length} sent (${videoSendDuration}s)`);
-
-        if (i < session.files.length - 1) {
-          await new Promise(r => setTimeout(r, 1500));
-        }
-      }
-      const totalWaDuration = ((Date.now() - waStartTime) / 1000).toFixed(2);
-      console.log(`✅ All WhatsApp sends completed (${totalWaDuration}s total)`);
-      session.status = 'sent';
-    } catch (err) {
-      session.status = 'failed';
-      sessions.set(code, session);
-      console.error('WhatsApp video send failed:', err.message);
-
-      try {
-        await sendWhatsAppMessage(
-          from,
-          'Failed to send your video.\n\n' +
-          'Please compress your video again and try with a new code.'
-        );
-      } catch (messageErr) {
-        console.error('Failed send-failure message:', messageErr.message);
-      }
-    } finally {
-      // ✅ ALWAYS clean R2, even if send fails
-      for (const file of session.files) {
-        try {
-          await deleteFromR2(file.fileName);
-          console.log(`R2 deleted after send: ${file.fileName}`);
-        } catch (err) {
-          console.error('R2 delete error:', err.message);
-        }
-      }
-    }
-
-    // ✅ Cancel original expiry timer!
-    if (session.expiryTimer) {
-      clearTimeout(session.expiryTimer);
-      console.log(`Original timer cancelled for: ${code}`);
-    }
-
-    // ✅ Start NEW 5 min timer from send time
-    const newTimer = setTimeout(() => {
-      sessions.delete(code);
-      console.log(`Session cleaned after ${session.status}: ${code}`);
-    }, 300000);
-
-    session.files = [];           // R2 already deleted
-    session.createdAt = Date.now(); // Reset for setInterval
-    session.expiryTimer = newTimer; // ✅ Store new timer
-    sessions.set(code, session);
-
-    // ✅ Track sent code to silently ignore post-deletion duplicates
-    if (session.status === 'sent') {
-      recentlySentCodes.add(code);
-      setTimeout(() => {
-        recentlySentCodes.delete(code);
-      }, 600000); // Keep for 10 mins
-    }
-
-    res.sendStatus(200);
-
-  } catch (error) {
-    console.error('Webhook error:', error);
-    res.sendStatus(200);
   }
 });
 
@@ -1095,22 +790,13 @@ app.post('/webhook', async (req, res) => {
 // ERROR HANDLER
 // ========================
 app.use((err, req, res, next) => {
-  if (
-    err?.message === 'Request aborted' ||
-    err?.code === 'ECONNABORTED' ||
-    err?.type === 'request.aborted'
-  ) {
-    console.warn('Client aborted upload - cleaning up');
-    if (!res.headersSent) {
-      res.status(499).end();
-    }
+  if (err?.message === 'Request aborted' || err?.code === 'ECONNABORTED' || err?.type === 'request.aborted') {
+    console.warn('Client aborted - cleaning up');
+    if (!res.headersSent) res.status(499).end();
     return;
   }
-
   console.error('Unhandled error:', err);
-  if (!res.headersSent) {
-    res.status(500).json({ error: err.message });
-  }
+  if (!res.headersSent) res.status(500).json({ error: err.message });
 });
 
 // ========================
@@ -1119,11 +805,13 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, () => {
   console.log(`
 ================================
-🚀 StatusDrop Server Running!
+→ StatusDrop Server Running!
 ================================
 Local: http://localhost:${PORT}
 ================================
   `);
+  // Start Baileys after Express is up so QR shows in logs
+  startBaileys().catch(err => console.error('Baileys startup failed:', err));
 });
 
 server.requestTimeout = 0;
