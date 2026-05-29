@@ -387,6 +387,7 @@ async function startBaileys() {
       syncFullHistory: false,
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: false,
+      printQRInTerminal: false,  // 🆕 disable QR
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -417,6 +418,26 @@ async function startBaileys() {
         console.log('✓ Baileys connected to WhatsApp');
       }
     });
+
+    // Pairing code (alternative to QR)
+    if (!sock.authState.creds.registered) {
+      // Wait briefly for the socket to be ready
+      setTimeout(async () => {
+        try {
+          const phoneNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace(/\D/g, '');
+          const code = await sock.requestPairingCode(phoneNumber);
+          const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+          console.log('\n=========================================');
+          console.log(`  PAIRING CODE: ${formatted}`);
+          console.log('  In WhatsApp: Settings → Linked Devices');
+          console.log('  → Link a Device → "Link with phone number instead"');
+          console.log('  → Enter this code');
+          console.log('=========================================\n');
+        } catch (err) {
+          console.error('Pairing code error:', err.message);
+        }
+      }, 3000);
+    }
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
