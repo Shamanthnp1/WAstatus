@@ -13,7 +13,6 @@ const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = re
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const compression = require('compression');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
 require('dotenv').config();
 
 // ========================
@@ -261,165 +260,59 @@ async function fetchAndHashWhatsAppMedia(mediaId) {
   };
 }
 
-// Remux to strip edit lists (elst atoms) — critical for WhatsApp Status bypass
-function stripEditLists(filePath) {
-  return new Promise((resolve, reject) => {
-    const tmpPath = filePath + '.noedit.mp4';
-    let settled = false;
 
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error('stripEditLists timeout after 60s'));
-    }, 60000);
-
-    ffmpeg(filePath)
-      .inputOptions([
-        '-ignore_editlist', '1',     // ← reads through edit lists, flattening them
-      ])
-      .outputOptions([
-        '-c', 'copy',                // stream copy, no re-encode
-        '-map_metadata', '0',
-        '-movflags', '+faststart',
-        '-fflags', '+bitexact',
-        '-f', 'mp4',
-      ])
-      .output(tmpPath)
-      .on('end', () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        try {
-          fs.renameSync(tmpPath, filePath);  // atomic replace
-          console.log(`✂️  Edit lists stripped: ${path.basename(filePath)}`);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      })
-      .on('error', (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        try { fs.unlinkSync(tmpPath); } catch (e) {}
-        reject(err);
-      })
-      .run();
-  });
-}
-
-// Re-mux through MP4Box to strip identity edit lists
-// FFmpeg's mp4 muxer always writes no-op elst entries; MP4Box doesn't.
-function remuxWithMP4Box(filePath) {
-  return new Promise((resolve, reject) => {
-    const tmpPath = filePath + '.mp4box.mp4';
-    const args = [
-      // Re-import each track with edit lists explicitly stripped
-      '-add', `${filePath}#video:noedit`,
-      '-add', `${filePath}#audio:noedit`,
-      '-new',
-      '-inter', '500',
-      '-brand', 'mp42',
-      tmpPath
-    ];
-
-    let stderr = '';
-    let settled = false;
-    const proc = spawn('MP4Box', args);
-
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { proc.kill('SIGKILL'); } catch (e) {}
-      reject(new Error('MP4Box timeout after 60s'));
-    }, 60000);
-
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-    proc.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (err.code === 'ENOENT') {
-        console.warn(`⚠️  MP4Box not found, skipping identity-elst strip.`);
-        return resolve();
-      }
-      reject(new Error(`MP4Box spawn failed: ${err.message}`));
-    });
-
-    proc.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code !== 0) {
-        try { fs.unlinkSync(tmpPath); } catch (e) {}
-        return reject(new Error(`MP4Box exited ${code}: ${stderr.slice(-500)}`));
-      }
-      try {
-        fs.renameSync(tmpPath, filePath);
-        console.log(`📦 MP4Box remux done: ${path.basename(filePath)}`);
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
-    });
-  });
-}
 
 // ========================
 // SHARED FFMPEG OPTIONS
 // ========================
 function getOutputOptions(duration, inputHeight = 1920) {
+  console.log(`✓ getOutputOptions called!`);
+
   const durationMs = duration * 1000;
   let bufSizeK;
-  if (durationMs < 6000) {
-    bufSizeK = 1900;
-  } else if (durationMs < 11000) {
-    bufSizeK = 3800;
-  } else if (durationMs < 16000) {
-    bufSizeK = 5700;
-  } else {
-    bufSizeK = 7600;
-  }
+  if (durationMs < 6000) bufSizeK = 1900;
+  else if (durationMs < 11000) bufSizeK = 3800;
+  else if (durationMs < 16000) bufSizeK = 5700;
+  else bufSizeK = 7600;
 
+  // Match competitor exactly: scale + pad, NO setsar
   let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
 
   return [
-    '-vf', vfFilter + ',setsar=1:1',   // 🆕 force square pixels
-
-    // 🆕 Clean timestamps before muxing
-    '-avoid_negative_ts', 'make_zero',
-    '-fflags', '+genpts',
-    '-vsync', 'cfr',                    // 🆕 constant frame rate (no VFR leaks)
-
+    '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
 
-    // 🔧 Self-consistent bt709 (your old mix was contradictory)
+    // 🔧 Match competitor's "inconsistent" color combo (it's what works)
     '-color_range', 'tv',
-    '-color_primaries', 'bt709',
+    '-color_primaries', 'bt470bg',
     '-color_trc', 'bt709',
-    '-colorspace', 'bt709',
+    '-colorspace', 'bt470bg',
 
     '-crf', '25',
     '-maxrate', '3500k',
     '-bufsize', `${bufSizeK}k`,
-    '-g', '30',
-    '-keyint_min', '30',
+
+    // 🆕 Default GOP (~9s like competitor), NOT 1s
+    '-g', '250',
+    // remove -keyint_min entirely
+
     '-profile:v', 'high',
     '-level:v', '4.0',
-    '-bf', '0',                        // 🆕 no B-frames → no video edit list
-    '-refs', '3',                      // 🆕 explicit reference frames (default is fine, just being deterministic)
+    // 🆕 NO -bf 0 — let x264 use default 3 B-frames
 
     '-r', '29.97',
     '-c:a', 'aac',
-    '-profile:a', 'aac_low',           // 🆕 explicit AAC-LC
     '-ar', '44100',
-    '-ac', '2',                        // 🆕 force stereo
+    '-ac', '2',
     '-b:a', '128k',
 
+    // 🆕 isom brand to match competitor
+    '-brand', 'isom',
     '-movflags', '+faststart',
-    '-shortest',                       // 🆕 trim to shortest stream
+
+    // 🆕 NO -shortest (let audio extend slightly like competitor)
+
     '-f', 'mp4',
     '-threads', '2',
   ];
@@ -497,9 +390,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
 
 
 
-          // 🆕 Strip edit lists — critical for Status bypass
-          await stripEditLists(chunkPath);
-          await remuxWithMP4Box(chunkPath);    // 🆕 second pass for clean elst removal
+
 
           // Size check for the chunk
           const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
@@ -560,9 +451,7 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
       ffmpegCommand.run();
     });
 
-    // 🆕 Strip edit lists — critical for Status bypass
-    await stripEditLists(outputPath);    // pass 1: FFmpeg flatten
-    await remuxWithMP4Box(outputPath);   // pass 2: MP4Box rebuild without identity elst
+
 
     // 🔬 DIAGNOSTIC: hash post-FFmpeg output
     const postFFmpegSha = await sha256File(outputPath);
@@ -709,7 +598,7 @@ async function uploadToWhatsAppMedia(videoUrl) {
     if (preUploadSha === stored.computedSha) {
       console.log(`✓ [HASH] MATCH — Meta stored your bytes UNTOUCHED. Bypass failure is CDN-trust, not transcoding.`);
     } else {
-      console.log(`✗ [HASH] MISMATCH — Meta MODIFIED your file server-side. Your binary patches are being wiped here.`);
+      console.log(`✗ [HASH] MISMATCH — Meta MODIFIED your file server-side.`);
       console.log(`         Size delta: ${stored.actualSize - fileBuffer.length} bytes`);
     }
   } catch (diagErr) {

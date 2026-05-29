@@ -1,9 +1,8 @@
 FROM node:20-bullseye-slim
 
-# Install GPAC (provides MP4Box) and ca-certificates for HTTPS
+# Install ca-certificates for HTTPS
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      gpac \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
