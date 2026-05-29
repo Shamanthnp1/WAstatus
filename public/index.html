@@ -1014,7 +1014,38 @@
         </div>
       </div>
 
-      <div style="margin-top:20px">
+      <!-- Caption input (optional) -->
+      <div id="captionSection" style="margin-top:20px;display:none;">
+        <label style="font-size:14px;color:#888;margin-bottom:8px;display:block;">
+          ✏️ Video Caption <span style="color:#444;font-size:12px;">(optional)</span>
+        </label>
+        <textarea id="captionInput"
+          placeholder="Add a caption for your video... (shows on WhatsApp)"
+          maxlength="700"
+          style="width:100%;
+                 min-height:70px;
+                 max-height:150px;
+                 padding:14px;
+                 background:#1a1a1a;
+                 border:1px solid #333;
+                 border-radius:10px;
+                 color:#fff;
+                 font-size:14px;
+                 font-family:'Segoe UI',sans-serif;
+                 resize:vertical;
+                 outline:none;
+                 transition:border-color 0.2s;"
+          oninput="updateCharCount()"
+          onfocus="this.style.borderColor='#25D366'"
+          onblur="this.style.borderColor='#333'"
+        ></textarea>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;">
+          <span style="font-size:11px;color:#444;">Leave empty to send without caption</span>
+          <span id="charCount" style="font-size:11px;color:#444;">0/700</span>
+        </div>
+      </div>
+
+      <div style="margin-top:16px">
         <button class="btn btn-primary"
                 id="compressBtn"
                 onclick="startCompression()"
@@ -1669,11 +1700,13 @@
     if (files.length === 0) {
       filesList.classList.remove('visible');
       compressBtn.disabled = true;
+      document.getElementById('captionSection').style.display = 'none';
       return;
     }
 
     filesList.classList.add('visible');
     compressBtn.disabled = false;
+    document.getElementById('captionSection').style.display = 'block';
 
     container.innerHTML = files.map((file, index) => `
       <div class="file-item">
@@ -1889,6 +1922,14 @@
     });
   }
 
+  function updateCharCount() {
+    const input = document.getElementById('captionInput');
+    const count = document.getElementById('charCount');
+    if (input && count) {
+      count.textContent = `${input.value.length}/700`;
+    }
+  }
+
   // ========================
   // MAIN FLOW
   // ========================
@@ -2019,7 +2060,10 @@
         const processRes = await fetch(`${BACKEND_URL}/api/process`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files: allFileInfos }),
+          body: JSON.stringify({
+            files: allFileInfos,
+            caption: document.getElementById('captionInput')?.value.trim() || ''
+          }),
           signal: processController.signal
         });
 
@@ -2279,6 +2323,11 @@
     urgency.style.color = '#ffc107';
 
     renderFiles();
+
+    const captionInput = document.getElementById('captionInput');
+    if (captionInput) captionInput.value = '';
+    document.getElementById('captionSection').style.display = 'none';
+    updateCharCount();
 
     document.getElementById('progressCard').style.display = 'none';
     document.getElementById('fileCountInfo').style.display = 'none';
