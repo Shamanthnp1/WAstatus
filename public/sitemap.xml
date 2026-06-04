@@ -54,12 +54,5 @@
     <priority>0.9</priority>
   </url>
 
-  <!-- Privacy Policy -->
-  <url>
-    <loc>https://www.wastatusvideo.com/privacy.html</loc>
-    <lastmod>2026-05-31</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.3</priority>
-  </url>
 
 </urlset>
