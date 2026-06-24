@@ -239,7 +239,8 @@ function getVideoDimensions(filePath) {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) return reject(err);
       const v = metadata.streams.find(s => s.codec_type === 'video');
-      resolve({ width: v?.width || 1080, height: v?.height || 1920 });
+      const hasAudio = metadata.streams.some(s => s.codec_type === 'audio');
+      resolve({ width: v?.width || 1080, height: v?.height || 1920, hasAudio });
     });
   });
 }
@@ -986,6 +987,7 @@ app.post('/api/process', limiter, async (req, res) => {
             width: dimensions.width,
             height: dimensions.height,
             duration,
+            hasSourceAudio: dimensions.hasAudio !== false,
             key,
             path: localInputPath,
             assetPaths,

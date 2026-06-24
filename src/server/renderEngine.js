@@ -30,7 +30,7 @@
  */
 
 const { WHATSAPP_SPEC, CLIP_DURATION_LIMIT } = require('../shared/constants');
-const { planAudio } = require('./audioPlan');
+const { planAudio, chunkAudioOffset } = require('./audioPlan');
 
 const CANVAS_WIDTH = WHATSAPP_SPEC.CANVAS_WIDTH; // 1080
 const CANVAS_HEIGHT = WHATSAPP_SPEC.CANVAS_HEIGHT; // 1920
@@ -296,6 +296,91 @@ function fmt(n) {
 }
 
 /**
+ * Convert a 0..100 volume percentage to a 0..1 gain fraction for the ffmpeg
+ * `volume` filter. Non-finite input defaults to full gain (1.0).
+ * @param {number} v
+ * @returns {number}
+ */
+function volumeFraction(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(0, Math.min(100, n)) / 100;
+}
+
+/**
+ * Build the input-level args for the music input so it spans exactly the output
+ * duration: seek to the selected start (`-ss`), loop endlessly when loopMode is
+ * "loop" (`-stream_loop -1`), and cap the read to the output duration (`-t`) so
+ * the looped/endless input can never make the encode run forever. For "once"
+ * mode the music simply plays from the start and stops when it ends.
+ *
+ * @param {{audioStart?:number, loopMode?:string}} audioPlan
+ * @param {number} duration - Output (clip) duration in seconds.
+ * @returns {string[]}
+ */
+function musicInputArgs(audioPlan, duration) {
+  const ap = audioPlan || {};
+  const start = Number.isFinite(ap.audioStart) && ap.audioStart > 0 ? ap.audioStart : 0;
+  const loop = ap.loopMode !== 'once';
+  const args = [];
+  if (loop) args.push('-stream_loop', '-1');
+  if (start > 0) args.push('-ss', fmt(start));
+  if (Number.isFinite(duration) && duration > 0) args.push('-t', fmt(duration));
+  return args;
+}
+
+/**
+ * Build the audio filter graph + audio map for the encode, realizing the
+ * mute×music truth table from {@link planAudio} (which only *plans* the mode).
+ * This is the execution-layer audio wiring that was previously missing — the
+ * encoder mapped only the source audio, so a recipe's music was never mixed in.
+ *
+ *   - silence (muted, no music)      → no audio track (audioMap null)
+ *   - original (unmuted, no music)   → source audio, with volume only when != 100
+ *   - music (muted + music)          → music-only at its volume
+ *   - mix (unmuted + music)          → amix(original@vol, music@vol)
+ *
+ * When the source has no audio stream, "original"/"mix" degrade to
+ * "music-only"/"silent" so the filter never references a missing `[0:a]`.
+ *
+ * @param {object} audioPlan - The plan from {@link planAudio}.
+ * @param {number} musicIndex - ffmpeg input index of the music input (-1 if none).
+ * @param {boolean} hasSourceAudio - Whether the source video has an audio stream.
+ * @returns {{audioFilter:string, audioMap:(string|null)}}
+ */
+function buildAudioGraph(audioPlan, musicIndex, hasSourceAudio) {
+  const ap = audioPlan || {};
+  const mode = ap.mode;
+  const origVol = volumeFraction(ap.originalVolume);
+  const musicVol = volumeFraction(ap.musicVolume);
+  const hasMusic = ap.hasMusic === true && musicIndex >= 0;
+
+  if (mode === 'silence') {
+    return { audioFilter: '', audioMap: null };
+  }
+  if (!hasMusic) {
+    // original-only (or no audio at all when the source is silent)
+    if (!hasSourceAudio) return { audioFilter: '', audioMap: null };
+    if (origVol === 1) return { audioFilter: '', audioMap: '0:a?' };
+    return { audioFilter: `[0:a]volume=${fmt(origVol)}[aout]`, audioMap: '[aout]' };
+  }
+
+  const music = `[${musicIndex}:a]`;
+  if (mode === 'music' || !hasSourceAudio) {
+    // music-only
+    return { audioFilter: `${music}volume=${fmt(musicVol)}[aout]`, audioMap: '[aout]' };
+  }
+  // mix original + music; normalize=0 keeps each source at its set volume.
+  return {
+    audioFilter:
+      `[0:a]volume=${fmt(origVol)}[a0];` +
+      `${music}volume=${fmt(musicVol)}[a1];` +
+      `[a0][a1]amix=inputs=2:duration=longest:normalize=0[aout]`,
+    audioMap: '[aout]',
+  };
+}
+
+/**
  * Build the `-filter_complex` video graph for a recipe: the shared base
  * normalization (`BASE_VIDEO_FILTER`) labeled `[base]`, then for each overlay a
  * `scale → rotate → overlay` sub-chain composited onto the running result. The
@@ -429,15 +514,23 @@ function planRender(recipe, meta) {
     inputs.push({
       type: 'audio',
       path: resolveAssetPath(music.assetRef, meta),
-      args: ['-ss', fmt(audioPlan.audioStart)],
+      args: musicInputArgs(audioPlan, plannedDuration),
     });
   }
+
+  // Audio execution wiring (mode → filter graph + map). The music input, when
+  // present, is the last input pushed above.
+  const hasSourceAudio = !meta || meta.hasSourceAudio !== false;
+  const musicIndex = hasMusic ? inputs.length - 1 : -1;
+  const audioGraph = buildAudioGraph(audioPlan, musicIndex, hasSourceAudio);
 
   const plan = {
     inputs,
     filterComplex,
     encodeOptions: encodeOnlyOptions(),
     audioPlan,
+    audioFilter: audioGraph.audioFilter,
+    audioMap: audioGraph.audioMap,
     overlays,
     plannedDuration,
   };
@@ -548,6 +641,20 @@ function planChunk(plan, chunkIndex, clipLimit = CLIP_DURATION_LIMIT) {
     args: ['-ss', fmt(sourceSeek), '-t', fmt(chunkDuration)],
   };
   const otherInputs = baseInputs.slice(1).map((input) => ({ ...input }));
+  // Re-seek the music input for this chunk so the track stays continuous across
+  // chunk boundaries (the offset advances by one full chunk per index) and is
+  // capped to this chunk's duration so a looped input can't run forever.
+  const baseAudioStart = (plan.audioPlan && Number.isFinite(plan.audioPlan.audioStart))
+    ? plan.audioPlan.audioStart : 0;
+  const chunkMusicStart = chunkAudioOffset(baseAudioStart, chunkIndex, limit, plan.audioPlan && plan.audioPlan.loopMode);
+  for (const input of otherInputs) {
+    if (input && input.type === 'audio') {
+      input.args = musicInputArgs(
+        { audioStart: chunkMusicStart, loopMode: plan.audioPlan && plan.audioPlan.loopMode },
+        chunkDuration
+      );
+    }
+  }
   const inputs = [chunkVideoInput, ...otherInputs];
 
   // Reuse the shared graph builder over the base plan's overlays so the overlay
@@ -570,6 +677,8 @@ function planChunk(plan, chunkIndex, clipLimit = CLIP_DURATION_LIMIT) {
     filterComplex,
     encodeOptions: encodeOnlyOptions(),
     audioPlan: plan.audioPlan,
+    audioFilter: plan.audioFilter,
+    audioMap: plan.audioMap,
     overlays: overlays || [],
     plannedDuration: D,
   };

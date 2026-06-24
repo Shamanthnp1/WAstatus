@@ -186,19 +186,24 @@ function createEncodeExec(deps = {}) {
         command.inputOptions(input.args);
       }
     }
-    const opts = [
-      '-filter_complex', plan.filterComplex,
-      '-map', '[vout]',
-      '-map', '0:a?',
-      ...tightenEncodeOptions(plan.encodeOptions, attempt || 0),
-    ];
+    // Combine the video filter graph with the audio graph (when the plan wires
+    // one). Older/skip-style plans carry no audioFilter/audioMap, so we default
+    // to mapping the source audio (`0:a?`) — byte-identical to prior behavior.
+    const audioFilter = typeof plan.audioFilter === 'string' ? plan.audioFilter : '';
+    const fullFilter = audioFilter
+      ? `${plan.filterComplex};${audioFilter}`
+      : plan.filterComplex;
+    const audioMap = Object.prototype.hasOwnProperty.call(plan, 'audioMap')
+      ? plan.audioMap
+      : '0:a?';
+
+    const opts = ['-filter_complex', fullFilter, '-map', '[vout]'];
+    if (audioMap) opts.push('-map', audioMap);
+    opts.push(...tightenEncodeOptions(plan.encodeOptions, attempt || 0));
     // Hard-cap the output duration to the planned clip length. Overlay/sticker
-    // inputs are looped (`-stream_loop -1`) and, although each is bounded by a
-    // `-t` input option, an animated APNG/webp overlay can still keep ffmpeg
-    // emitting frames past the source EOF in some builds — making the encode run
-    // until the 600s watchdog kills it (the user sees the progress bar stall).
-    // An explicit OUTPUT `-t` guarantees ffmpeg writes exactly the planned
-    // duration and then stops, so the encode always terminates promptly.
+    // and looped music inputs are bounded by `-t` input options, but an explicit
+    // OUTPUT `-t` guarantees ffmpeg writes exactly the planned duration and then
+    // stops, so the encode always terminates promptly.
     const planned = Number(plan.plannedDuration);
     if (Number.isFinite(planned) && planned > 0) {
       opts.push('-t', String(planned));
