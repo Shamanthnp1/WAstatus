@@ -1683,6 +1683,10 @@
     toggle.addEventListener('click', openEditorModal);
     injectEditBtnStyles();
     wrap.appendChild(toggle);
+    var beta = document.createElement('div');
+    beta.textContent = 'Beta \u2014 this feature may not work as expected';
+    beta.style.cssText = 'margin-top:6px;text-align:center;font-size:12px;color:#9aa0a6;';
+    wrap.appendChild(beta);
     anchor.parentElement.insertBefore(wrap, anchor);
   }
 

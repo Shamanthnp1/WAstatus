@@ -111,8 +111,12 @@
   var STICKER_BASE_FRAC = 0.12;
   // Animated .tgs stickers: shown as a static poster image in the editor (no
   // client-side Lottie → no flicker/lag) and animated server-side in the final
-  // render. Matte stickers are excluded at build time. Static webp unaffected.
-  var ANIMATED_STICKERS = true;
+  // render. Disabled (beta): animated stickers showed artifacts in the final
+  // render, so only the static webp pack is offered. Static webp unaffected.
+  var ANIMATED_STICKERS = false;
+  // Disabled (beta): music upload + server mix isn't reliable end-to-end yet,
+  // so the Music tool is hidden. Original video audio still plays in the output.
+  var MUSIC_ENABLED = false;
 
   var ui = null;
 
@@ -164,7 +168,10 @@
       { id: 'text', ic: 'bi-fonts', label: 'Text' },
       { id: 'music', ic: 'bi-music-note-beamed', label: 'Music' },
       { id: 'sticker', ic: 'bi-emoji-smile', label: 'Sticker' }
-    ].forEach(function (t) {
+    ].filter(function (t) {
+      // Music is disabled (beta) — don't render the tool so it can't be opened.
+      return t.id !== 'music' || MUSIC_ENABLED;
+    }).forEach(function (t) {
       var b = el('button', 'sdui-tool'); b.dataset.tool = t.id;
       b.appendChild(el('i', 'ic bi ' + t.ic));
       b.appendChild(el('span', null, t.label));
@@ -632,6 +639,7 @@
 
   function toggleTool(tool, arg) {
     if (!ui) return;
+    if (tool === 'music' && !MUSIC_ENABLED) return; // disabled (beta)
     if (ui.openTool === tool && !arg) { closeTray(); return; }
     ui.openTool = tool;
     collapseMenu(tool);
