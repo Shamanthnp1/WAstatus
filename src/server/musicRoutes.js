@@ -454,14 +454,32 @@ function makeR2AudioLoader({ axios, fs, path, uuid, publicBaseUrl, tmpDir = 'upl
     const ext = extOf(objectKey) || '.audio';
     const localPath = path.join(tmpDir, `music_${genId()}${ext}`);
 
-    const response = await axios.get(inputUrl, { responseType: 'stream', timeout: timeoutMs });
-    await new Promise((resolve, reject) => {
-      const writer = fs.createWriteStream(localPath);
-      response.data.pipe(writer);
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-      response.data.on('error', reject);
-    });
+    // A just-uploaded object can briefly 404 through the public/CDN URL, so
+    // retry the download a few times before giving up.
+    const maxTries = 4;
+    let lastErr = null;
+    for (let attempt = 0; attempt < maxTries; attempt++) {
+      try {
+        const response = await axios.get(inputUrl, { responseType: 'stream', timeout: timeoutMs });
+        await new Promise((resolve, reject) => {
+          const writer = fs.createWriteStream(localPath);
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+          response.data.on('error', reject);
+        });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const status = err && err.response && err.response.status;
+        console.warn(`🎵 loadAudio attempt ${attempt + 1}/${maxTries} failed for ${inputUrl}${status ? ` (HTTP ${status})` : ''}: ${err && err.message}`);
+        if (attempt < maxTries - 1) {
+          await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
 
     let sizeBytes = NaN;
     try {
@@ -545,8 +563,16 @@ function getProductionHandlers() {
   return _productionHandlers;
 }
 
-router.post('/api/music/upload-url', (req, res) => getProductionHandlers().uploadUrl(req, res));
-router.post('/api/music/validate', (req, res) => getProductionHandlers().validate(req, res));
+router.post('/api/music/upload-url', (req, res) => {
+  const b = req.body || {};
+  console.log(`🎵 /api/music/upload-url filename=${b.filename} type=${b.contentType} size=${b.fileSize}`);
+  return getProductionHandlers().uploadUrl(req, res);
+});
+router.post('/api/music/validate', (req, res) => {
+  const b = req.body || {};
+  console.log(`🎵 /api/music/validate assetId=${b.assetId} key=${b.key} size=${b.size}`);
+  return getProductionHandlers().validate(req, res);
+});
 
 /**
  * Mount the music routes onto an existing Express app.
