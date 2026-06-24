@@ -9,7 +9,7 @@ const ffmpegStatic = require('ffmpeg-static');
 const ffprobePath = require('ffprobe-static').path;
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const compression = require('compression');
 const crypto = require('crypto');
 const pino = require('pino');
@@ -21,6 +21,27 @@ const {
   Browsers,
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
+const { enforceInputLimits } = require('./src/server/inputLimits');
+const { routeRecipes, collectAvailableAssets } = require('./src/server/processRouting');
+const { planRecipeAssets, markLoopingImageInputs } = require('./src/server/assetResolver');
+const { rasterizeTextOverlay } = require('./src/server/textRaster');
+const tgsRaster = require('./src/server/tgsRaster');
+const musicRoutes = require('./src/server/musicRoutes');
+const { validateRecipe } = require('./src/server/recipeValidator');
+const { planRender, planChunk, chunkCount } = require('./src/server/renderEngine');
+const { RequestContext, cleanupRequest, makeR2Deps, startupSweep, makeSweepDeps } = require('./src/server/cleanup');
+const { defaultEncodeSemaphore } = require('./src/server/encodeSemaphore');
+const {
+  runGatedEncode,
+  buildRecipeCommand,
+  encodeRecipePlan,
+  tightenEncodeOptions,
+  FULL_VIDEO_TIMEOUT_MS,
+  CHUNK_TIMEOUT_MS,
+  RETRY_SIZE_MB,
+  MAX_ENCODE_ATTEMPTS,
+} = require('./src/server/encodeExec');
+const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
 require('dotenv').config();
 
 // ========================
@@ -56,6 +77,18 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.static('public'));
+// Serve Bootstrap Icons fonts/CSS for the in-app editor controls.
+app.use('/vendor/bootstrap-icons', express.static(path.join(__dirname, 'node_modules/bootstrap-icons/font')));
+// Serve @fontsource font CSS + files for the editor's text font picker.
+app.use('/vendor/fonts', express.static(path.join(__dirname, 'node_modules/@fontsource')));
+// Serve pako (gunzip .tgs) + lottie-web (render animated stickers) for the editor.
+app.use('/vendor/pako', express.static(path.join(__dirname, 'node_modules/pako/dist')));
+app.use('/vendor/lottie', express.static(path.join(__dirname, 'node_modules/lottie-web/build/player')));
+
+// Mount the music / asset endpoints: GET /api/library (curated royalty-free
+// library) and POST /api/music/upload-url + POST /api/music/validate (user
+// audio upload path). No streaming-rip/import surface is exposed (Req 8.4).
+musicRoutes.register(app);
 app.use((req, res, next) => {
   req.on('aborted', () => {
     console.warn(`Request aborted by client: ${req.path}`);
@@ -68,6 +101,9 @@ app.use((req, res, next) => {
 // ========================
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads', { recursive: true });
 if (!fs.existsSync('compressed')) fs.mkdirSync('compressed', { recursive: true });
+// Persistent cache for animated .tgs stickers rendered to .webp (Stage 3), so
+// built-in stickers are rendered once and reused across requests.
+if (!fs.existsSync('tgs-cache')) fs.mkdirSync('tgs-cache', { recursive: true });
 
 // ========================
 // CLOUDFLARE R2 SETUP
@@ -80,6 +116,56 @@ const r2Client = new S3Client({
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
 });
+
+// ========================
+// CLEANUP_PROCESS WIRING
+// ========================
+// Set of RequestContext ledgers for requests currently in progress. The
+// Startup_Sweep consults this so live work is retained while orphan temp files
+// from a previous run are reclaimed (Req 14.5). Each /api/process invocation
+// registers its ledger here on entry and removes it in `finally`.
+const activeRequests = new Set();
+
+// Production Cleanup_Process dependencies built from the real R2/S3 client and
+// `fs`. cleanupRequest(ctx, cleanupDeps) deletes every registered local path
+// and R2 key, logs per-item failures without aborting (Req 14.6), then lists
+// the request prefix and re-attempts any survivor (Req 14.7/14.8).
+const cleanupDeps = makeR2Deps({
+  r2Client,
+  bucket: process.env.R2_BUCKET_NAME,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+  fs,
+  logger: console,
+});
+
+/**
+ * Collect the R2 object keys of UPLOADED Music_Track / Sticker assets referenced
+ * by a recipe. These are non-output assets baked into the single encode, so they
+ * are safe to purge once rendering is done; they are registered in the request
+ * ledger (cleaned in the request `finally`) AND carried on the session so
+ * delivery-time cleanup re-attempts their removal within 60s of delivery (Req
+ * 14.2/14.4). Library (server-owned) assets are not uploaded and carry no key,
+ * so they are never deleted.
+ *
+ * @param {Object|null} recipe
+ * @returns {string[]}
+ */
+function collectAssetR2Keys(recipe) {
+  const keys = [];
+  if (!recipe) return keys;
+  const music = recipe.audio && recipe.audio.music;
+  if (music) {
+    if (music.key) keys.push(String(music.key));
+    else if (music.assetRef) keys.push(`music/${music.assetRef}`);
+  }
+  const stickers = Array.isArray(recipe.stickers) ? recipe.stickers : [];
+  for (const sticker of stickers) {
+    // Only uploaded stickers carry an R2 key; library stickers are server-owned.
+    if (sticker && sticker.key) keys.push(String(sticker.key));
+  }
+  return keys;
+}
 
 // ========================
 // SESSION STORAGE
@@ -183,10 +269,10 @@ function jidToNumber(jid) {
 // ========================
 // FFMPEG OPTIONS
 // ========================
-function getOutputOptions(duration, inputHeight = 1920) {
+function getOutputOptions(duration, inputHeight = 1920, attempt = 0) {
   console.log(`✓ getOutputOptions called!`);
   let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
-  return [
+  const base = [
     '-vf', vfFilter,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
@@ -211,7 +297,20 @@ function getOutputOptions(duration, inputHeight = 1920) {
     '-f', 'mp4',
     '-threads', '2',
   ];
+  // Attempt 0 is the exact WhatsApp_Spec encode (byte-identical legacy output).
+  // Retries (attempt > 0) progressively lower the bitrate so an over-size clip
+  // actually shrinks instead of failing the "under 16MB" check forever.
+  return tightenEncodeOptions(base, attempt);
 }
+
+// ========================
+// ENCODE EXECUTION (semaphore-gated, with timeouts + size retry)
+// ========================
+// The encode-execution helpers (runGatedEncode, buildRecipeCommand,
+// encodeRecipePlan) and the timeout / retry constants live in
+// ./src/server/encodeExec.js so they can be unit-tested deterministically with
+// mocked ffmpeg, a mock semaphore, and a mock fs (no real encoding / real time).
+// They are imported at the top of this file and used unchanged below.
 
 async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, inputHeight = 1920) {
   const totalChunks = Math.ceil(duration / chunkDuration);
@@ -225,57 +324,35 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
     chunks.push({ index: i, startTime, chunkPath });
   }
 
-  let BATCH_SIZE;
-  if (totalChunks <= 4) BATCH_SIZE = 2;
-  else if (totalChunks <= 10) BATCH_SIZE = 3;
-  else BATCH_SIZE = 4;
-  console.log(`Total chunks: ${totalChunks} → BATCH_SIZE: ${BATCH_SIZE}`);
+  // Semaphore-gated fan-out: every chunk encode acquires a permit from the
+  // shared EncodeSemaphore, so simultaneous encodes never exceed the CPU-derived
+  // Concurrency_Limit and the rest queue (Req 13.1/13.2). This replaces the old
+  // hardcoded BATCH_SIZE ladder + per-batch Promise.all. The ffmpeg command per
+  // chunk is unchanged, so skip-path chunk output stays byte-for-byte identical.
+  const chunkPaths = await Promise.all(
+    chunks.map(async ({ index, startTime, chunkPath }) => {
+      let startAttempt = (chunkDuration >= 59) ? 1 : 0;
+      for (let attempt = startAttempt; attempt < MAX_ENCODE_ATTEMPTS; attempt++) {
+        await runGatedEncode(
+          () => ffmpeg(inputPath)
+            .setStartTime(startTime)
+            .setDuration(chunkDuration)
+            .outputOptions(getOutputOptions(chunkDuration, inputHeight, attempt)),
+          chunkPath,
+          CHUNK_TIMEOUT_MS,
+          `Chunk ${index + 1}`
+        );
 
-  const chunkPaths = [];
-  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-    const batch = chunks.slice(i, i + BATCH_SIZE);
-    console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)}`);
-
-    const batchResults = await Promise.all(
-      batch.map(async ({ index, startTime, chunkPath }) => {
-        let startAttempt = (chunkDuration >= 59) ? 1 : 0;
-        for (let attempt = startAttempt; attempt < 3; attempt++) {
-          await new Promise((res, rej) => {
-            let settled = false;
-            let chunkCommand = null;
-            const finishChunk = (err) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(chunkTimer);
-              if (err) { rej(err); return; }
-              res();
-            };
-            const chunkTimer = setTimeout(() => {
-              if (chunkCommand) { try { chunkCommand.kill('SIGKILL'); } catch (e) { } }
-              finishChunk(new Error(`Chunk ${index + 1} timeout after 5 minutes`));
-            }, 300000);
-            chunkCommand = ffmpeg(inputPath)
-              .setStartTime(startTime)
-              .setDuration(chunkDuration)
-              .outputOptions(getOutputOptions(chunkDuration, inputHeight, attempt))
-              .output(chunkPath)
-              .on('end', () => finishChunk(null))
-              .on('error', (err) => finishChunk(err));
-            chunkCommand.run();
-          });
-
-          const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
-          if (sizeMB <= 15.5) {
-            console.log(`✓ Chunk ${index + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
-            return chunkPath;
-          }
-          console.log(`⚠️ Chunk ${index + 1} failed size check (${sizeMB.toFixed(2)}MB > 15.5MB). Retrying...`);
+        const sizeMB = fs.statSync(chunkPath).size / (1024 * 1024);
+        if (sizeMB <= RETRY_SIZE_MB) {
+          console.log(`✓ Chunk ${index + 1}/${totalChunks} done! Size: ${sizeMB.toFixed(2)}MB`);
+          return chunkPath;
         }
-        throw new Error(`Chunk ${index + 1} could not be compressed under 16MB.`);
-      })
-    );
-    chunkPaths.push(...batchResults);
-  }
+        console.log(`⚠️ Chunk ${index + 1} failed size check (${sizeMB.toFixed(2)}MB > 15.5MB). Retrying...`);
+      }
+      throw new Error(`Chunk ${index + 1} could not be compressed under 16MB.`);
+    })
+  );
   return chunkPaths;
 }
 
@@ -283,35 +360,23 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
   const duration = Number.isFinite(knownDuration) ? knownDuration : await getVideoDuration(inputPath);
   let startAttempt = (duration >= 59) ? 1 : 0;
 
-  for (let attempt = startAttempt; attempt < 3; attempt++) {
+  for (let attempt = startAttempt; attempt < MAX_ENCODE_ATTEMPTS; attempt++) {
     console.log(`🎬 compressVideo → Attempt ${attempt} | height:${inputHeight}`);
-    await new Promise((resolve, reject) => {
-      let settled = false;
-      let ffmpegCommand = null;
-      const finish = (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        if (err) return reject(err);
-        resolve();
-      };
-      const timeoutId = setTimeout(() => {
-        if (ffmpegCommand) { try { ffmpegCommand.kill('SIGKILL'); } catch (e) { } }
-        finish(new Error(`compressVideo timeout after 10 minutes on attempt ${attempt}`));
-      }, 600000);
-      ffmpegCommand = ffmpeg(inputPath)
-        .outputOptions(getOutputOptions(duration, inputHeight, attempt))
-        .output(outputPath)
-        .on('end', () => finish())
-        .on('error', finish);
-      ffmpegCommand.run();
-    });
+    // Gated through the EncodeSemaphore with the 600s full-video timeout. The
+    // ffmpeg command is unchanged, so skip-path output stays byte-for-byte
+    // identical to the no-editor flow (Req 1.2/1.4/1.5).
+    await runGatedEncode(
+      () => ffmpeg(inputPath).outputOptions(getOutputOptions(duration, inputHeight, attempt)),
+      outputPath,
+      FULL_VIDEO_TIMEOUT_MS,
+      `compressVideo attempt ${attempt}`
+    );
 
     const postFFmpegSha = await sha256File(outputPath);
     console.log(`🔬 [HASH] Post-FFmpeg local file: ${postFFmpegSha}`);
 
     const sizeMB = fs.statSync(outputPath).size / (1024 * 1024);
-    if (sizeMB <= 15.5) {
+    if (sizeMB <= RETRY_SIZE_MB) {
       console.log(`✓ Compression successful! Size: ${sizeMB.toFixed(2)}MB`);
       return;
     }
@@ -620,6 +685,20 @@ async function handleIncomingMessage(from, text) {
         console.error('R2 delete error:', err.message);
       }
     }
+    // Delivery-time cleanup also purges any uploaded Music_Track / Sticker R2
+    // assets associated with the request, within 60s of final delivery (Req
+    // 14.2). These are usually already removed by the request `finally`
+    // cleanup; deletion is idempotent so a re-attempt here is a safe backstop.
+    if (Array.isArray(session.assetKeys)) {
+      for (const assetKey of session.assetKeys) {
+        try {
+          await deleteFromR2(assetKey);
+          console.log(`R2 asset deleted after send: ${assetKey}`);
+        } catch (err) {
+          console.error('R2 asset delete error:', err.message);
+        }
+      }
+    }
   }
 
   if (session.expiryTimer) {
@@ -631,6 +710,7 @@ async function handleIncomingMessage(from, text) {
     console.log(`Session cleaned after ${session.status}: ${code}`);
   }, 300000);
   session.files = [];
+  session.assetKeys = [];
   session.createdAt = Date.now();
   session.expiryTimer = newTimer;
   sessions.set(code, session);
@@ -695,65 +775,317 @@ app.post('/api/upload-url', limiter, async (req, res) => {
 app.post('/api/process', limiter, async (req, res) => {
   try {
     const { files } = req.body;
-    if (!files || files.length === 0) {
-      return res.status(400).json({ error: 'No files provided!' });
+
+    // Input-limit gate: runs BEFORE any download/encode (Req 1.6, 13.5, 13.6).
+    // Added-audio size per video comes from the recipe's Music_Track asset size
+    // when present in the request body (forward-compatible with the recipes map).
+    const recipes = req.body.recipes || null;
+    const gate = enforceInputLimits(files, {
+      getAudioBytes: recipes
+        ? (file) => {
+            const music = file && file.key && recipes[file.key]
+              && recipes[file.key].audio && recipes[file.key].audio.music;
+            return music ? Number(music.sizeBytes) : undefined;
+          }
+        : undefined,
+    });
+    if (!gate.ok) {
+      return res.status(400).json({ error: gate.error, limit: gate.limit });
     }
-    if (files.length > 3) {
-      return res.status(400).json({ error: 'Max 3 files allowed!' });
-    }
-    const totalSizeMB = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
-    console.log(`📥 Processing ${files.length} file(s) — Total: ${totalSizeMB.toFixed(1)}MB`);
-    if (totalSizeMB > 300) {
-      return res.status(400).json({ error: `Total size ${totalSizeMB.toFixed(0)}MB exceeds 300MB!` });
-    }
+
+    // Process only the retained set (first 3 videos in upload order).
+    const acceptedFiles = gate.retained;
+    const totalSizeMB = acceptedFiles.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
+    console.log(`📥 Processing ${acceptedFiles.length} file(s) — Total: ${totalSizeMB.toFixed(1)}MB`);
 
     const activationCode = generateCode();
     const r2Files = [];
-    const uploadedKeys = files.map(f => f.key);
+    const uploadedKeys = acceptedFiles.map(f => f.key);
+
+    // Per-request artifact ledger. Every download, output, and chunk is
+    // registered here so the cleanup wiring (task 10.6) can purge the request
+    // from disk and R2 on success or any failure. We populate it now.
+    const requestContext = new RequestContext(activationCode);
+    // Track this request as in-progress so the Startup_Sweep retains its live
+    // temp files; removed in `finally`.
+    activeRequests.add(requestContext);
+
+    // Output clips/chunks uploaded to R2 are DELIVERY artifacts: they must
+    // survive the request `finally` so handleIncomingMessage can send them, then
+    // delete them within 60s of delivery (Req 14.2). They are tracked here
+    // (NOT in the cleanup ledger) on success; on ANY failure before delivery
+    // hand-off they are added to the ledger so partial outputs are purged too
+    // (Req 14.3).
+    const outputR2Keys = new Set();
+    // Uploaded Music_Track / Sticker R2 asset keys for the whole request. Stored
+    // on the session so delivery-time cleanup re-attempts their removal (Req 14.2).
+    const assetR2Keys = [];
+    // Set true once outputs have been handed to the session for delivery.
+    let deliveryHandedOff = false;
+    // Set when a Render_Engine failure occurs so its source upload is retained
+    // for the no-editor compression flow (Req 15.7).
+    let renderFailureSourcePath = null;
+
+    // Route each retained upload to its OWN recipe by upload key (Property 2 /
+    // Req 1.3, 1.4). A file without a matching key is routed as skipped
+    // (recipe === null → byte-identical legacy path, Req 1.2/1.5).
+    const routed = routeRecipes(acceptedFiles, recipes);
+    // Optional set of client-validated asset ids (music/sticker uploads that
+    // passed the /api/music/validate boundary). Full asset wiring lands later.
+    const validatedAssets = req.body.assets;
 
     try {
-      const allGroupResults = await Promise.all(
-        files.map(async (fileInfo, index) => {
+      // ---- Phase A: download, probe, route, validate, and PLAN each video. ----
+      // No encode (Compression_Pass) is started in this phase, so a recipe that
+      // fails validation rejects the whole request before any encode runs
+      // (Req 2.7, 3.8).
+      const prepared = await Promise.all(
+        acceptedFiles.map(async (fileInfo, index) => {
           const { key, originalName, size } = fileInfo;
           const inputUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
-          console.log(`📹 [${index + 1}/${files.length}] Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+          console.log(`📹 [${index + 1}/${acceptedFiles.length}] Processing: ${originalName} (${(size / 1024 / 1024).toFixed(1)}MB)`);
           const localInputPath = path.join('uploads', `input_${uuidv4()}${path.extname(originalName)}`);
+          requestContext.addLocalPath(localInputPath);
 
-          try {
-            const response = await axios.get(inputUrl, { responseType: 'stream', timeout: 300000 });
-            await new Promise((resolve, reject) => {
-              const writer = fs.createWriteStream(localInputPath);
-              response.data.pipe(writer);
-              writer.on('finish', resolve);
-              writer.on('error', reject);
-              response.data.on('error', reject);
+          const response = await axios.get(inputUrl, { responseType: 'stream', timeout: 300000 });
+          await new Promise((resolve, reject) => {
+            const writer = fs.createWriteStream(localInputPath);
+            response.data.pipe(writer);
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+            response.data.on('error', reject);
+          });
+          await deleteFromR2(key);
+
+          const duration = await getVideoDuration(localInputPath);
+          const dimensions = await getVideoDimensions(localInputPath);
+
+          // Look up this video's recipe (null => skipped / legacy path).
+          const recipe = routed[index] ? routed[index].recipe : null;
+
+          // Register every uploaded Music_Track / Sticker R2 asset referenced by
+          // the recipe so the request `finally` purges them (Req 14.4), and carry
+          // them onto the session for delivery-time re-attempt (Req 14.2).
+          for (const assetKey of collectAssetR2Keys(recipe)) {
+            requestContext.addR2Key(assetKey);
+            assetR2Keys.push(assetKey);
+          }
+
+          if (recipe) {
+            // Validate BEFORE any encode. On the first fault, reject with the
+            // offending field + permitted bound and start NO Compression_Pass
+            // (Req 2.7, 3.8). The downloaded source stays on local disk.
+            const availableAssets = collectAvailableAssets(recipe, validatedAssets);
+            const validation = validateRecipe(recipe, {
+              sourceDuration: duration,
+              availableAssets,
             });
-            await deleteFromR2(key);
+            if (!validation.ok) {
+              const err = new Error(
+                `Recipe validation failed for "${originalName}": ${validation.error.reason}`
+              );
+              err.isRecipeValidationError = true;
+              err.validationError = validation.error;
+              err.fileName = originalName;
+              throw err;
+            }
+          }
 
-            const duration = await getVideoDuration(localInputPath);
-            const dimensions = await getVideoDimensions(localInputPath);
+          // ---- Stage 1: resolve overlay/music asset files for the graph. ----
+          // Built-in stickers (/stickers/...) and library audio (/library/...)
+          // resolve to local public files; uploaded assets (carrying an R2 key)
+          // are downloaded to temp and registered for request cleanup. The
+          // resulting map is consumed by planRender via meta.assetPaths.
+          let assetPaths;
+          if (recipe) {
+            const { localPaths, remotes } = planRecipeAssets(recipe, {
+              publicDir: path.join(__dirname, 'public'),
+              tmpDir: 'uploads',
+              genId: uuidv4,
+            });
+            assetPaths = Object.assign({}, localPaths);
+            for (const r of remotes) {
+              requestContext.addLocalPath(r.tmpPath);
+              const assetUrl = `${process.env.R2_PUBLIC_URL}/${r.key}`;
+              const aResp = await axios.get(assetUrl, { responseType: 'stream', timeout: 300000 });
+              await new Promise((resolve, reject) => {
+                const w = fs.createWriteStream(r.tmpPath);
+                aResp.data.pipe(w);
+                w.on('finish', resolve);
+                w.on('error', reject);
+                aResp.data.on('error', reject);
+              });
+              assetPaths[r.ref] = r.tmpPath;
+            }
 
-            if (duration <= 29) {
-              const outputFileName = `compressed_${uuidv4()}.mp4`;
-              const outputPath = path.join('compressed', outputFileName);
-              await compressVideo(localInputPath, outputPath, duration, dimensions.height);
-              const url = await uploadToR2(outputPath, outputFileName);
-              await fs.promises.unlink(outputPath).catch(() => { });
-              return [{ fileName: outputFileName, url }];
-            } else {
+            // ---- Stage 3: convert animated .tgs stickers to alpha .webp. ----
+            // ffmpeg can't render Lottie, so each .tgs is rasterized to an
+            // animated webp (reusing the Stage 1 webp overlay path). Built-in
+            // stickers are cached on disk and rendered once; uploaded ones go to
+            // a request temp file. A render failure leaves the .tgs unmapped so
+            // only that sticker is dropped — the rest of the edit still renders.
+            if (tgsRaster.available()) {
+              const stickerList = Array.isArray(recipe.stickers) ? recipe.stickers : [];
+              const dropped = [];
+              for (const s of stickerList) {
+                const ref = s && s.assetRef;
+                if (typeof ref !== 'string' || !/\.tgs$/i.test(ref) || !assetPaths[ref]) continue;
+                try {
+                  const srcTgs = assetPaths[ref];
+                  const isStatic = ref.indexOf('/stickers/') === 0 || ref.indexOf('/library/') === 0;
+                  if (isStatic) {
+                    const cached = path.join('tgs-cache', path.basename(ref).replace(/\.tgs$/i, '') + '.apng');
+                    if (!fs.existsSync(cached)) await tgsRaster.renderTgsToApng(srcTgs, cached);
+                    assetPaths[ref] = cached;
+                  } else {
+                    const apngOut = path.join('uploads', `asset_${uuidv4()}.apng`);
+                    await tgsRaster.renderTgsToApng(srcTgs, apngOut);
+                    requestContext.addLocalPath(apngOut);
+                    assetPaths[ref] = apngOut;
+                  }
+                } catch (tgsErr) {
+                  console.warn(`tgs render failed for ${ref}: ${tgsErr.message}`);
+                  delete assetPaths[ref];
+                  dropped.push(s); // drop just this sticker; keep the rest of the edit
+                }
+              }
+              if (dropped.length) recipe.stickers = stickerList.filter((s) => dropped.indexOf(s) === -1);
+            }
+          }
+
+          // Rasterize each Text_Overlay to a transparent PNG (Stage 2) and map
+          // it by overlay id for the render graph. Files are registered for
+          // request cleanup. Skipped when the recipe has no text overlays.
+          let textRasterPaths;
+          if (recipe && Array.isArray(recipe.textOverlays) && recipe.textOverlays.length) {
+            textRasterPaths = {};
+            for (const t of recipe.textOverlays) {
+              const textPng = path.join('uploads', `text_${uuidv4()}.png`);
+              await rasterizeTextOverlay(t, textPng);
+              requestContext.addLocalPath(textPng);
+              textRasterPaths[t.id] = textPng;
+            }
+          }
+
+          // Build the single-encode RenderPlan. recipe === null yields the
+          // byte-identical legacy plan (Property 1); a recipe folds its edits
+          // into one Compression_Pass (Req 2.6, 12.3).
+          const plan = planRender(recipe, {
+            width: dimensions.width,
+            height: dimensions.height,
+            duration,
+            key,
+            path: localInputPath,
+            assetPaths,
+            textRasterPaths,
+          });
+          // Loop animated .webp sticker inputs for the full clip (Stage 1),
+          // bounded to the planned output duration so the encode terminates.
+          markLoopingImageInputs(plan, Number.isFinite(plan.plannedDuration) ? plan.plannedDuration : duration);
+
+          return { fileInfo, localInputPath, duration, dimensions, recipe, plan };
+        })
+      );
+
+      // ---- Phase B: encode each prepared video through the EncodeSemaphore. ----
+      // Skip/legacy plans (filterComplex === '') run the unchanged
+      // compressVideo/splitVideo path so output stays byte-for-byte identical to
+      // the no-editor flow. Recipe plans execute the -filter_complex graph from
+      // the RenderPlan / per-chunk ChunkRenderPlan. Every ffmpeg invocation is
+      // gated by the shared semaphore, so concurrent encodes across all files and
+      // chunks never exceed the CPU-derived Concurrency_Limit (Req 13.1/13.2).
+      const allGroupResults = await Promise.all(
+        prepared.map(async ({ fileInfo, localInputPath, duration, dimensions, recipe, plan }) => {
+          let retainSource = false;
+          try {
+            const isSkip = !plan.filterComplex; // legacy/skip plan
+            const plannedDuration = Number.isFinite(plan.plannedDuration)
+              ? plan.plannedDuration
+              : duration;
+
+            // ----- Skip / legacy path (byte-identical) -----
+            if (isSkip) {
+              if (duration <= 29) {
+                const outputFileName = `compressed_${uuidv4()}.mp4`;
+                const outputPath = path.join('compressed', outputFileName);
+                requestContext.addLocalPath(outputPath);
+                await compressVideo(localInputPath, outputPath, duration, dimensions.height);
+                const url = await uploadToR2(outputPath, outputFileName);
+                // Output is a delivery artifact — tracked separately so the
+                // request `finally` does NOT purge it before delivery (Req 14.2).
+                outputR2Keys.add(outputFileName);
+                await fs.promises.unlink(outputPath).catch(() => { });
+                return [{ fileName: outputFileName, url }];
+              }
               const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29, dimensions.height);
               const chunkResults = [];
               for (let i = 0; i < chunkPaths.length; i++) {
                 const chunkPath = chunkPaths[i];
                 const chunkFileName = path.basename(chunkPath);
+                requestContext.addLocalPath(chunkPath);
                 const url = await uploadToR2(chunkPath, chunkFileName);
+                outputR2Keys.add(chunkFileName);
                 await fs.promises.unlink(chunkPath).catch(() => { });
                 chunkResults.push({ fileName: chunkFileName, url });
               }
               return chunkResults;
             }
+
+            // ----- Recipe path: execute the filter graph in one encode -----
+            // A Render_Engine failure here is surfaced with the specific video
+            // identified and its source retained for the no-editor flow (Req
+            // 15.6/15.7). Cleanup of partial render artifacts still runs.
+            try {
+              if (plannedDuration <= CLIP_DURATION_LIMIT) {
+                const outputFileName = `compressed_${uuidv4()}.mp4`;
+                const outputPath = path.join('compressed', outputFileName);
+                requestContext.addLocalPath(outputPath);
+                await encodeRecipePlan(plan, outputPath, FULL_VIDEO_TIMEOUT_MS, `Edited video "${fileInfo.originalName}"`);
+                const url = await uploadToR2(outputPath, outputFileName);
+                outputR2Keys.add(outputFileName);
+                await fs.promises.unlink(outputPath).catch(() => { });
+                return [{ fileName: outputFileName, url }];
+              }
+
+              // Trimmed/edited duration exceeds the clip limit → split into chunks
+              // and render overlays in every chunk via planChunk (Req 4.6, 11.x).
+              const count = chunkCount(plannedDuration, CLIP_DURATION_LIMIT);
+              const indexedResults = await Promise.all(
+                Array.from({ length: count }, (_, i) => i).map(async (i) => {
+                  const chunkPlan = planChunk(plan, i, CLIP_DURATION_LIMIT);
+                  markLoopingImageInputs(chunkPlan, CLIP_DURATION_LIMIT);
+                  const chunkFileName = `chunk_${uuidv4()}.mp4`;
+                  const chunkPath = path.join('compressed', chunkFileName);
+                  requestContext.addLocalPath(chunkPath);
+                  await encodeRecipePlan(chunkPlan, chunkPath, CHUNK_TIMEOUT_MS, `Edited chunk ${i + 1} of "${fileInfo.originalName}"`);
+                  const url = await uploadToR2(chunkPath, chunkFileName);
+                  outputR2Keys.add(chunkFileName);
+                  await fs.promises.unlink(chunkPath).catch(() => { });
+                  return { index: i, fileName: chunkFileName, url };
+                })
+              );
+              // Preserve chunk order regardless of completion order.
+              indexedResults.sort((a, b) => a.index - b.index);
+              return indexedResults.map(({ fileName, url }) => ({ fileName, url }));
+            } catch (renderErr) {
+              // Retain this source upload so the user can still post via the
+              // no-editor compression flow (Req 15.7).
+              retainSource = true;
+              renderFailureSourcePath = localInputPath;
+              const err = new Error(
+                `Failed to apply edits to "${fileInfo.originalName}": ${renderErr.message}`
+              );
+              err.isRenderError = true;
+              err.fileName = fileInfo.originalName;
+              err.cause = renderErr.message;
+              throw err;
+            }
           } finally {
-            await fs.promises.unlink(localInputPath).catch(() => { });
+            // Remove the local source unless it must be retained for the
+            // no-editor fallback after a Render_Engine failure (Req 15.7).
+            if (!retainSource) {
+              await fs.promises.unlink(localInputPath).catch(() => { });
+            }
           }
         })
       );
@@ -781,22 +1113,78 @@ app.post('/api/process', limiter, async (req, res) => {
 
       sessions.set(activationCode, {
         files: r2Files,
+        assetKeys: assetR2Keys,  // music/sticker R2 assets for delivery-time cleanup (Req 14.2)
         createdAt: Date.now(),
         status: 'pending',
         expiryTimer: expiryTimer,
         caption: userCaption,  // 🆕 store user's caption
       });
+      // Outputs are now owned by the session for delivery; the request `finally`
+      // must NOT purge the R2 output clips (Req 14.2).
+      deliveryHandedOff = true;
 
       const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
       const waLink = `https://wa.me/${cleanNumber}?text=Activation%20Code%3A%20${activationCode}`;
       res.json({ success: true, activationCode, waLink, fileCount: r2Files.length });
 
     } catch (processingError) {
+      // A recipe that failed validation rejects the request with HTTP 400,
+      // naming the offending field and its permitted bound. No Compression_Pass
+      // was started (validation runs in Phase A, before any encode) — Req 3.8.
+      if (processingError && processingError.isRecipeValidationError) {
+        console.warn(`✗ Recipe validation failed: ${processingError.message}`);
+        for (const key of uploadedKeys) {
+          try { await deleteFromR2(key); } catch (cleanupErr) { console.error(`Failed cleanup ${key}:`, cleanupErr.message); }
+        }
+        const ve = processingError.validationError || {};
+        return res.status(400).json({
+          error: processingError.message,
+          field: ve.field,
+          bound: ve.bound,
+          fileName: processingError.fileName,
+        });
+      }
+      // A Render_Engine failure identifies the specific video and the cause, and
+      // leaves that video's source available for the no-editor compression flow
+      // (Req 15.6/15.7). Partial render artifacts are purged by the `finally`
+      // Cleanup_Process below.
+      if (processingError && processingError.isRenderError) {
+        console.error(`✗ Render failed: ${processingError.message}`);
+        return res.status(422).json({
+          error: processingError.message,
+          fileName: processingError.fileName,
+          cause: processingError.cause,
+        });
+      }
       console.error('✗ Processing error, cleaning up R2 uploads...');
       for (const key of uploadedKeys) {
         try { await deleteFromR2(key); } catch (cleanupErr) { console.error(`Failed cleanup ${key}:`, cleanupErr.message); }
       }
       throw processingError;
+    } finally {
+      // Cleanup_Process (Req 14.1/14.3/14.4): purge every registered local path
+      // and non-output R2 asset (music/sticker), logging per-item failures and
+      // continuing (Req 14.6), then verifying the request prefix is empty in R2.
+      //   - On SUCCESS (deliveryHandedOff): the R2 output clips are owned by the
+      //     session and are NOT purged here; delivery cleanup removes them later.
+      //   - On ANY FAILURE before hand-off: partial output clips already uploaded
+      //     to R2 are added to the ledger so nothing leaks (Req 14.3).
+      //   - On a Render_Engine failure: the failed video's source is retained for
+      //     the no-editor flow (Req 15.7).
+      if (!deliveryHandedOff) {
+        for (const key of outputR2Keys) {
+          requestContext.addR2Key(key);
+        }
+      }
+      if (renderFailureSourcePath) {
+        requestContext.localPaths.delete(renderFailureSourcePath);
+      }
+      try {
+        await cleanupRequest(requestContext, cleanupDeps);
+      } catch (cleanupErr) {
+        console.error(`Cleanup failed for ${activationCode}:`, cleanupErr.message);
+      }
+      activeRequests.delete(requestContext);
     }
   } catch (error) {
     console.error('✗ Process error:', error);
@@ -830,6 +1218,16 @@ Local: http://localhost:${PORT}
   `);
   // Start Baileys after Express is up so QR shows in logs
   startBaileys().catch(err => console.error('Baileys startup failed:', err));
+
+  // Startup_Sweep: reclaim disk by deleting orphan temp files in uploads/,
+  // compressed/, and assets/ that are not tied to an active in-progress request
+  // (Req 14.5). At boot nothing is in-flight, so leftovers from a prior run are
+  // removed; live work is retained via the activeRequests ledger set.
+  startupSweep(activeRequests, makeSweepDeps({ fs, baseDir: process.cwd() }))
+    .then((sweep) => {
+      console.log(`🧹 Startup sweep: removed ${sweep.deleted.length} orphan file(s), retained ${sweep.retained.length}.`);
+    })
+    .catch((err) => console.error('Startup sweep failed:', err.message));
 });
 
 server.requestTimeout = 0;

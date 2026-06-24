@@ -1624,8 +1624,99 @@
     </div>
   </footer>
 
+  <!-- StatusDrop in-app video editor (UMD modules; attach window.StatusDropEditor / window.StatusDropEditorAudio) -->
+  <script src="/js/editor.js"></script>
+  <script src="/js/editorAudio.js"></script>
+  <script src="/js/editorUI.js"></script>
+
   <script>
   let wakeLock = null;
+
+  /**
+   * Collect the per-video Edit_Recipe map (keyed by upload key) from the active
+   * in-app editor, if one is mounted. Returns {} when no editor is present or no
+   * edits were made, so unedited videos take the byte-identical skip path on the
+   * server (Req 1.2/1.5). Only the JSON recipe is sent — never rendered video
+   * pixels (Req 2.1, 2.5); the editor never decodes/re-encodes the source.
+   * @returns {Object<string, Object>} Map of uploadKey -> EditRecipe.
+   */
+  function getEditorRecipes() {
+    try {
+      const controller = window.StatusDropEditorController;
+      if (controller && typeof controller.getRecipesByKey === 'function') {
+        return controller.getRecipesByKey() || {};
+      }
+    } catch (err) {
+      console.warn('Could not collect editor recipes:', err);
+    }
+    return {};
+  }
+
+  // ---- Optional in-app editor integration (delegates to editorUI.js) ------
+  // Editing is OPTIONAL (Req 1): users who never open the editor get the exact
+  // one-click compress flow, and every unedited video takes the byte-identical
+  // server passthrough. The full editor lives in /js/editorUI.js and opens on
+  // demand as a full-screen modal; it never re-encodes pixels (Req 2.1).
+  function injectEditBtnStyles() {
+    if (document.getElementById('sd-editbtn-css')) return;
+    var s = document.createElement('style');
+    s.id = 'sd-editbtn-css';
+    s.textContent = '.animated-button{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;padding:16px 36px;border:4px solid transparent;font-size:16px;background-color:#ffffff;border-radius:100px;font-weight:600;color:#1f387e;box-shadow:0 0 0 2px #ffffff;cursor:pointer;overflow:hidden;transition:all .6s cubic-bezier(0.23,1,0.32,1)}.animated-button svg{position:absolute;width:24px;fill:#1f387e;z-index:9;transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button .arr-1{right:16px}.animated-button .arr-2{left:-25%}.animated-button .circle{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:20px;height:20px;background-color:#c5e5e4;border-radius:50%;opacity:0;transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button .text{position:relative;z-index:1;transform:translateX(-12px);transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button:hover{box-shadow:0 0 0 12px transparent;color:#212121;border-radius:12px}.animated-button:hover .arr-1{right:-25%}.animated-button:hover .arr-2{left:16px}.animated-button:hover .text{transform:translateX(12px)}.animated-button:hover svg{fill:#1f387e}.animated-button:active{scale:.95;box-shadow:0 0 0 4px greenyellow}.animated-button:hover .circle{width:220px;height:220px;opacity:1}';
+    document.head.appendChild(s);
+  }
+
+  function ensureEditorUI() {
+    if (document.getElementById('sdEditorWrap')) return;
+    const compressBtn = document.getElementById('compressBtn');
+    if (!compressBtn || !compressBtn.parentElement || !compressBtn.parentElement.parentElement) return;
+    const anchor = compressBtn.parentElement;
+    const wrap = document.createElement('div');
+    wrap.id = 'sdEditorWrap';
+    wrap.style.marginTop = '12px';
+    wrap.style.display = 'none';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.id = 'sdEditorToggle';
+    toggle.className = 'animated-button';
+    toggle.innerHTML = '<svg class="arr-2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M16.1716 10.9999L10.8076 5.63589L12.2218 4.22168L20 11.9999L12.2218 19.778L10.8076 18.3638L16.1716 12.9999H4V10.9999H16.1716Z"></path></svg><span class="text">Edit videos (optional)</span><span class="circle"></span><svg class="arr-1" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M16.1716 10.9999L10.8076 5.63589L12.2218 4.22168L20 11.9999L12.2218 19.778L10.8076 18.3638L16.1716 12.9999H4V10.9999H16.1716Z"></path></svg>';
+    toggle.style.width = '100%';
+    toggle.addEventListener('click', openEditorModal);
+    injectEditBtnStyles();
+    wrap.appendChild(toggle);
+    anchor.parentElement.insertBefore(wrap, anchor);
+  }
+
+  function showEditorToggle(show) {
+    ensureEditorUI();
+    const wrap = document.getElementById('sdEditorWrap');
+    if (wrap) wrap.style.display = show ? 'block' : 'none';
+  }
+
+  function openEditorModal() {
+    if (window.StatusDropEditorUI && typeof window.StatusDropEditorUI.open === 'function') {
+      window.StatusDropEditorUI.open(files);
+    } else {
+      alert('The editor is unavailable right now. Your videos will be compressed without edits.');
+    }
+  }
+
+  function resetEditor() {
+    if (window.StatusDropEditorUI && typeof window.StatusDropEditorUI.reset === 'function') {
+      try { window.StatusDropEditorUI.reset(); } catch (e) { /* ignore */ }
+    }
+    window.StatusDropEditorController = null;
+  }
+
+  // After upload, assign each editor instance its upload key (by index) so the
+  // recipes map is keyed correctly for the server (Property 2 / Req 1.3).
+  function assignEditorKeys(fileInfos) {
+    const c = window.StatusDropEditorController;
+    if (!c || typeof c.getInstances !== 'function') return;
+    const instances = c.getInstances();
+    for (let i = 0; i < instances.length && i < fileInfos.length; i++) {
+      if (instances[i]) instances[i].uploadKey = fileInfos[i].key;
+    }
+  }
 
   async function requestWakeLock() {
     try {
@@ -1708,12 +1799,16 @@
       filesList.classList.remove('visible');
       compressBtn.disabled = true;
       document.getElementById('captionSection').style.display = 'none';
+      resetEditor();
+      showEditorToggle(false);
       return;
     }
 
     filesList.classList.add('visible');
     compressBtn.disabled = false;
     document.getElementById('captionSection').style.display = 'block';
+    // Surface the optional "Edit videos" toggle (opens the full-screen editor).
+    showEditorToggle(true);
 
     container.innerHTML = files.map((file, index) => `
       <div class="file-item">
@@ -2052,6 +2147,8 @@
       );
 
       // ── PHASE 2: Process on server ──
+      // Map upload keys onto the editor instances so recipes route correctly.
+      assignEditorKeys(allFileInfos);
       setStatus('⚙️', 'Compressing videos on server...');
       setStep(2);
       updateProgressBar(50);
@@ -2069,6 +2166,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             files: allFileInfos,
+            recipes: getEditorRecipes(),
             caption: document.getElementById('captionInput')?.value.trim() || ''
           }),
           signal: processController.signal
