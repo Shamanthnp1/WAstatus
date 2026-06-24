@@ -195,7 +195,7 @@
         inst.sourceDuration = isFinite(v.duration) ? v.duration : 0;
         if (ui && i === ui.active) renderOverlays();
       });
-      v.addEventListener('ended', function () { if (ui) { ui.playBtn.style.display = ''; pauseMusic(); } });
+      v.addEventListener('ended', function () { if (ui) { ui.playBtn.style.display = ''; pauseMusic(); freezeStickers(false); } });
       inst.previewEl = v;
       frame.insertBefore(v, layer);
       instances.push(inst); videos.push(v);
@@ -289,6 +289,7 @@
     ui.active = i; ui.selectedId = null;
     ui.playBtn.style.display = '';
     applyOriginalAudio(); applyMusicAudio();
+    destroyLottiesIn(ui.layer); ui.layer.innerHTML = ''; ui._ovEls = {};
     renderOverlays();
   }
 
@@ -299,8 +300,8 @@
     if (v.paused) {
       applyOriginalAudio();
       playVideo(v); ui.playBtn.style.display = 'none';
-      startMusic();
-    } else { v.pause(); ui.playBtn.style.display = ''; pauseMusic(); }
+      startMusic(); freezeStickers(true);
+    } else { v.pause(); ui.playBtn.style.display = ''; pauseMusic(); freezeStickers(false); }
   }
 
   // Start playback robustly across browsers: some mobile browsers reject an
@@ -348,6 +349,17 @@
     ui.musicAudio.play().catch(function () {});
   }
   function pauseMusic() { if (ui && ui.musicAudio) { try { ui.musicAudio.pause(); } catch (_) {} } }
+
+  // Pause/resume Lottie sticker animations. While the video plays we freeze them
+  // so the decoder gets the CPU (smooth playback on phones); they animate again
+  // when the video is paused. The final rendered video animates them fully.
+  function freezeStickers(freeze) {
+    if (!ui || !ui._ovEls) return;
+    Object.keys(ui._ovEls).forEach(function (id) {
+      var e = ui._ovEls[id];
+      if (e && e._lottie) { try { freeze ? e._lottie.pause() : e._lottie.play(); } catch (_) {} }
+    });
+  }
 
   // ---- local "Test render" (dev harness only) -----------------------------
   function isDevHost() {
@@ -427,16 +439,50 @@
     if (!ui) return;
     removeSelBar();
     var inst = activeInst();
-    destroyLottiesIn(ui.layer);
-    ui.layer.innerHTML = '';
     var dims = frameDims();
-    (inst.textOverlays || []).forEach(function (o) { ui.layer.appendChild(buildTextEl(o, dims)); });
-    (inst.stickers || []).forEach(function (s) { ui.layer.appendChild(buildStickerEl(s, dims)); });
+    var layer = ui.layer;
+    ui._ovEls = ui._ovEls || {};
+
+    // Build the desired set (id -> descriptor), preserving recipe order.
+    var desired = {}, order = [];
+    (inst.textOverlays || []).forEach(function (o) { desired[o.id] = { kind: 'text', o: o }; order.push(o.id); });
+    (inst.stickers || []).forEach(function (s) { desired[s.id] = { kind: 'sticker', s: s }; order.push(s.id); });
+
+    // Remove elements that are gone (destroying their Lottie if any).
+    Object.keys(ui._ovEls).forEach(function (id) {
+      if (!desired[id]) { removeOvEl(ui._ovEls[id]); delete ui._ovEls[id]; }
+    });
+
+    // Create new / update existing — reusing elements so Lottie isn't rebuilt.
+    order.forEach(function (id) {
+      var d = desired[id];
+      var ex = ui._ovEls[id];
+      if (d.kind === 'text') {
+        if (!ex || ex.dataset.kind !== 'text') { if (ex) removeOvEl(ex); ex = buildTextEl(d.o, dims); ui._ovEls[id] = ex; }
+        else applyTextStyles(ex, d.o, dims);
+      } else {
+        // Reuse only when the same asset; a different assetRef needs a rebuild.
+        if (!ex || ex.dataset.kind !== 'sticker' || ex._assetRef !== (d.s.assetRef || '')) {
+          if (ex) removeOvEl(ex); ex = buildStickerEl(d.s, dims); ui._ovEls[id] = ex;
+        } else applyStickerTransform(ex, d.s, dims);
+      }
+    });
+
+    // Order the DOM to match the recipe (appendChild moves existing nodes).
+    order.forEach(function (id) { var e = ui._ovEls[id]; if (e) layer.appendChild(e); });
+
+    // Selection highlight.
+    Object.keys(ui._ovEls).forEach(function (id) { ui._ovEls[id].classList.toggle('sel', id === ui.selectedId); });
     if (ui.selectedId) {
-      var sel = ui.layer.querySelector('[data-id="' + cssEsc(ui.selectedId) + '"]');
-      if (sel) { sel.classList.add('sel'); showSelBar(ui.selectedId); }
+      if (ui._ovEls[ui.selectedId]) showSelBar(ui.selectedId);
       else ui.selectedId = null;
     }
+  }
+
+  function removeOvEl(elx) {
+    if (!elx) return;
+    if (elx._lottie) { try { elx._lottie.destroy(); } catch (_) {} elx._lottie = null; }
+    if (elx.parentNode) elx.parentNode.removeChild(elx);
   }
 
   function position(n, pos, rotation) {
@@ -448,6 +494,12 @@
   function buildTextEl(o, dims) {
     var n = el('div', 'sdui-ov sdui-ov-text');
     n.dataset.id = o.id; n.dataset.kind = 'text';
+    applyTextStyles(n, o, dims);
+    attachDrag(n, o.id);
+    return n;
+  }
+
+  function applyTextStyles(n, o, dims) {
     n.textContent = o.text;
     n.style.color = o.textColor || '#fff';
     var hasBg = o.bgColor && o.bgColor !== '#00000000';
@@ -463,23 +515,26 @@
     n.style.fontWeight = o.font && FONT_WEIGHT[o.font] ? FONT_WEIGHT[o.font] : 700;
     n.style.fontSize = Math.max(8, (o.fontSize / CANVAS_H) * dims.h) + 'px';
     position(n, o.pos, o.rotation);
-    attachDrag(n, o.id);
-    return n;
+  }
+
+  function applyStickerTransform(n, s, dims) {
+    var size = dims.h * STICKER_BASE_FRAC * 1.7 * (s.scale || 1);
+    n.style.width = size + 'px'; n.style.height = size + 'px';
+    position(n, s.pos, s.rotation);
   }
 
   function buildStickerEl(s, dims) {
     var n = el('div', 'sdui-ov sdui-ov-sticker');
     n.dataset.id = s.id; n.dataset.kind = 'sticker';
-    var size = dims.h * STICKER_BASE_FRAC * 1.7 * (s.scale || 1);
-    n.style.width = size + 'px'; n.style.height = size + 'px';
     var ref = s.assetRef || '';
+    n._assetRef = ref;
     if (isTgs(ref)) {
       renderLottieInto(n, ref, { loop: true, autoplay: true });
     } else {
       var img = el('img', 'sdui-sticker-img'); img.src = ref; img.alt = 'sticker'; img.draggable = false;
       n.appendChild(img);
     }
-    position(n, s.pos, s.rotation);
+    applyStickerTransform(n, s, dims);
     attachDrag(n, s.id);
     return n;
   }
@@ -1102,7 +1157,7 @@
   // the trim start when the playhead is outside the trimmed region).
   function toggleTrimPlay() {
     var v = ui.videos[ui.active]; if (!v || !ui.trim) return;
-    if (!v.paused) { v.pause(); pauseMusic(); setPlayLabel(false); return; }
+    if (!v.paused) { v.pause(); pauseMusic(); freezeStickers(false); setPlayLabel(false); return; }
     if (v.currentTime < ui.trim.start || v.currentTime >= ui.trim.end - 0.02) {
       try { v.currentTime = ui.trim.start; } catch (_) {}
     }
@@ -1110,6 +1165,7 @@
     applyOriginalAudio();
     playVideo(v);
     startMusic();
+    freezeStickers(true);
     setPlayLabel(true);
   }
 
@@ -1117,7 +1173,7 @@
     if (ui._trimWatch) return;
     ui._trimWatch = function () {
       if (!ui || !ui.trim) return;
-      if (v.currentTime >= ui.trim.end) { v.pause(); setPlayLabel(false); }
+      if (v.currentTime >= ui.trim.end) { v.pause(); pauseMusic(); freezeStickers(false); setPlayLabel(false); }
     };
     v.addEventListener('timeupdate', ui._trimWatch);
   }
@@ -1220,8 +1276,8 @@
       '.sdui-selbar button:focus-visible{outline:2px solid var(--sdui-fg);outline-offset:1px}',
       '.sdui-trim{position:absolute;left:14px;right:14px;bottom:14px;display:none;z-index:7}',
       '.sdui-trim.open{display:block}',
-      '.sdui-trim-track{position:relative;width:100%;height:60px;background:rgba(10,10,10,0.5);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1.5px solid rgba(255,255,255,0.2);border-radius:16px;box-shadow:var(--sdui-sh-md);overflow:hidden;touch-action:none}',
-      '.sdui-trim-mask{position:absolute;top:0;bottom:0;background:rgba(0,0,0,0.4);z-index:0}',
+      '.sdui-trim-track{position:relative;width:100%;height:60px;background:rgba(10,10,10,0.5);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1.5px solid rgba(255,255,255,0.2);border-radius:16px;box-shadow:var(--sdui-sh-md);touch-action:none}',
+      '.sdui-trim-mask{position:absolute;top:0;bottom:0;background:rgba(0,0,0,0.45);z-index:0;border-radius:14px}',
       '.sdui-trim-sel{position:absolute;top:0;bottom:0;border:2px solid rgba(255,255,255,0.9);border-radius:14px;box-sizing:border-box;background:rgba(255,255,255,0.05);z-index:1}',
       '.sdui-trim-h{position:absolute;top:0;bottom:0;width:56px;margin-left:-28px;background:transparent;cursor:ew-resize;touch-action:none;z-index:4}',
       '.sdui-trim-h::before{content:"";position:absolute;top:6px;bottom:6px;left:50%;width:10px;transform:translateX(-50%);background:#fff;border-radius:7px;box-shadow:0 2px 12px rgba(0,0,0,0.55);transition:width .12s ease,background .12s ease}',
@@ -1247,7 +1303,7 @@
       '.sdui-tray::-webkit-scrollbar{display:none}',
       '.sdui-tray.open{display:block}',
       '.sdui-tray-head{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;letter-spacing:0.01em;margin-bottom:10px;color:var(--sdui-fg)}',
-      '.sdui-trimwrap{padding:16px 4px 0;animation:sduiRise var(--sdui-spring)}',
+      '.sdui-trimwrap{padding:16px 24px 0;animation:sduiRise var(--sdui-spring)}',
       '@keyframes sduiRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}',
       '.sdui-tray.bare{background:transparent;border:none;box-shadow:none;padding:0;max-height:none;overflow:visible}',
       '.sdui-dock.hidden-dock{display:none}',
