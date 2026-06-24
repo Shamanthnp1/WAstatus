@@ -1,9 +1,11 @@
 FROM node:20-bullseye-slim
 
-# Install ca-certificates for HTTPS
+# Install ca-certificates (HTTPS) and libfontconfig1 (font support for
+# @napi-rs/canvas text rasterization on the slim Debian image).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates \
+      libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
