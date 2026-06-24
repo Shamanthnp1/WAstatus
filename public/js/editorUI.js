@@ -238,7 +238,16 @@
         var map = {};
         instances.forEach(function (inst) {
           var r = inst.getRecipe();
-          if (r && inst.uploadKey) map[inst.uploadKey] = r;
+          if (r && inst.uploadKey) {
+            // Never send music whose asset hasn't finished its server upload
+            // yet (client-local ref like "upl_169..."); the server can't resolve
+            // it and would otherwise fail the encode. Dropping it just omits the
+            // music for this run rather than crashing the whole compress.
+            if (r.audio && r.audio.music && /^upl_/.test(String(r.audio.music.assetRef || ''))) {
+              r.audio.music = null;
+            }
+            map[inst.uploadKey] = r;
+          }
         });
         return map;
       },
