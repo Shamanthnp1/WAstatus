@@ -951,6 +951,18 @@ app.post('/api/process', limiter, async (req, res) => {
               }
               if (dropped.length) recipe.stickers = stickerList.filter((s) => dropped.indexOf(s) === -1);
             }
+
+            // Drop any overlay/music asset we could NOT resolve to a local file
+            // (e.g. an upload that didn't finish, leaving a client-local ref) so
+            // a missing input never fails the whole encode — the rest of the
+            // edits still render. Mirrors the dev-render harness behaviour.
+            if (Array.isArray(recipe.stickers)) {
+              recipe.stickers = recipe.stickers.filter((s) => s && assetPaths[s.assetRef]);
+            }
+            if (recipe.audio && recipe.audio.music && !assetPaths[recipe.audio.music.assetRef]) {
+              console.warn(`Dropping unresolved music asset "${recipe.audio.music.assetRef}" for "${originalName}"`);
+              recipe.audio.music = null;
+            }
           }
 
           // Rasterize each Text_Overlay to a transparent PNG (Stage 2) and map
