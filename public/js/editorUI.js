@@ -109,11 +109,10 @@
   var FONT_WEIGHT = FONTS.reduce(function (m, f) { m[f.name] = f.weight; return m; }, {});
   var CANVAS_H = 1920;
   var STICKER_BASE_FRAC = 0.12;
-  // Animated .tgs stickers are temporarily disabled: lottie-web's canvas renderer
-  // (used server-side) mishandles track mattes (white-circle artifact) and is
-  // heavy in the mobile preview. Flip to true once a matte-correct engine
-  // (rlottie/ThorVG) is wired in (stage B). Static webp stickers are unaffected.
-  var ANIMATED_STICKERS = false;
+  // Animated .tgs stickers: shown as a static poster image in the editor (no
+  // client-side Lottie → no flicker/lag) and animated server-side in the final
+  // render. Matte stickers are excluded at build time. Static webp unaffected.
+  var ANIMATED_STICKERS = true;
 
   var ui = null;
 
@@ -533,12 +532,11 @@
     n.dataset.id = s.id; n.dataset.kind = 'sticker';
     var ref = s.assetRef || '';
     n._assetRef = ref;
-    if (isTgs(ref)) {
-      renderLottieInto(n, ref, { loop: true, autoplay: true });
-    } else {
-      var img = el('img', 'sdui-sticker-img'); img.src = ref; img.alt = 'sticker'; img.draggable = false;
-      n.appendChild(img);
-    }
+    // Animated .tgs are shown as their static poster in the editor (the final
+    // video animates them server-side); webp stickers are shown directly.
+    var src = isTgs(ref) ? ((ui && ui.stickerPosters && ui.stickerPosters[ref]) || ref) : ref;
+    var img = el('img', 'sdui-sticker-img'); img.src = src; img.alt = 'sticker'; img.draggable = false;
+    n.appendChild(img);
     applyStickerTransform(n, s, dims);
     attachDrag(n, s.id);
     return n;
@@ -811,31 +809,36 @@
       ui.selectedId = r.sticker.id; renderOverlays(); closeTray();
     }
     function renderGrid() {
-      destroyLottiesIn(gridWrap);
       gridWrap.innerHTML = '';
-      var list = (ui.stickerManifest && ui.stickerManifest[current]) || [];
-      if (!list.length) { gridWrap.appendChild(el('div', 'sdui-hint', 'No stickers in this pack.')); return; }
+      var raw = (ui.stickerManifest && ui.stickerManifest[current]) || [];
+      if (!raw.length) { gridWrap.appendChild(el('div', 'sdui-hint', 'No stickers in this pack.')); return; }
+      // Normalize to { add, show }: animated entries are { tgs, poster }; normal are URLs.
+      var items = raw.map(function (e) {
+        return (e && typeof e === 'object') ? { add: e.tgs, show: e.poster } : { add: e, show: e };
+      });
       var grid = el('div', 'sdui-stkr-grid');
-      list.forEach(function (url) {
+      items.forEach(function (it) {
         var b = el('button', 'sdui-stkr-cell');
-        if (isTgs(url)) {
-          var holder = el('div', 'sdui-stkr-lottie'); b.appendChild(holder);
-          renderLottieInto(holder, url, { loop: true, autoplay: true });
-        } else {
-          var img = el('img', 'sdui-stkr-thumb'); img.loading = 'lazy'; img.src = url; img.alt = 'sticker'; img.draggable = false;
-          b.appendChild(img);
-        }
-        b.addEventListener('click', function () { addStickerByUrl(url); });
+        var img = el('img', 'sdui-stkr-thumb'); img.loading = 'lazy'; img.src = it.show; img.alt = 'sticker'; img.draggable = false;
+        b.appendChild(img);
+        b.addEventListener('click', function () { addStickerByUrl(it.add); });
         grid.appendChild(b);
       });
       gridWrap.appendChild(grid);
     }
 
-    if (ui.stickerManifest) { renderGrid(); }
+    function indexPosters(m) {
+      ui.stickerPosters = ui.stickerPosters || {};
+      (m && m.animated || []).forEach(function (e) {
+        if (e && e.tgs && e.poster) ui.stickerPosters[e.tgs] = e.poster;
+      });
+    }
+
+    if (ui.stickerManifest) { indexPosters(ui.stickerManifest); renderGrid(); }
     else {
       gridWrap.appendChild(el('div', 'sdui-hint', 'Loading stickers\u2026'));
       fetch('/stickers/manifest.json').then(function (r) { return r.json(); }).then(function (m) {
-        ui.stickerManifest = m; renderGrid();
+        ui.stickerManifest = m; indexPosters(m); renderGrid();
       }).catch(function () { gridWrap.innerHTML = ''; gridWrap.appendChild(el('div', 'sdui-hint', 'Could not load stickers.')); });
     }
   }

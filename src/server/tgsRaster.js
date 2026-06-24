@@ -158,4 +158,46 @@ async function renderTgsToApng(srcTgsPath, outApngPath, opts) {
   return outApngPath;
 }
 
-module.exports = { available, renderTgsToApng, inflateTgs };
+module.exports = { available, renderTgsToApng, renderTgsPoster, hasTrackMatte, inflateTgs };
+
+/**
+ * Whether a parsed Lottie/tgs uses a track matte (which lottie-web's canvas
+ * renderer mishandles → white-shape artifact). Such stickers are excluded.
+ * @param {Object} data - parsed Lottie JSON
+ * @returns {boolean}
+ */
+function hasTrackMatte(data) {
+  try { return /"tt"\s*:/.test(JSON.stringify(data)); } catch (_) { return false; }
+}
+
+/**
+ * Render a single representative frame of a .tgs to a transparent PNG (a static
+ * "poster" used in the editor preview so it doesn't animate on the client).
+ * @param {string} srcTgsPath
+ * @param {string} outPngPath
+ * @param {Object} [opts] - { maxSize=256, pako }
+ * @returns {Promise<string>} outPngPath
+ */
+async function renderTgsPoster(srcTgsPath, outPngPath, opts) {
+  opts = opts || {};
+  if (!ensureLottie()) throw new Error('tgs rasterization unavailable');
+  const pako = opts.pako || require('pako');
+  const data = inflateTgs(pako, srcTgsPath);
+  const maxSize = opts.maxSize || 256;
+  const W = Math.max(1, Math.min(maxSize, data.w || maxSize));
+  const H = Math.max(1, Math.min(maxSize, data.h || maxSize));
+  const ip = Number.isFinite(data.ip) ? data.ip : 0;
+  const op = Number.isFinite(data.op) ? data.op : ip + 1;
+  const canvas = _cv.createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+  const anim = _lottie.loadAnimation({
+    renderer: 'canvas', loop: false, autoplay: false, animationData: data,
+    rendererSettings: { context: ctx, clearCanvas: true },
+  });
+  ctx.clearRect(0, 0, W, H);
+  anim.goToAndStop(Math.floor((ip + op) / 2), true);
+  const buf = canvas.toBuffer('image/png');
+  try { anim.destroy(); } catch (_) {}
+  fs.writeFileSync(outPngPath, buf);
+  return outPngPath;
+}
