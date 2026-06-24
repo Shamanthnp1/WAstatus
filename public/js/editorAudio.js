@@ -725,10 +725,21 @@
    */
   function defaultFetchLibrary() {
     if (typeof fetch !== 'function') return Promise.resolve([]);
-    return fetch('/api/library')
+    return fetch(apiBase() + '/api/library')
       .then(function (res) { return res && res.ok ? res.json() : []; })
       .then(function (list) { return Array.isArray(list) ? list : []; })
       .catch(function () { return []; });
+  }
+
+  /**
+   * Base URL for the music/asset API. On the static frontend the page sets
+   * `window.StatusDropApiBase` to the backend origin (the endpoints live on the
+   * API server, not the static host); in same-origin dev it stays '' (relative).
+   * @returns {string}
+   */
+  function apiBase() {
+    return (typeof window !== 'undefined' && typeof window.StatusDropApiBase === 'string')
+      ? window.StatusDropApiBase : '';
   }
 
   /**
@@ -1039,7 +1050,7 @@
    */
   function defaultRequestUploadUrl(file) {
     if (typeof fetch !== 'function') return Promise.reject(new Error('Network is unavailable'));
-    return fetch('/api/music/upload-url', {
+    return fetch(apiBase() + '/api/music/upload-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1084,7 +1095,7 @@
    */
   function defaultValidateAsset(params) {
     if (typeof fetch !== 'function') return Promise.reject(new Error('Network is unavailable'));
-    return fetch('/api/music/validate', {
+    return fetch(apiBase() + '/api/music/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),

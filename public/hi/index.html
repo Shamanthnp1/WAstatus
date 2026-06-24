@@ -1739,6 +1739,8 @@
 
   // ✅ Backend URL
   const BACKEND_URL = 'https://api.wastatusvideo.com';
+  // Editor music/asset API base: backend in production, same-origin in local dev.
+  window.StatusDropApiBase = /^(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(location.hostname) ? '' : BACKEND_URL;
 
   let files = [];
   let waLink = '';
