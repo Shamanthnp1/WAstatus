@@ -234,6 +234,14 @@
     window.StatusDropEditorController = {
       getInstances: function () { return instances.slice(); },
       getInstance: function (i) { return instances[i] || null; },
+      // Resolve once every in-flight music upload has settled, so the recipe's
+      // music.assetRef has been swapped from the client-local "upl_" ref to the
+      // resolvable server asset id before Compress reads the recipes.
+      awaitPendingUploads: function () {
+        return Promise.all(instances.map(function (inst) {
+          return (inst && inst._musicUpload) ? inst._musicUpload.catch(function () {}) : Promise.resolve();
+        }));
+      },
       getRecipesByKey: function () {
         var map = {};
         instances.forEach(function (inst) {
@@ -284,6 +292,7 @@
     window.StatusDropEditorController = {
       getInstances: function () { return []; },
       getRecipesByKey: function () { return {}; },
+      awaitPendingUploads: function () { return Promise.resolve(); },
       destroy: function () {}
     };
   }
@@ -1015,7 +1024,11 @@
       if (!Audio.performMusicUpload || !Audio.normalizeUploadDeps) return;
       var deps;
       try { deps = Audio.normalizeUploadDeps({}); } catch (_) { return; }
-      Audio.performMusicUpload(file, deps).then(function (asset) {
+      // Track this upload on the instance so Compress can WAIT for it before
+      // submitting (otherwise the recipe still carries the client-local "upl_"
+      // ref and the server drops the music). The promise always resolves; on
+      // success the recipe's assetRef is swapped to the resolvable server id.
+      var p = Audio.performMusicUpload(file, deps).then(function (asset) {
         var m = inst.audio && inst.audio.music;
         if (m && m.assetRef === localId && asset && asset.assetId) {
           m.assetRef = asset.assetId;
@@ -1027,8 +1040,10 @@
         }
         upHint.textContent = 'Uploaded \u2713 ready to use.';
       }).catch(function () {
-        upHint.textContent = 'Saved for preview \u00b7 server upload unavailable here.';
+        upHint.textContent = 'Music upload failed \u00b7 it won\u2019t be added to the final video.';
       });
+      inst._musicUpload = p;
+      return p;
     }
 
     var done = btnWith('sdui-btn', 'bi-check-lg', 'Done'); done.addEventListener('click', closeTray);

@@ -2155,6 +2155,14 @@
       setStep(2);
       updateProgressBar(50);
 
+      // Wait for any in-flight music upload to finish so the recipe carries the
+      // resolvable server asset id (not the client-local "upl_" ref). Without
+      // this the server can't find the music and drops it from the final video.
+      try {
+        const c = window.StatusDropEditorController;
+        if (c && typeof c.awaitPendingUploads === 'function') await c.awaitPendingUploads();
+      } catch (e) { /* upload failed; recipe collection will simply omit music */ }
+
       const totalSizeMB = filesToProcess.reduce((s, f) => s + f.size, 0) / (1024 * 1024);
       startProcessingSimulation(totalSizeMB);
 
