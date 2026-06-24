@@ -963,6 +963,8 @@ app.post('/api/process', limiter, async (req, res) => {
             if (recipe.audio && recipe.audio.music && !assetPaths[recipe.audio.music.assetRef]) {
               console.warn(`Dropping unresolved music asset "${recipe.audio.music.assetRef}" for "${originalName}"`);
               recipe.audio.music = null;
+            } else if (recipe.audio && recipe.audio.music) {
+              console.log(`🎵 Music resolved for "${originalName}": ${recipe.audio.music.assetRef} -> ${assetPaths[recipe.audio.music.assetRef]}`);
             }
           }
 

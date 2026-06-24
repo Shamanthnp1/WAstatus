@@ -1741,6 +1741,10 @@
   const BACKEND_URL = 'https://api.wastatusvideo.com';
   // Editor music/asset API base: backend in production, same-origin in local dev.
   window.StatusDropApiBase = /^(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(location.hostname) ? '' : BACKEND_URL;
+  // Cloudflare Worker upload base for editor music uploads (same Worker the
+  // video upload uses). The editor PUTs audio directly here, then references the
+  // resulting R2 key in the recipe.
+  window.StatusDropUploadBase = 'https://upload.wastatusvideo.com';
 
   let files = [];
   let waLink = '';

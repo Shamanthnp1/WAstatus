@@ -1018,24 +1018,37 @@
     }
 
     // Best-effort background upload so the recipe references the server asset
-    // (so the rendered video can include the audio). Preview already works from
-    // the local object URL regardless of whether this succeeds.
+    // (so the rendered video can include the audio). We upload the audio file
+    // DIRECTLY to the Cloudflare Worker — the same proven path the video upload
+    // uses — rather than the backend presign+validate pipeline (which added two
+    // fragile network round-trips). The client already enforced the 20MB / 10min
+    // limits before this point. Preview already works from the local object URL.
     function serverUpload(file, localId, url) {
-      if (!Audio.performMusicUpload || !Audio.normalizeUploadDeps) return;
-      var deps;
-      try { deps = Audio.normalizeUploadDeps({}); } catch (_) { return; }
-      // Track this upload on the instance so Compress can WAIT for it before
-      // submitting (otherwise the recipe still carries the client-local "upl_"
-      // ref and the server drops the music). The promise always resolves; on
-      // success the recipe's assetRef is swapped to the resolvable server id.
-      var p = Audio.performMusicUpload(file, deps).then(function (asset) {
+      var base = (typeof window !== 'undefined' && window.StatusDropUploadBase) || 'https://upload.wastatusvideo.com';
+      base = String(base).replace(/\/+$/, '');
+      var extM = /\.[a-z0-9]+$/i.exec((file && file.name) || '');
+      var ext = extM ? extM[0].toLowerCase() : '.mp3';
+      var uuid = (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : ('m' + Date.now() + Math.random().toString(36).slice(2));
+      var key = 'music/' + uuid + ext;
+      var putUrl = base + '/upload/' + key;
+      upHint.textContent = 'Uploading music\u2026';
+      var p = fetch(putUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': (file && file.type) || 'application/octet-stream' },
+        body: file
+      }).then(function (res) {
+        if (!res || !res.ok) throw new Error('upload HTTP ' + (res && res.status));
         var m = inst.audio && inst.audio.music;
-        if (m && m.assetRef === localId && asset && asset.assetId) {
-          m.assetRef = asset.assetId;
-          if (asset.key) m.key = asset.key;
-          if (url) ui.musicUrls[asset.assetId] = url;
-          ui.trackDuration[asset.assetId] = ui.trackDuration[localId];
-          if (ui.wavePeaks[localId]) ui.wavePeaks[asset.assetId] = ui.wavePeaks[localId];
+        if (m && m.assetRef === localId) {
+          // assetRef = the R2 key (non-static, carries a key) so the server
+          // downloads it from R2 and mixes it into the encode.
+          m.assetRef = key;
+          m.key = key;
+          if (url) ui.musicUrls[key] = url;
+          ui.trackDuration[key] = ui.trackDuration[localId];
+          if (ui.wavePeaks[localId]) ui.wavePeaks[key] = ui.wavePeaks[localId];
           if (typeof inst.markDirty === 'function') inst.markDirty();
         }
         upHint.textContent = 'Uploaded \u2713 ready to use.';
