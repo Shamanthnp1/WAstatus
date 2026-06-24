@@ -109,6 +109,11 @@
   var FONT_WEIGHT = FONTS.reduce(function (m, f) { m[f.name] = f.weight; return m; }, {});
   var CANVAS_H = 1920;
   var STICKER_BASE_FRAC = 0.12;
+  // Animated .tgs stickers are temporarily disabled: lottie-web's canvas renderer
+  // (used server-side) mishandles track mattes (white-circle artifact) and is
+  // heavy in the mobile preview. Flip to true once a matte-correct engine
+  // (rlottie/ThorVG) is wired in (stage B). Static webp stickers are unaffected.
+  var ANIMATED_STICKERS = false;
 
   var ui = null;
 
@@ -775,14 +780,20 @@
     var inst = activeInst();
     var current = 'normal';
 
+    // Animated tab only when enabled (stage B); otherwise static stickers only.
+    var TABS = [['normal', 'Stickers', 'bi-sticky']];
+    if (ANIMATED_STICKERS) TABS.push(['animated', 'Animated', 'bi-stars']);
+
     var tabs = el('div', 'sdui-stkr-tabs');
-    [['normal', 'Stickers', 'bi-sticky'], ['animated', 'Animated', 'bi-stars']].forEach(function (p) {
-      var b = el('button', 'sdui-stkr-tab' + (p[0] === current ? ' sel' : '')); b.dataset.t = p[0];
-      b.appendChild(el('i', 'bi ' + p[2])); b.appendChild(el('span', 'sdui-btn-lbl', p[1]));
-      b.addEventListener('click', function () { setTab(p[0]); });
-      tabs.appendChild(b);
-    });
-    tray.appendChild(tabs);
+    if (TABS.length > 1) {
+      TABS.forEach(function (p) {
+        var b = el('button', 'sdui-stkr-tab' + (p[0] === current ? ' sel' : '')); b.dataset.t = p[0];
+        b.appendChild(el('i', 'bi ' + p[2])); b.appendChild(el('span', 'sdui-btn-lbl', p[1]));
+        b.addEventListener('click', function () { setTab(p[0]); });
+        tabs.appendChild(b);
+      });
+      tray.appendChild(tabs);
+    }
 
     var gridWrap = el('div', 'sdui-stkr-gridwrap'); tray.appendChild(gridWrap);
     tray.appendChild(el('div', 'sdui-hint', 'Tap to add \u00b7 drag to move \u00b7 select to resize/rotate/delete.'));
