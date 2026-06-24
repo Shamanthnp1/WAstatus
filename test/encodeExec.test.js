@@ -308,3 +308,55 @@ test('error path: an ffmpeg error rejects and still releases the permit', async 
   assert.equal(semaphore.acquireCount, 1, 'a permit should be acquired');
   assert.equal(semaphore.releaseCount, 1, 'the permit should be released after an error');
 });
+
+// --- Output duration cap (terminate-promptly guarantee) --------------------
+
+/**
+ * A capturing ffmpeg factory that records the token list passed to
+ * outputOptions(), so we can assert the recipe command bounds the output.
+ */
+function createCapturingFfmpeg() {
+  const captured = { outputOptions: null };
+  function factory() {
+    const cmd = {
+      input() { return cmd; },
+      inputOptions() { return cmd; },
+      outputOptions(opts) { captured.outputOptions = opts; return cmd; },
+      output() { return cmd; },
+      on() { return cmd; },
+      run() { return cmd; },
+      kill() { },
+    };
+    return cmd;
+  }
+  factory.captured = captured;
+  return factory;
+}
+
+test('buildRecipeCommand caps output duration with -t when plannedDuration is set', () => {
+  const ffmpegFactory = createCapturingFfmpeg();
+  const { buildRecipeCommand } = createEncodeExec({ ffmpegFactory });
+  buildRecipeCommand({
+    inputs: [{ path: 'uploads/in.mp4', args: [] }],
+    filterComplex: '[0:v]null[vout]',
+    encodeOptions: ['-c:v', 'libx264'],
+    plannedDuration: 12.5,
+  }, 0);
+  const opts = ffmpegFactory.captured.outputOptions;
+  const tIdx = opts.indexOf('-t');
+  assert.ok(tIdx !== -1, 'output options must include a -t duration cap');
+  assert.strictEqual(opts[tIdx + 1], '12.5', '-t must equal the planned duration');
+});
+
+test('buildRecipeCommand omits -t when plannedDuration is missing/invalid', () => {
+  const ffmpegFactory = createCapturingFfmpeg();
+  const { buildRecipeCommand } = createEncodeExec({ ffmpegFactory });
+  buildRecipeCommand({
+    inputs: [{ path: 'uploads/in.mp4', args: [] }],
+    filterComplex: '[0:v]null[vout]',
+    encodeOptions: ['-c:v', 'libx264'],
+    // no plannedDuration
+  }, 0);
+  assert.strictEqual(ffmpegFactory.captured.outputOptions.indexOf('-t'), -1,
+    'no -t cap should be added when plannedDuration is absent');
+});

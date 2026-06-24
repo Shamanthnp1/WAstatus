@@ -155,6 +155,7 @@ function createEncodeExec(deps = {}) {
         }, timeoutMs);
         command = buildCommand()
           .output(outputPath)
+          .on('start', (cl) => { try { console.log(`🎬 ${label}: ${cl}`); } catch (e) { } })
           .on('end', () => finish(null))
           .on('error', (err) => finish(err));
         command.run();
@@ -185,12 +186,24 @@ function createEncodeExec(deps = {}) {
         command.inputOptions(input.args);
       }
     }
-    command.outputOptions([
+    const opts = [
       '-filter_complex', plan.filterComplex,
       '-map', '[vout]',
       '-map', '0:a?',
       ...tightenEncodeOptions(plan.encodeOptions, attempt || 0),
-    ]);
+    ];
+    // Hard-cap the output duration to the planned clip length. Overlay/sticker
+    // inputs are looped (`-stream_loop -1`) and, although each is bounded by a
+    // `-t` input option, an animated APNG/webp overlay can still keep ffmpeg
+    // emitting frames past the source EOF in some builds — making the encode run
+    // until the 600s watchdog kills it (the user sees the progress bar stall).
+    // An explicit OUTPUT `-t` guarantees ffmpeg writes exactly the planned
+    // duration and then stops, so the encode always terminates promptly.
+    const planned = Number(plan.plannedDuration);
+    if (Number.isFinite(planned) && planned > 0) {
+      opts.push('-t', String(planned));
+    }
+    command.outputOptions(opts);
     return command;
   }
 
