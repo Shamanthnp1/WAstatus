@@ -437,6 +437,71 @@ async function deleteFromR2(fileName) {
 }
 
 // ========================
+// R2 ORPHAN SWEEP (safety net for the "code never redeemed" + restart case)
+// ========================
+// While the server runs, each session's expiry timer + the 60s interval sweep
+// delete a never-redeemed video from R2 within ~5 min. But those timers live in
+// memory: if the process restarts before they fire, the session Map is lost and
+// the already-uploaded R2 object would be orphaned forever. This sweep reclaims
+// such orphans by listing only the EPHEMERAL prefixes and deleting objects that
+// are (a) older than a wide safety margin and (b) not referenced by any live
+// session. Permanent assets (library/, stickers/) are never listed, so they are
+// never at risk.
+const R2_ORPHAN_AGE_MS = 30 * 60 * 1000; // 30 min — far beyond the 5-min delivery window
+const R2_EPHEMERAL_PREFIXES = ['compressed_', 'chunk_', 'uploads/', 'music/'];
+
+async function listR2ObjectsByPrefix(prefix) {
+  const objects = [];
+  let ContinuationToken;
+  do {
+    const resp = await r2Client.send(new ListObjectsV2Command({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Prefix: prefix,
+      ContinuationToken,
+    }));
+    for (const obj of (resp.Contents || [])) objects.push(obj);
+    ContinuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+  } while (ContinuationToken);
+  return objects;
+}
+
+async function sweepOrphanR2Objects() {
+  // Names still owned by a live session (pending delivery / retry window) must
+  // never be deleted, regardless of age.
+  const tracked = new Set();
+  for (const session of sessions.values()) {
+    for (const f of (session.files || [])) if (f && f.fileName) tracked.add(f.fileName);
+    for (const k of (session.assetKeys || [])) if (k) tracked.add(k);
+  }
+  const now = Date.now();
+  let removed = 0;
+  for (const prefix of R2_EPHEMERAL_PREFIXES) {
+    let objects;
+    try {
+      objects = await listR2ObjectsByPrefix(prefix);
+    } catch (err) {
+      console.error(`R2 orphan sweep: list "${prefix}" failed: ${err.message}`);
+      continue;
+    }
+    for (const obj of objects) {
+      const key = obj.Key;
+      if (!key || tracked.has(key)) continue; // owned by a live session
+      const age = now - new Date(obj.LastModified).getTime();
+      if (!(age > R2_ORPHAN_AGE_MS)) continue; // too fresh — could be in-flight
+      try {
+        await deleteFromR2(key);
+        removed++;
+        console.log(`🧹 R2 orphan removed: ${key} (age ${Math.round(age / 60000)}m)`);
+      } catch (err) {
+        console.error(`R2 orphan delete "${key}" failed: ${err.message}`);
+      }
+    }
+  }
+  if (removed) console.log(`🧹 R2 orphan sweep: removed ${removed} stale object(s).`);
+  return removed;
+}
+
+// ========================
 // BAILEYS WHATSAPP TRANSPORT
 // ========================
 let sock = null;
@@ -1287,6 +1352,16 @@ Local: http://localhost:${PORT}
       console.log(`🧹 Startup sweep: removed ${sweep.deleted.length} orphan file(s), retained ${sweep.retained.length}.`);
     })
     .catch((err) => console.error('Startup sweep failed:', err.message));
+
+  // R2 orphan sweep: reclaim never-redeemed outputs/inputs/music left in R2 by a
+  // prior run that restarted before its in-memory expiry timers fired. Runs once
+  // at boot and every 15 minutes thereafter. Only ephemeral prefixes are listed
+  // and only objects older than 30 min and not owned by a live session are
+  // removed, so in-flight work and permanent assets are never affected.
+  sweepOrphanR2Objects().catch((err) => console.error('R2 orphan sweep failed:', err.message));
+  setInterval(() => {
+    sweepOrphanR2Objects().catch((err) => console.error('R2 orphan sweep failed:', err.message));
+  }, 15 * 60 * 1000);
 });
 
 server.requestTimeout = 0;
