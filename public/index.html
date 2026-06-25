@@ -882,6 +882,26 @@
 </head>
 <body>
 
+  <!-- Feedback / support banner -->
+  <div id="sdFeedbackBar" style="display:flex;align-items:center;justify-content:center;gap:8px;position:relative;background:linear-gradient(90deg,#128C7E,#25D366);color:#fff;font-size:13px;line-height:1.45;padding:10px 38px 10px 16px;text-align:center;">
+    <span>👋 Facing an issue or have feedback? <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline;">DM me on Instagram</a></span>
+    <button id="sdFeedbackClose" aria-label="Dismiss" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+  </div>
+  <script>
+    (function () {
+      try {
+        var bar = document.getElementById('sdFeedbackBar');
+        if (!bar) return;
+        if (localStorage.getItem('sdFeedbackDismissed') === '1') { bar.style.display = 'none'; return; }
+        var btn = document.getElementById('sdFeedbackClose');
+        if (btn) btn.addEventListener('click', function () {
+          bar.style.display = 'none';
+          try { localStorage.setItem('sdFeedbackDismissed', '1'); } catch (e) {}
+        });
+      } catch (e) {}
+    })();
+  </script>
+
   <!-- HERO -->
   <div class="hero">
     <div class="logo">
