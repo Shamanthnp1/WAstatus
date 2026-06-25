@@ -172,6 +172,10 @@ function collectAssetR2Keys(recipe) {
 // ========================
 const sessions = new Map();
 const recentlySentCodes = new Set();
+// A send normally finishes in seconds; if a code has been "processing" for
+// longer than this, the attempt is considered wedged and a new webhook may
+// re-attempt delivery (kept above the per-send timeouts to avoid double-sends).
+const PROCESSING_STALE_MS = 300000;
 
 setInterval(async () => {
   const now = Date.now();
@@ -530,29 +534,56 @@ async function startBaileys() {
   }
 }
 
+// Reject a promise if it doesn't settle within `ms`, so a stalled network call
+// (R2 download, Baileys send) can never hang the delivery flow forever. The
+// underlying operation is abandoned (its result is ignored) once we time out.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const e = new Error(`${label || 'operation'} timed out after ${Math.round(ms / 1000)}s`);
+      e.isTimeout = true;
+      reject(e);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Per-send wall-clock limits for WhatsApp delivery (prevents a stuck send from
+// stranding a session in `processing`).
+const WA_MESSAGE_TIMEOUT_MS = 30000;   // text message send
+const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> buffer download
+const WA_VIDEO_SEND_TIMEOUT_MS = 180000; // Baileys video upload+send
+
 async function sendWhatsAppMessage(to, message) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
-  await sock.sendMessage(jid, { text: message });
+  await withTimeout(sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
 }
 
 async function sendWhatsAppVideo(to, videoUrl, caption) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
 
-  // Download from R2 into a buffer
+  // Download from R2 into a buffer (bounded by a timeout so a stalled fetch
+  // can't hang the whole delivery).
   const r2Response = await axios.get(videoUrl, {
     responseType: 'arraybuffer',
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
+    timeout: WA_DOWNLOAD_TIMEOUT_MS,
   });
   const videoBuffer = Buffer.from(r2Response.data);
 
-  await sock.sendMessage(jid, {
-    video: videoBuffer,
-    caption: caption,
-    mimetype: 'video/mp4',
-  });
+  await withTimeout(
+    sock.sendMessage(jid, {
+      video: videoBuffer,
+      caption: caption,
+      mimetype: 'video/mp4',
+    }),
+    WA_VIDEO_SEND_TIMEOUT_MS,
+    'WhatsApp video send'
+  );
   console.log('Video sent via Baileys! ✓');
 }
 
@@ -605,8 +636,17 @@ async function handleIncomingMessage(from, text) {
     return;
   }
   if (session.status === 'processing') {
-    console.log(`Duplicate webhook for code: ${code} while processing - ignoring!`);
-    return;
+    // Normally a duplicate webhook (WhatsApp re-delivers the same message a few
+    // times); ignore it while a send is genuinely in progress. But if the
+    // attempt has been "in progress" longer than any real send could take, treat
+    // it as wedged and allow this webhook to re-attempt delivery (self-healing
+    // so a stuck send can never permanently block the code).
+    const since = session.processingSince || 0;
+    if (Date.now() - since < PROCESSING_STALE_MS) {
+      console.log(`Duplicate webhook for code: ${code} while processing - ignoring!`);
+      return;
+    }
+    console.log(`Stale processing for code: ${code} (${Math.round((Date.now() - since) / 1000)}s) — re-attempting delivery`);
   }
   if (session.status === 'failed') {
     try {
@@ -621,6 +661,7 @@ async function handleIncomingMessage(from, text) {
   }
 
   session.status = 'processing';
+  session.processingSince = Date.now();
   sessions.set(code, session);
 
   try {
@@ -666,38 +707,42 @@ async function handleIncomingMessage(from, text) {
     console.log(`✓ All sends completed (${((Date.now() - waStartTime) / 1000).toFixed(2)}s)`);
     session.status = 'sent';
   } catch (err) {
-    session.status = 'failed';
+    // Delivery stalled/failed — but the video was ALREADY processed and is
+    // sitting in R2. Do NOT discard it or brick the code: reset to a retryable
+    // state and keep the R2 files so the user can simply resend the same code.
+    // The session's existing expiry timer still bounds how long the files live.
+    session.status = 'pending';
+    session.processingSince = 0;
     sessions.set(code, session);
     console.error('Video send failed:', err.message);
     try {
       await sendWhatsAppMessage(from,
-        'Failed to send your video.' +
-        'Please compress your video again and try with a new code.'
+        'Hit a temporary hiccup sending your video. Please send your code again in a moment to retry. 🎬'
       );
     } catch (messageErr) {
       console.error('Failed send-failure message:', messageErr.message);
     }
-  } finally {
-    for (const file of session.files) {
-      try {
-        await deleteFromR2(file.fileName);
-        console.log(`R2 deleted after send: ${file.fileName}`);
-      } catch (err) {
-        console.error('R2 delete error:', err.message);
-      }
+    return; // keep files + existing expiry timer so the retry can deliver
+  }
+
+  // SUCCESS only — purge the delivered files and any uploaded music/sticker R2
+  // assets (Req 14.2), then schedule session cleanup. (On failure we returned
+  // above WITHOUT deleting, so a resend can still find the files.)
+  for (const file of session.files) {
+    try {
+      await deleteFromR2(file.fileName);
+      console.log(`R2 deleted after send: ${file.fileName}`);
+    } catch (err) {
+      console.error('R2 delete error:', err.message);
     }
-    // Delivery-time cleanup also purges any uploaded Music_Track / Sticker R2
-    // assets associated with the request, within 60s of final delivery (Req
-    // 14.2). These are usually already removed by the request `finally`
-    // cleanup; deletion is idempotent so a re-attempt here is a safe backstop.
-    if (Array.isArray(session.assetKeys)) {
-      for (const assetKey of session.assetKeys) {
-        try {
-          await deleteFromR2(assetKey);
-          console.log(`R2 asset deleted after send: ${assetKey}`);
-        } catch (err) {
-          console.error('R2 asset delete error:', err.message);
-        }
+  }
+  if (Array.isArray(session.assetKeys)) {
+    for (const assetKey of session.assetKeys) {
+      try {
+        await deleteFromR2(assetKey);
+        console.log(`R2 asset deleted after send: ${assetKey}`);
+      } catch (err) {
+        console.error('R2 asset delete error:', err.message);
       }
     }
   }
@@ -716,10 +761,8 @@ async function handleIncomingMessage(from, text) {
   session.expiryTimer = newTimer;
   sessions.set(code, session);
 
-  if (session.status === 'sent') {
-    recentlySentCodes.add(code);
-    setTimeout(() => recentlySentCodes.delete(code), 600000);
-  }
+  recentlySentCodes.add(code);
+  setTimeout(() => recentlySentCodes.delete(code), 600000);
 }
 
 // ========================
