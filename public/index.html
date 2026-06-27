@@ -902,6 +902,52 @@
     })();
   </script>
 
+  <!-- Donation popup (shown on first visit) -->
+  <div id="sdDonateOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);align-items:center;justify-content:center;padding:20px;">
+    <div style="position:relative;max-width:420px;width:100%;background:#111;border:1px solid #1e2a1e;border-radius:18px;padding:32px 24px;text-align:center;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,0.55);">
+      <button id="sdDonateClose" aria-label="Close" style="position:absolute;top:10px;right:12px;background:transparent;border:none;color:#888;font-size:26px;cursor:pointer;line-height:1;">&times;</button>
+      <div style="font-size:42px;margin-bottom:8px;">☕💚</div>
+      <h3 style="margin:0 0 10px;font-size:21px;font-weight:700;">Help keep StatusDrop free</h3>
+      <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#bbb;">
+        This tool is 100% free and runs on a small server that costs about <b style="color:#fff;">$20/month</b>. If it's useful to you, please chip in any amount to keep it online — pay whatever you like. 🙏
+      </p>
+      <a href="https://ko-fi.com/wastatus" target="_blank" rel="noopener" id="sdDonateBtn" style="display:block;background:linear-gradient(90deg,#128C7E,#25D366);color:#fff;font-weight:700;font-size:16px;text-decoration:none;padding:14px;border-radius:12px;margin-bottom:12px;">
+        Donate any amount →
+      </a>
+      <button id="sdDonateLater" style="background:transparent;border:none;color:#777;font-size:13px;cursor:pointer;">Maybe later</button>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var KEY = 'sdDonateLast';
+      var COOLDOWN = 3 * 24 * 60 * 60 * 1000; // show at most once every 3 days
+      function hide() { var o = document.getElementById('sdDonateOverlay'); if (o) o.style.display = 'none'; }
+      function show() {
+        try {
+          var last = parseInt(localStorage.getItem(KEY) || '0', 10);
+          if (Date.now() - last < COOLDOWN) return;
+        } catch (e) {}
+        var o = document.getElementById('sdDonateOverlay');
+        if (!o) return;
+        o.style.display = 'flex';
+        try { localStorage.setItem(KEY, String(Date.now())); } catch (e) {}
+      }
+      function wire() {
+        var o = document.getElementById('sdDonateOverlay');
+        var x = document.getElementById('sdDonateClose');
+        var later = document.getElementById('sdDonateLater');
+        var btn = document.getElementById('sdDonateBtn');
+        if (x) x.addEventListener('click', hide);
+        if (later) later.addEventListener('click', hide);
+        if (btn) btn.addEventListener('click', function () { setTimeout(hide, 300); });
+        if (o) o.addEventListener('click', function (e) { if (e.target === o) hide(); });
+        // Show shortly after the page loads (first visit / once per 3 days).
+        setTimeout(show, 1200);
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
+    })();
+  </script>
+
   <!-- HERO -->
   <div class="hero">
     <div class="logo">
