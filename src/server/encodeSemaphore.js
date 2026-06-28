@@ -130,11 +130,28 @@ class EncodeSemaphore {
 }
 
 /**
- * A process-wide default semaphore sized to the host CPU count. Import this to
- * gate every ffmpeg invocation through a single shared limit.
+ * A process-wide default semaphore. Sized from the `MAX_CONCURRENT_ENCODES`
+ * environment variable when set, otherwise defaults to 1 (one encode at a time).
+ *
+ * Why default to 1: in a constrained/usage-billed container (e.g. Railway Hobby)
+ * `os.cpus().length` reports the HOST's core count, not the container's share,
+ * so a CPU-derived limit would launch far more parallel ffmpeg processes than
+ * the instance can hold — risking an OOM SIGKILL and burning usage credits fast.
+ * Serializing encodes keeps memory low and gives each encode the full CPU (so it
+ * finishes well within the per-encode timeouts). To re-enable parallelism, set
+ * MAX_CONCURRENT_ENCODES=2 (or more).
+ *
  * @type {EncodeSemaphore}
  */
-const defaultEncodeSemaphore = new EncodeSemaphore();
+function resolveDefaultPermits() {
+  const raw = process.env.MAX_CONCURRENT_ENCODES;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+    const n = Math.floor(Number(raw));
+    if (Number.isFinite(n) && n >= 1) return n;
+  }
+  return 1; // safe default for small / usage-billed instances
+}
+const defaultEncodeSemaphore = new EncodeSemaphore(resolveDefaultPermits());
 
 module.exports = {
   EncodeSemaphore,
