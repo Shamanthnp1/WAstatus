@@ -274,9 +274,17 @@ function jidToNumber(jid) {
 // ========================
 // FFMPEG OPTIONS
 // ========================
-function getOutputOptions(duration, inputHeight = 1920, attempt = 0) {
+function getOutputOptions(duration, inputHeight = 1920, attempt = 0, enc = {}) {
   console.log(`✓ getOutputOptions called!`);
-  let vfFilter = 'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  // Encode target — defaults reproduce the exact WhatsApp_Spec 1080×1920 output
+  // (byte-identical to the legacy path). The optional 60s mode overrides these
+  // with a 720×1280 / lower-bitrate profile so a 60s clip still fits under 16MB.
+  const W = enc.width || 1080;
+  const H = enc.height || 1920;
+  const crf = enc.crf != null ? enc.crf : 23;
+  const maxrateK = enc.maxrateK != null ? enc.maxrateK : 3800;
+  const bufsizeK = enc.bufsizeK != null ? enc.bufsizeK : 5700;
+  let vfFilter = `scale=w=${W}:h=${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,scale=trunc(iw/2)*2:trunc(ih/2)*2`;
   const base = [
     '-vf', vfFilter,
     '-c:v', 'libx264',
@@ -285,9 +293,9 @@ function getOutputOptions(duration, inputHeight = 1920, attempt = 0) {
     '-color_primaries', 'bt470bg',
     '-color_trc', 'bt709',
     '-colorspace', 'bt470bg',
-    '-crf', '23',
-    '-maxrate', '3800k',
-    '-bufsize', '5700k',
+    '-crf', String(crf),
+    '-maxrate', maxrateK + 'k',
+    '-bufsize', bufsizeK + 'k',
     '-g', '250',
     '-profile:v', 'high',
     '-level:v', '4.0',
@@ -308,6 +316,12 @@ function getOutputOptions(duration, inputHeight = 1920, attempt = 0) {
   return tightenEncodeOptions(base, attempt);
 }
 
+// Encode profile for the optional "Longer clips — 60s per part" mode: 720×1280
+// at ~2 Mbps. At this bitrate 720p looks cleaner than a starved 1080p, and a
+// ~59s clip lands comfortably under the 16MB WhatsApp limit.
+const LONG_CLIP_ENC = { width: 720, height: 1280, crf: 24, maxrateK: 2200, bufsizeK: 3300 };
+const LONG_CLIP_SECONDS = 59; // safety margin under WhatsApp's ~60s ceiling
+
 // ========================
 // ENCODE EXECUTION (semaphore-gated, with timeouts + size retry)
 // ========================
@@ -317,7 +331,7 @@ function getOutputOptions(duration, inputHeight = 1920, attempt = 0) {
 // mocked ffmpeg, a mock semaphore, and a mock fs (no real encoding / real time).
 // They are imported at the top of this file and used unchanged below.
 
-async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, inputHeight = 1920) {
+async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, inputHeight = 1920, enc = {}) {
   const totalChunks = Math.ceil(duration / chunkDuration);
   console.log(`Splitting into ${totalChunks} chunks of ${chunkDuration}s each`);
 
@@ -342,7 +356,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
           () => ffmpeg(inputPath)
             .setStartTime(startTime)
             .setDuration(chunkDuration)
-            .outputOptions(getOutputOptions(chunkDuration, inputHeight, attempt)),
+            .outputOptions(getOutputOptions(chunkDuration, inputHeight, attempt, enc)),
           chunkPath,
           CHUNK_TIMEOUT_MS,
           `Chunk ${index + 1}`
@@ -361,7 +375,7 @@ async function splitVideo(inputPath, outputDir, duration, chunkDuration = 29, in
   return chunkPaths;
 }
 
-async function compressVideo(inputPath, outputPath, knownDuration, inputHeight = 1920) {
+async function compressVideo(inputPath, outputPath, knownDuration, inputHeight = 1920, enc = {}) {
   const duration = Number.isFinite(knownDuration) ? knownDuration : await getVideoDuration(inputPath);
   let startAttempt = (duration >= 59) ? 1 : 0;
 
@@ -371,7 +385,7 @@ async function compressVideo(inputPath, outputPath, knownDuration, inputHeight =
     // ffmpeg command is unchanged, so skip-path output stays byte-for-byte
     // identical to the no-editor flow (Req 1.2/1.4/1.5).
     await runGatedEncode(
-      () => ffmpeg(inputPath).outputOptions(getOutputOptions(duration, inputHeight, attempt)),
+      () => ffmpeg(inputPath).outputOptions(getOutputOptions(duration, inputHeight, attempt, enc)),
       outputPath,
       FULL_VIDEO_TIMEOUT_MS,
       `compressVideo attempt ${attempt}`
@@ -1111,6 +1125,14 @@ app.post('/api/process', limiter, async (req, res) => {
         })
       );
 
+      // Optional "Longer clips — 60s per part" mode (non-edited path only):
+      // split at ~59s and encode 720×1280 so each part still fits under 16MB.
+      // Default (off) keeps the byte-identical 1080×1920 / ~29s behavior.
+      const longClips = req.body.longClips === true || req.body.longClips === 'true';
+      const skipClipLen = longClips ? LONG_CLIP_SECONDS : 29;
+      const skipEnc = longClips ? LONG_CLIP_ENC : {};
+      if (longClips) console.log('🎚️ Longer-clips mode ON: 720p, ~59s parts');
+
       // ---- Phase B: encode each prepared video through the EncodeSemaphore. ----
       // Skip/legacy plans (filterComplex === '') run the unchanged
       // compressVideo/splitVideo path so output stays byte-for-byte identical to
@@ -1129,11 +1151,11 @@ app.post('/api/process', limiter, async (req, res) => {
 
             // ----- Skip / legacy path (byte-identical) -----
             if (isSkip) {
-              if (duration <= 29) {
+              if (duration <= skipClipLen) {
                 const outputFileName = `compressed_${uuidv4()}.mp4`;
                 const outputPath = path.join('compressed', outputFileName);
                 requestContext.addLocalPath(outputPath);
-                await compressVideo(localInputPath, outputPath, duration, dimensions.height);
+                await compressVideo(localInputPath, outputPath, duration, dimensions.height, skipEnc);
                 const url = await uploadToR2(outputPath, outputFileName);
                 // Output is a delivery artifact — tracked separately so the
                 // request `finally` does NOT purge it before delivery (Req 14.2).
@@ -1141,7 +1163,7 @@ app.post('/api/process', limiter, async (req, res) => {
                 await fs.promises.unlink(outputPath).catch(() => { });
                 return [{ fileName: outputFileName, url }];
               }
-              const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, 29, dimensions.height);
+              const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, skipClipLen, dimensions.height, skipEnc);
               const chunkResults = [];
               for (let i = 0; i < chunkPaths.length; i++) {
                 const chunkPath = chunkPaths[i];

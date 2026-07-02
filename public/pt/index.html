@@ -1129,6 +1129,16 @@
         </div>
       </div>
 
+      <div style="margin-top:16px;background:#141414;border:1px solid #2a2a2a;border-radius:10px;padding:12px 14px;">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin:0;">
+          <input type="checkbox" id="longClipsToggle" style="margin-top:3px;width:16px;height:16px;accent-color:#25D366;flex:none;"/>
+          <span style="font-size:13px;color:#ccc;line-height:1.5;">
+            <b style="color:#fff;">Longer clips — up to 60s per part</b><br/>
+            Fewer parts for long videos, encoded at 720p to fit WhatsApp's 16&nbsp;MB limit. Slightly softer than the default 30s HD parts.
+          </span>
+        </label>
+      </div>
+
       <div style="margin-top:16px">
         <button class="btn btn-primary"
                 id="compressBtn"
@@ -2265,7 +2275,8 @@
           body: JSON.stringify({
             files: allFileInfos,
             recipes: getEditorRecipes(),
-            caption: document.getElementById('captionInput')?.value.trim() || ''
+            caption: document.getElementById('captionInput')?.value.trim() || '',
+            longClips: document.getElementById('longClipsToggle')?.checked || false
           }),
           signal: processController.signal
         });
