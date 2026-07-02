@@ -1151,11 +1151,15 @@ app.post('/api/process', limiter, async (req, res) => {
 
             // ----- Skip / legacy path (byte-identical) -----
             if (isSkip) {
-              if (duration <= skipClipLen) {
+              // Longer-clips mode: ~59s parts at 720p (a <=59s video becomes a
+              // single 720p part). Default: ~29s parts at full 1080p HD.
+              const clipLen = longClips ? LONG_CLIP_SECONDS : 29;
+              const enc = longClips ? LONG_CLIP_ENC : {};
+              if (duration <= clipLen) {
                 const outputFileName = `compressed_${uuidv4()}.mp4`;
                 const outputPath = path.join('compressed', outputFileName);
                 requestContext.addLocalPath(outputPath);
-                await compressVideo(localInputPath, outputPath, duration, dimensions.height, skipEnc);
+                await compressVideo(localInputPath, outputPath, duration, dimensions.height, enc);
                 const url = await uploadToR2(outputPath, outputFileName);
                 // Output is a delivery artifact — tracked separately so the
                 // request `finally` does NOT purge it before delivery (Req 14.2).
@@ -1163,7 +1167,7 @@ app.post('/api/process', limiter, async (req, res) => {
                 await fs.promises.unlink(outputPath).catch(() => { });
                 return [{ fileName: outputFileName, url }];
               }
-              const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, skipClipLen, dimensions.height, skipEnc);
+              const chunkPaths = await splitVideo(localInputPath, 'compressed', duration, clipLen, dimensions.height, enc);
               const chunkResults = [];
               for (let i = 0; i < chunkPaths.length; i++) {
                 const chunkPath = chunkPaths[i];
