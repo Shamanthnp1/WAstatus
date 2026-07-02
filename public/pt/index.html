@@ -1144,7 +1144,7 @@
         .checkbox-wrapper input[type="checkbox"]:checked + label:before { width: 0; height: 0; }
         .checkbox-wrapper input[type="checkbox"]:checked + label .tick_mark:before, .checkbox-wrapper input[type="checkbox"]:checked + label .tick_mark:after { transform: translate(0); opacity: 1; }
       </style>
-      <div style="margin-top:16px;background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:16px;">
+      <div id="longClipsRow" style="margin-top:16px;background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:14px 16px;display:none;align-items:center;gap:16px;">
         <div class="checkbox-wrapper">
           <input type="checkbox" id="longClipsToggle" />
           <label for="longClipsToggle"><span class="tick_mark"></span></label>
@@ -1917,6 +1917,7 @@
       document.getElementById('captionSection').style.display = 'none';
       resetEditor();
       showEditorToggle(false);
+      var _lcHide = document.getElementById('longClipsRow'); if (_lcHide) _lcHide.style.display = 'none';
       return;
     }
 
@@ -1925,6 +1926,7 @@
     document.getElementById('captionSection').style.display = 'block';
     // Surface the optional "Edit videos" toggle (opens the full-screen editor).
     showEditorToggle(true);
+    var _lcShow = document.getElementById('longClipsRow'); if (_lcShow) _lcShow.style.display = 'flex';
 
     container.innerHTML = files.map((file, index) => `
       <div class="file-item">
