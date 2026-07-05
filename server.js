@@ -1366,6 +1366,20 @@ const server = app.listen(PORT, () => {
 Local: http://localhost:${PORT}
 ================================
   `);
+  // One-time WhatsApp re-link: when RESET_BAILEYS=true, wipe the saved session
+  // on boot so Baileys starts fresh and prints a new pairing code / QR for the
+  // number in WHATSAPP_BUSINESS_NUMBER. Do this ONCE at process start (never on
+  // reconnect, which would break an in-progress link). Set RESET_BAILEYS back to
+  // false after linking, or every restart will unlink the bot.
+  if (process.env.RESET_BAILEYS === 'true') {
+    try {
+      fs.rmSync('baileys_auth', { recursive: true, force: true });
+      console.log('🔑 RESET_BAILEYS=true → cleared saved WhatsApp session. A new pairing code / QR will appear below. Set RESET_BAILEYS=false after linking.');
+    } catch (e) {
+      console.error('Failed to clear baileys_auth:', e.message);
+    }
+  }
+
   // Start Baileys after Express is up so QR shows in logs
   startBaileys().catch(err => console.error('Baileys startup failed:', err));
 
