@@ -1373,8 +1373,17 @@ Local: http://localhost:${PORT}
   // false after linking, or every restart will unlink the bot.
   if (process.env.RESET_BAILEYS === 'true') {
     try {
-      fs.rmSync('baileys_auth', { recursive: true, force: true });
-      console.log('🔑 RESET_BAILEYS=true → cleared saved WhatsApp session. A new pairing code / QR will appear below. Set RESET_BAILEYS=false after linking.');
+      // Delete the CONTENTS of baileys_auth, not the folder itself: on Railway
+      // it's a mounted volume, so removing the mount point fails with EBUSY.
+      const dir = 'baileys_auth';
+      let removed = 0;
+      if (fs.existsSync(dir)) {
+        for (const entry of fs.readdirSync(dir)) {
+          fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
+          removed++;
+        }
+      }
+      console.log(`🔑 RESET_BAILEYS=true → cleared ${removed} saved session file(s). A new pairing code / QR will appear below. Set RESET_BAILEYS=false after linking.`);
     } catch (e) {
       console.error('Failed to clear baileys_auth:', e.message);
     }
