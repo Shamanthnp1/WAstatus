@@ -915,7 +915,7 @@
   </div>
   <script>
     (function () {
-      var MAINTENANCE_MODE = true; // ← set to false when the site is back to normal
+      var MAINTENANCE_MODE = false; // ← set to true to show the maintenance notice
       if (!MAINTENANCE_MODE) return;
       window.__sdMaintenancePending = true; // hold the donation popup until dismissed
       function close() {
