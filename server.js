@@ -542,14 +542,8 @@ async function startBaileys() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
-      const { connection, lastDisconnect, qr } = update;
-      if (qr) {
-        console.log('=========================================');
-        console.log('  SCAN THIS QR CODE WITH WHATSAPP BUSINESS');
-        console.log('  (Settings → Linked Devices → Link a Device)');
-        console.log('=========================================');
-        qrcode.generate(qr, { small: true });
-      }
+      const { connection, lastDisconnect } = update;
+      // QR intentionally not printed — we link via pairing code only (below).
       if (connection === 'close') {
         baileysConnected = false;
         const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
@@ -568,24 +562,34 @@ async function startBaileys() {
       }
     });
 
-    // Pairing code (alternative to QR)
+    // Pairing-code linking (no QR). Retries a few times since requestPairingCode
+    // can fail if called before the socket is fully ready.
     if (!sock.authState.creds.registered) {
-      // Wait briefly for the socket to be ready
-      setTimeout(async () => {
-        try {
-          const phoneNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace(/\D/g, '');
-          const code = await sock.requestPairingCode(phoneNumber);
-          const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
-          console.log('\n=========================================');
-          console.log(`  PAIRING CODE: ${formatted}`);
-          console.log('  In WhatsApp: Settings → Linked Devices');
-          console.log('  → Link a Device → "Link with phone number instead"');
-          console.log('  → Enter this code');
-          console.log('=========================================\n');
-        } catch (err) {
-          console.error('Pairing code error:', err.message);
-        }
-      }, 3000);
+      const phoneNumber = (process.env.WHATSAPP_BUSINESS_NUMBER || '').replace(/\D/g, '');
+      if (!phoneNumber) {
+        console.error('!!! Cannot request pairing code: WHATSAPP_BUSINESS_NUMBER is not set (use full international number, e.g. +9198XXXXXXXX).');
+      } else {
+        let attempts = 0;
+        const requestPair = async () => {
+          attempts++;
+          try {
+            const code = await sock.requestPairingCode(phoneNumber);
+            const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+            console.log('\n=========================================');
+            console.log(`  PAIRING CODE: ${formatted}`);
+            console.log(`  For number: +${phoneNumber}`);
+            console.log('  In WhatsApp on that phone:');
+            console.log('  Settings → Linked Devices → Link a Device');
+            console.log('  → "Link with phone number instead" → enter this code');
+            console.log('=========================================\n');
+          } catch (err) {
+            console.error(`Pairing code attempt ${attempts} failed:`, err.message);
+            if (attempts < 4) setTimeout(requestPair, 5000);
+            else console.error('!!! Could not obtain a pairing code after several tries. Verify WHATSAPP_BUSINESS_NUMBER and redeploy.');
+          }
+        };
+        setTimeout(requestPair, 3000);
+      }
     }
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
