@@ -902,6 +902,38 @@
     })();
   </script>
 
+  <!-- Maintenance notice — set MAINTENANCE_MODE=false (below) to turn it off -->
+  <div id="sdMaintOverlay" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.92);align-items:center;justify-content:center;padding:20px;">
+    <div style="position:relative;max-width:430px;width:100%;background:#111;border:1px solid #3a2f1e;border-radius:18px;padding:32px 24px;text-align:center;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+      <div style="font-size:44px;margin-bottom:8px;">🛠️</div>
+      <h3 style="margin:0 0 10px;font-size:21px;font-weight:700;">Under maintenance</h3>
+      <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#c2c2c2;">
+        StatusDrop is temporarily down for maintenance and may not work right now. Please check back in a little while — sorry for the inconvenience! 🙏
+      </p>
+      <button id="sdMaintClose" style="background:linear-gradient(90deg,#128C7E,#25D366);color:#fff;font-weight:700;font-size:15px;border:none;border-radius:12px;padding:12px 24px;cursor:pointer;">Got it</button>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var MAINTENANCE_MODE = true; // ← set to false when the site is back to normal
+      if (!MAINTENANCE_MODE) return;
+      window.__sdMaintenancePending = true; // hold the donation popup until dismissed
+      function close() {
+        var o = document.getElementById('sdMaintOverlay');
+        if (o) o.style.display = 'none';
+        window.__sdMaintenancePending = false;
+        if (typeof window.__sdShowDonate === 'function') setTimeout(window.__sdShowDonate, 400);
+      }
+      function wire() {
+        var o = document.getElementById('sdMaintOverlay');
+        var b = document.getElementById('sdMaintClose');
+        if (b) b.addEventListener('click', close);
+        if (o) o.style.display = 'flex';
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
+    })();
+  </script>
+
   <!-- Donation popup (shown every visit) -->
   <div id="sdDonateOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;padding:20px;">
     <div style="position:relative;max-width:430px;width:100%;background:#111;border:1px solid #1e2a1e;border-radius:18px;padding:32px 24px;text-align:center;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
@@ -953,7 +985,9 @@
         if (later) later.addEventListener('click', hide);
         if (btn) btn.addEventListener('click', function () { setTimeout(forceHide, 300); });
         if (o) o.addEventListener('click', function (e) { if (e.target === o) hide(); });
-        setTimeout(show, 1200); // show on every visit
+        window.__sdShowDonate = show;
+        // Show on every visit — unless a maintenance notice is up first.
+        setTimeout(function () { if (!window.__sdMaintenancePending) show(); }, 1200);
       }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
     })();
