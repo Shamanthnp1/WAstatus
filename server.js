@@ -271,6 +271,20 @@ function jidToNumber(jid) {
   return jid.split('@')[0];
 }
 
+// Incoming messages older than this (seconds) are treated as replays from a
+// reconnect/relink history sync, not live requests, and are ignored. A real
+// user sends their code within seconds of receiving it, so this window is safe.
+const STALE_MESSAGE_SECONDS = 90;
+
+// Normalize Baileys' messageTimestamp (number | Long | string) to seconds.
+function messageTimestampSeconds(ts) {
+  if (ts == null) return 0;
+  if (typeof ts === 'number') return ts;
+  if (typeof ts.toNumber === 'function') { try { return ts.toNumber(); } catch (_) { return 0; } }
+  const n = Number(ts);
+  return Number.isFinite(n) ? n : 0;
+}
+
 // ========================
 // FFMPEG OPTIONS
 // ========================
