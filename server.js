@@ -535,6 +535,7 @@ async function sweepOrphanR2Objects() {
 let sock = null;
 let baileysConnected = false;
 let reconnecting = false;
+let reconnectAttempts = 0; // drives exponential backoff so a 403 loop doesn't hammer WhatsApp
 
 async function startBaileys() {
   if (reconnecting) return;
@@ -565,13 +566,20 @@ async function startBaileys() {
         console.log(`Baileys closed (code ${code}). Reconnect: ${shouldReconnect}`);
         reconnecting = false;
         if (shouldReconnect) {
-          setTimeout(() => startBaileys().catch(e => console.error('Reconnect failed:', e)), 3000);
+          // Exponential backoff with jitter (3s → 6s → 12s … capped 60s) so a
+          // repeated 403/close loop doesn't hammer WhatsApp, which itself looks
+          // abusive and worsens flagging.
+          reconnectAttempts += 1;
+          const delay = Math.min(60000, 3000 * Math.pow(2, reconnectAttempts - 1)) + randBetween(0, 2000);
+          console.log(`Reconnecting in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts})`);
+          setTimeout(() => startBaileys().catch(e => console.error('Reconnect failed:', e)), delay);
         } else {
-          console.error('!!! Baileys logged out — delete /app/baileys_auth and re-scan QR');
+          console.error('!!! Baileys logged out — set RESET_BAILEYS=true and redeploy to re-link.');
         }
       } else if (connection === 'open') {
         baileysConnected = true;
         reconnecting = false;
+        reconnectAttempts = 0; // healthy connection — reset backoff
         console.log('✓ Baileys connected to WhatsApp');
       }
     });
@@ -652,9 +660,34 @@ const WA_MESSAGE_TIMEOUT_MS = 30000;   // text message send
 const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> buffer download
 const WA_VIDEO_SEND_TIMEOUT_MS = 180000; // Baileys video upload+send
 
+// ---- Anti-ban humanization -------------------------------------------------
+// WhatsApp's bot-detection flags accounts that reply instantly, never "type",
+// and send in tight bursts. These helpers make the bot behave more like a
+// person: a "typing…"/"recording…" presence + a jittered delay before each
+// send, and a minimum gap between any two outbound messages. Purely additive —
+// they slow sends slightly, they don't change what is sent or the delivery flow.
+const MIN_SEND_GAP_MS = 800; // minimum spacing between any two outbound sends
+let lastOutboundAt = 0;
+function randBetween(min, max) { return Math.floor(min + Math.random() * (max - min + 1)); }
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+async function paceOutbound() {
+  const wait = Math.max(0, lastOutboundAt + MIN_SEND_GAP_MS - Date.now());
+  if (wait > 0) await sleep(wait);
+  lastOutboundAt = Date.now();
+}
+// Show a presence (composing/recording) for a human-plausible duration, then pause.
+async function showPresence(jid, kind, ms) {
+  try { await sock.sendPresenceUpdate(kind, jid); } catch (_) {}
+  await sleep(ms);
+  try { await sock.sendPresenceUpdate('paused', jid); } catch (_) {}
+}
+
 async function sendWhatsAppMessage(to, message) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
+  await paceOutbound();
+  // "typing…" for ~1–5s scaled to message length, with jitter.
+  await showPresence(jid, 'composing', Math.min(5000, 1000 + (message ? message.length : 0) * 20) + randBetween(0, 1000));
   await withTimeout(sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
 }
 
@@ -672,6 +705,9 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
   });
   const videoBuffer = Buffer.from(r2Response.data);
 
+  await paceOutbound();
+  // "recording…"/uploading presence for ~1.5–3s before the media send.
+  await showPresence(jid, 'recording', randBetween(1500, 3000));
   await withTimeout(
     sock.sendMessage(jid, {
       video: videoBuffer,
