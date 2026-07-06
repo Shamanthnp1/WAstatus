@@ -26,7 +26,6 @@
     "@napi-rs/canvas": "^1.0.0",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
     "axios": "^1.13.6",
-    "baileys-antiban": "4.10.0",
     "bootstrap-icons": "^1.13.1",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
