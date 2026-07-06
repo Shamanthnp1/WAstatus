@@ -21,6 +21,11 @@ const {
   Browsers,
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
+// Anti-ban middleware (human-like pacing, health monitor, session stability).
+// Loaded defensively so a load failure never takes the bot down.
+let wrapSocket = null;
+try { ({ wrapSocket } = require('baileys-antiban')); }
+catch (e) { console.error('baileys-antiban not available, continuing without it:', e.message); }
 const { enforceInputLimits } = require('./src/server/inputLimits');
 const { routeRecipes, collectAvailableAssets } = require('./src/server/processRouting');
 const { planRecipeAssets, markLoopingImageInputs } = require('./src/server/assetResolver');
@@ -544,7 +549,7 @@ async function startBaileys() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
 
-    sock = makeWASocket({
+    const rawSock = makeWASocket({
       auth: state,
       logger: pino({ level: 'silent' }),
       browser: Browsers.appropriate('Chrome'),
@@ -554,9 +559,40 @@ async function startBaileys() {
       printQRInTerminal: false,  // 🆕 disable QR
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    // Wrap with baileys-antiban for human-like pacing, health monitoring and
+    // session stability. Config is tuned for a TRANSACTIONAL bot so its blocking
+    // features can never silently drop a delivery:
+    //  - maxIdenticalMessages huge: our "Code verified" text is intentionally
+    //    identical for every user; the default would block it after a few.
+    //  - warmupDays 0: this is an established number, not a fresh one to ramp.
+    //  - autoPauseAt 'critical': only stop sending when a ban is imminent
+    //    (protecting the number matters more than one delivery at that point).
+    // If wrapping fails for any reason, fall back to the raw socket so the bot
+    // always keeps working.
+    if (typeof wrapSocket === 'function') {
+      try {
+        sock = wrapSocket(rawSock, {
+          preset: 'moderate',
+          maxIdenticalMessages: 1000000,
+          warmupDays: 0,
+          autoPauseAt: 'critical',
+          logging: false,
+        });
+        console.log('🛡️ baileys-antiban active (human-like pacing + health monitor)');
+      } catch (e) {
+        console.error('baileys-antiban wrap failed, using raw socket:', e.message);
+        sock = rawSock;
+      }
+    } else {
+      sock = rawSock;
+    }
 
-    sock.ev.on('connection.update', (update) => {
+    // Low-level protocol (events, auth, pairing) is bound to the RAW socket —
+    // the antiban wrapper only needs to intercept outbound sends, and may not
+    // proxy these internals. Outbound sends use the wrapped `sock`.
+    rawSock.ev.on('creds.update', saveCreds);
+
+    rawSock.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect } = update;
       // QR intentionally not printed — we link via pairing code only (below).
       if (connection === 'close') {
@@ -586,7 +622,7 @@ async function startBaileys() {
 
     // Pairing-code linking (no QR). Retries a few times since requestPairingCode
     // can fail if called before the socket is fully ready.
-    if (!sock.authState.creds.registered) {
+    if (!rawSock.authState.creds.registered) {
       const phoneNumber = (process.env.WHATSAPP_BUSINESS_NUMBER || '').replace(/\D/g, '');
       if (!phoneNumber) {
         console.error('!!! Cannot request pairing code: WHATSAPP_BUSINESS_NUMBER is not set (use full international number, e.g. +9198XXXXXXXX).');
@@ -595,7 +631,7 @@ async function startBaileys() {
         const requestPair = async () => {
           attempts++;
           try {
-            const code = await sock.requestPairingCode(phoneNumber);
+            const code = await rawSock.requestPairingCode(phoneNumber);
             const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
             console.log('\n=========================================');
             console.log(`  PAIRING CODE: ${formatted}`);
@@ -614,7 +650,7 @@ async function startBaileys() {
       }
     }
 
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    rawSock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
         if (!msg.message || msg.key.fromMe) continue;
@@ -661,21 +697,12 @@ const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> buffer download
 const WA_VIDEO_SEND_TIMEOUT_MS = 180000; // Baileys video upload+send
 
 // ---- Anti-ban humanization -------------------------------------------------
-// WhatsApp's bot-detection flags accounts that reply instantly, never "type",
-// and send in tight bursts. These helpers make the bot behave more like a
-// person: a "typing…"/"recording…" presence + a jittered delay before each
-// send, and a minimum gap between any two outbound messages. Purely additive —
-// they slow sends slightly, they don't change what is sent or the delivery flow.
-const MIN_SEND_GAP_MS = 800; // minimum spacing between any two outbound sends
-let lastOutboundAt = 0;
+// Rate-limiting / pacing is handled by the baileys-antiban wrapper on the
+// socket. Here we only add a "typing…"/"recording…" presence before each send
+// as a guaranteed human signal (additive; never changes what is sent). Jitter
+// helper is also used by the reconnect backoff.
 function randBetween(min, max) { return Math.floor(min + Math.random() * (max - min + 1)); }
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-async function paceOutbound() {
-  const wait = Math.max(0, lastOutboundAt + MIN_SEND_GAP_MS - Date.now());
-  if (wait > 0) await sleep(wait);
-  lastOutboundAt = Date.now();
-}
-// Show a presence (composing/recording) for a human-plausible duration, then pause.
 async function showPresence(jid, kind, ms) {
   try { await sock.sendPresenceUpdate(kind, jid); } catch (_) {}
   await sleep(ms);
@@ -685,7 +712,6 @@ async function showPresence(jid, kind, ms) {
 async function sendWhatsAppMessage(to, message) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
-  await paceOutbound();
   // "typing…" for ~1–5s scaled to message length, with jitter.
   await showPresence(jid, 'composing', Math.min(5000, 1000 + (message ? message.length : 0) * 20) + randBetween(0, 1000));
   await withTimeout(sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
@@ -705,7 +731,6 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
   });
   const videoBuffer = Buffer.from(r2Response.data);
 
-  await paceOutbound();
   // "recording…"/uploading presence for ~1.5–3s before the media send.
   await showPresence(jid, 'recording', randBetween(1500, 3000));
   await withTimeout(
