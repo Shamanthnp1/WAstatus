@@ -914,7 +914,7 @@
   </div>
   <script>
     (function () {
-      var MAINTENANCE_MODE = true; // ← set to false when the site is back in service
+      var MAINTENANCE_MODE = false; // ← set to true to show the out-of-service screen
       if (!MAINTENANCE_MODE) return;
       window.__sdMaintenancePending = true; // hold the donation popup until dismissed
       function close() {
