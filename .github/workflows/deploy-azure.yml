@@ -1,0 +1,52 @@
+name: Build & deploy to Azure (GHCR)
+
+# Builds the Docker image on every push to main and publishes it to the GitHub
+# Container Registry (GHCR). Azure App Service pulls this image. When the Azure
+# continuous-deployment webhook is added as the AZURE_WEBHOOK repo secret, the
+# final step pings it so App Service re-pulls the new image automatically.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  # GHCR image name must be lowercase.
+  IMAGE: ghcr.io/shamanthnp1/wastatus
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Trigger Azure App Service to pull the new image
+        env:
+          AZURE_WEBHOOK: ${{ secrets.AZURE_WEBHOOK }}
+        run: |
+          if [ -n "$AZURE_WEBHOOK" ]; then
+            echo "Pinging Azure CD webhook…"
+            curl -s -X POST "$AZURE_WEBHOOK" || true
+          else
+            echo "AZURE_WEBHOOK secret not set yet — skipping (App Service will pull on next manual restart)."
+          fi
