@@ -580,7 +580,9 @@ async function startBaileys() {
           // repeated 403/close loop doesn't hammer WhatsApp, which itself looks
           // abusive and worsens flagging.
           reconnectAttempts += 1;
-          const delay = Math.min(60000, 3000 * Math.pow(2, reconnectAttempts - 1)) + randBetween(0, 2000);
+          // Fast recovery for transient drops; mild backoff only if it keeps
+          // failing, capped low (15s) so the bot never stays offline long.
+          const delay = Math.min(15000, 3000 * reconnectAttempts) + randBetween(0, 1500);
           console.log(`Reconnecting in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts})`);
           setTimeout(() => startBaileys().catch(e => console.error('Reconnect failed:', e)), delay);
         } else {
@@ -670,34 +672,15 @@ const WA_MESSAGE_TIMEOUT_MS = 30000;   // text message send
 const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> buffer download
 const WA_VIDEO_SEND_TIMEOUT_MS = 180000; // Baileys video upload+send
 
-// ---- Anti-ban humanization (native) ----------------------------------------
-// WhatsApp flags accounts that reply instantly, never "type", and burst-send.
-// These helpers make the bot behave like a person: a "typing…"/"recording…"
-// presence + jittered delay before each send, and a minimum gap between any two
-// outbound messages. Purely additive — they slow sends slightly, never change
-// what is sent or the delivery flow. (randBetween also feeds the reconnect
-// backoff.)
-const MIN_SEND_GAP_MS = 800; // minimum spacing between any two outbound sends
-let lastOutboundAt = 0;
+// Small jitter helper (used by the reconnect backoff). Note: the earlier
+// "human typing + paced send" delays were removed — they added latency for
+// little benefit on a low-volume reactive bot, and delivery speed/reliability
+// matters more. Sends now go out immediately.
 function randBetween(min, max) { return Math.floor(min + Math.random() * (max - min + 1)); }
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-async function paceOutbound() {
-  const wait = Math.max(0, lastOutboundAt + MIN_SEND_GAP_MS - Date.now());
-  if (wait > 0) await sleep(wait);
-  lastOutboundAt = Date.now();
-}
-async function showPresence(jid, kind, ms) {
-  try { await sock.sendPresenceUpdate(kind, jid); } catch (_) {}
-  await sleep(ms);
-  try { await sock.sendPresenceUpdate('paused', jid); } catch (_) {}
-}
 
 async function sendWhatsAppMessage(to, message) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
-  await paceOutbound();
-  // "typing…" for ~1–5s scaled to message length, with jitter.
-  await showPresence(jid, 'composing', Math.min(5000, 1000 + (message ? message.length : 0) * 20) + randBetween(0, 1000));
   await withTimeout(sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
 }
 
@@ -715,9 +698,6 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
   });
   const videoBuffer = Buffer.from(r2Response.data);
 
-  await paceOutbound();
-  // "recording…"/uploading presence for ~1.5–3s before the media send.
-  await showPresence(jid, 'recording', randBetween(1500, 3000));
   await withTimeout(
     sock.sendMessage(jid, {
       video: videoBuffer,
