@@ -536,13 +536,17 @@ let sock = null;
 let baileysConnected = false;
 let reconnecting = false;
 let reconnectAttempts = 0; // drives exponential backoff so a 403 loop doesn't hammer WhatsApp
+// Where the Baileys session is stored. Configurable so it can point at a mounted
+// persistent volume on any host (Railway volume, Azure Files, etc.). Default keeps
+// the current relative folder so existing deployments are unaffected.
+const BAILEYS_AUTH_DIR = process.env.BAILEYS_AUTH_DIR || 'baileys_auth';
 
 async function startBaileys() {
   if (reconnecting) return;
   reconnecting = true;
 
   try {
-    const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
+    const { state, saveCreds } = await useMultiFileAuthState(BAILEYS_AUTH_DIR);
 
     const rawSock = makeWASocket({
       auth: state,
@@ -1417,9 +1421,9 @@ Local: http://localhost:${PORT}
   // false after linking, or every restart will unlink the bot.
   if (process.env.RESET_BAILEYS === 'true') {
     try {
-      // Delete the CONTENTS of baileys_auth, not the folder itself: on Railway
-      // it's a mounted volume, so removing the mount point fails with EBUSY.
-      const dir = 'baileys_auth';
+      // Delete the CONTENTS of the auth dir, not the folder itself: on a mounted
+      // volume, removing the mount point fails with EBUSY.
+      const dir = BAILEYS_AUTH_DIR;
       let removed = 0;
       if (fs.existsSync(dir)) {
         for (const entry of fs.readdirSync(dir)) {
