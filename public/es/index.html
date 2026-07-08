@@ -884,7 +884,7 @@
 
   <!-- Feedback / support banner -->
   <div id="sdFeedbackBar" style="display:flex;align-items:center;justify-content:center;gap:8px;position:relative;background:linear-gradient(90deg,#128C7E,#25D366);color:#fff;font-size:13px;line-height:1.45;padding:10px 38px 10px 16px;text-align:center;">
-    <span>👋 Heads up: processing may be a bit slow right now. Facing an issue or have feedback? <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline;">DM me on Instagram</a></span>
+    <span>👋 Facing an issue or have feedback? <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline;">DM me on Instagram</a> &nbsp;·&nbsp; Love StatusDrop? <a href="https://ko-fi.com/wastatus" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline;">Support the server ☕</a></span>
     <button id="sdFeedbackClose" aria-label="Dismiss" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
   </div>
   <script>
@@ -933,62 +933,11 @@
     })();
   </script>
 
-  <!-- Donation popup (shown every visit) -->
-  <div id="sdDonateOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;padding:20px;">
-    <div style="position:relative;max-width:430px;width:100%;background:#111;border:1px solid #1e2a1e;border-radius:18px;padding:32px 24px;text-align:center;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
-      <button id="sdDonateClose" aria-label="Close" style="display:none;position:absolute;top:10px;right:12px;background:transparent;border:none;color:#888;font-size:26px;cursor:pointer;line-height:1;">&times;</button>
-      <div style="font-size:42px;margin-bottom:8px;">☕💚</div>
-      <h3 style="margin:0 0 10px;font-size:22px;font-weight:700;">Keep StatusDrop alive 🙏</h3>
-      <p style="margin:0 0 20px;font-size:14px;line-height:1.65;color:#c2c2c2;">
-        You just got HD videos for WhatsApp — <b style="color:#fff;">free, no ads, no watermark, no sign-up.</b> I pay for the server out of my own pocket (about <b style="color:#fff;">$20/month</b>), and right now it's just me keeping this running for everyone. If StatusDrop saved you time, even the price of a coffee helps it stay online. Give whatever feels right — it truly makes a difference. 💚
-      </p>
-      <a href="https://ko-fi.com/wastatus" target="_blank" rel="noopener" id="sdDonateBtn" style="display:block;background:linear-gradient(90deg,#128C7E,#25D366);color:#fff;font-weight:700;font-size:16px;text-decoration:none;padding:14px;border-radius:12px;margin-bottom:14px;">
-        Donate any amount →
-      </a>
-      <div id="sdDonateNote" style="color:#666;font-size:12px;">You can skip in 5s</div>
-      <button id="sdDonateLater" style="display:none;background:transparent;border:none;color:#777;font-size:13px;cursor:pointer;">Maybe later</button>
-    </div>
-  </div>
+  <!-- Donation popup removed — donation now lives in the top feedback banner -->
   <script>
     (function () {
-      var dismissable = false;
-      function el(id) { return document.getElementById(id); }
-      function forceHide() { var o = el('sdDonateOverlay'); if (o) o.style.display = 'none'; }
-      function hide() { if (dismissable) forceHide(); }
-      function startSkipTimer() {
-        dismissable = false;
-        var x = el('sdDonateClose'), later = el('sdDonateLater'), note = el('sdDonateNote');
-        if (x) x.style.display = 'none';
-        if (later) later.style.display = 'none';
-        var n = 5;
-        if (note) { note.style.display = 'block'; note.textContent = 'You can skip in ' + n + 's'; }
-        var iv = setInterval(function () {
-          n--;
-          if (n > 0) { if (note) note.textContent = 'You can skip in ' + n + 's'; return; }
-          clearInterval(iv);
-          dismissable = true;
-          if (note) note.style.display = 'none';
-          if (x) x.style.display = '';
-          if (later) later.style.display = '';
-        }, 1000);
-      }
-      function show() {
-        var o = el('sdDonateOverlay');
-        if (!o) return;
-        o.style.display = 'flex';
-        startSkipTimer();
-      }
-      function wire() {
-        var o = el('sdDonateOverlay'), x = el('sdDonateClose'), later = el('sdDonateLater'), btn = el('sdDonateBtn');
-        if (x) x.addEventListener('click', hide);
-        if (later) later.addEventListener('click', hide);
-        if (btn) btn.addEventListener('click', function () { setTimeout(forceHide, 300); });
-        if (o) o.addEventListener('click', function (e) { if (e.target === o) hide(); });
-        window.__sdShowDonate = show;
-        // Show on every visit — unless a maintenance notice is up first.
-        setTimeout(function () { if (!window.__sdMaintenancePending) show(); }, 1200);
-      }
-      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
+      // Legacy no-op: the donation popup was replaced by the top banner link.
+      window.__sdShowDonate = function () {};
     })();
   </script>
 
