@@ -676,21 +676,55 @@ const WA_MESSAGE_TIMEOUT_MS = 30000;   // text message send
 const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> buffer download
 const WA_VIDEO_SEND_TIMEOUT_MS = 180000; // Baileys video upload+send
 
-// Small jitter helper (used by the reconnect backoff). Note: the earlier
-// "human typing + paced send" delays were removed — they added latency for
-// little benefit on a low-volume reactive bot, and delivery speed/reliability
-// matters more. Sends now go out immediately.
+// Jitter + human-pacing helpers.
+//
+// randBetween  : uniform integer in [min,max] (used by the reconnect backoff).
+// gaussianDelay: normally-distributed delay that CLUSTERS around `mean` (via the
+//                Box–Muller transform), clamped to [min,max]. Real human timing
+//                is bell-shaped, not flat — a fixed or uniform gap is easy for
+//                WhatsApp to fingerprint as a bot, a Gaussian one is not.
+// humanPause   : before a send, show typing/recording presence, hold for a
+//                Gaussian pause (~6s), then clear it — mimicking a person
+//                composing a reply. Best-effort: presence errors never block the
+//                real send. Set HUMANIZE_SENDS=false to disable if you need raw speed.
 function randBetween(min, max) { return Math.floor(min + Math.random() * (max - min + 1)); }
+
+function gaussianDelay(mean, stddev, min, max) {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  return Math.round(Math.min(max, Math.max(min, mean + z * stddev)));
+}
+
+const HUMANIZE_SENDS = process.env.HUMANIZE_SENDS !== 'false'; // on by default
+
+async function humanPause(jid, kind = 'text') {
+  if (!HUMANIZE_SENDS) return;
+  const presence = kind === 'video' ? 'recording' : 'composing';
+  try {
+    await sock.sendPresenceUpdate('available', jid);
+    await sock.sendPresenceUpdate(presence, jid);
+  } catch (e) { /* presence is best-effort — never block the actual send */ }
+  // Cluster around ~6s: most pauses land ~4–8s, hard-capped to 2.5–11s.
+  await new Promise(r => setTimeout(r, gaussianDelay(6000, 1500, 2500, 11000)));
+  try { await sock.sendPresenceUpdate('paused', jid); } catch (e) { /* ignore */ }
+}
 
 async function sendWhatsAppMessage(to, message) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
+  await humanPause(jid, 'text');
   await withTimeout(sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
 }
 
 async function sendWhatsAppVideo(to, videoUrl, caption) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
+
+  // Human pacing: show "recording" presence and hold a Gaussian pause before
+  // sending (the R2 download below also runs during this window).
+  await humanPause(jid, 'video');
 
   // Download from R2 into a buffer (bounded by a timeout so a stalled fetch
   // can't hang the whole delivery).
@@ -827,9 +861,7 @@ async function handleIncomingMessage(from, text) {
       await sendWhatsAppVideo(from, file.url, videoCaption);
 
       console.log(`✓ Video ${i + 1}/${session.files.length} sent (${((Date.now() - videoSendStart) / 1000).toFixed(2)}s)`);
-      if (i < session.files.length - 1) {
-        await new Promise(r => setTimeout(r, 1500));
-      }
+      // Spacing between parts is handled by humanPause() before each send.
     }
     console.log(`✓ All sends completed (${((Date.now() - waStartTime) / 1000).toFixed(2)}s)`);
     session.status = 'sent';

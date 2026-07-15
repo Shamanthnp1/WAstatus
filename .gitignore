@@ -49,3 +49,11 @@ super stickers/
 
 # Kiro spec/workspace files (local only)
 .kiro/
+
+# ---- Local-only scratch / reference material (never commit) ----
+# Decompiled third-party app (competitor APK) — proprietary, do not commit
+decompiled/
+# Chat screenshots / notes shared for reference
+some images/
+# Temp diagnostic scripts
+_*.ps1
