@@ -541,6 +541,40 @@ let reconnectAttempts = 0; // drives exponential backoff so a 403 loop doesn't h
 // the current relative folder so existing deployments are unaffected.
 const BAILEYS_AUTH_DIR = process.env.BAILEYS_AUTH_DIR || 'baileys_auth';
 
+// Device footprint = the client type WhatsApp shows for the linked device. We
+// persist a randomly chosen footprint alongside the auth so it stays consistent
+// across reconnects of the SAME session — but a RESET_BAILEYS re-link (which
+// wipes the auth dir) regenerates a NEW random one. So each fresh link presents
+// as a different device type, not a repeat of the previously flagged one.
+// (Baileys already regenerates the Signal identity keys on re-link, so a re-link
+// is cryptographically a new device regardless; this just varies the visible
+// device type to match.)
+const DEVICE_FOOTPRINT_POOL = [
+  Browsers.macOS('Desktop'),
+  Browsers.windows('Desktop'),
+  Browsers.macOS('Chrome'),
+  Browsers.windows('Chrome'),
+  Browsers.ubuntu('Chrome'),
+  Browsers.macOS('Safari'),
+  Browsers.windows('Edge'),
+];
+
+function getOrCreateDeviceFootprint(dir) {
+  const file = path.join(dir, 'device-footprint.json');
+  try {
+    if (fs.existsSync(file)) {
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (Array.isArray(saved) && saved.length === 3) return saved;
+    }
+  } catch (e) { /* fall through and pick a fresh one */ }
+  const choice = DEVICE_FOOTPRINT_POOL[Math.floor(Math.random() * DEVICE_FOOTPRINT_POOL.length)];
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(choice));
+  } catch (e) { /* non-fatal — footprint just won't persist across restarts */ }
+  return choice;
+}
+
 async function startBaileys() {
   if (reconnecting) return;
   reconnecting = true;
@@ -551,11 +585,10 @@ async function startBaileys() {
     const rawSock = makeWASocket({
       auth: state,
       logger: pino({ level: 'silent' }),
-      // Present as the common WhatsApp Desktop (macOS) client rather than a
-      // generic/custom string, so the linked device blends in with the millions
-      // of real desktop sessions. Kept fixed so the fingerprint is consistent
-      // across reconnects (a footprint that changes every reconnect looks worse).
-      browser: Browsers.macOS('Desktop'),
+      // Random-but-persisted device footprint: consistent across reconnects of
+      // this session, but a fresh RESET_BAILEYS re-link picks a new one so the
+      // new device doesn't look like the previously flagged one.
+      browser: getOrCreateDeviceFootprint(BAILEYS_AUTH_DIR),
       syncFullHistory: false,
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: false,
