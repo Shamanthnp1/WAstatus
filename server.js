@@ -551,7 +551,11 @@ async function startBaileys() {
     const rawSock = makeWASocket({
       auth: state,
       logger: pino({ level: 'silent' }),
-      browser: Browsers.appropriate('Chrome'),
+      // Present as the common WhatsApp Desktop (macOS) client rather than a
+      // generic/custom string, so the linked device blends in with the millions
+      // of real desktop sessions. Kept fixed so the fingerprint is consistent
+      // across reconnects (a footprint that changes every reconnect looks worse).
+      browser: Browsers.macOS('Desktop'),
       syncFullHistory: false,
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: false,
@@ -711,6 +715,68 @@ async function humanPause(jid, kind = 'text') {
   try { await sock.sendPresenceUpdate('paused', jid); } catch (e) { /* ignore */ }
 }
 
+// ========================
+// MESSAGE VARIATION (anti-fingerprint)
+// Hundreds of chats using the *identical* inbound/outbound text is a strong
+// "automated broadcast service" signal. Rotating the phrasing makes each
+// conversation look a little different. The inbound code is still parsed by the
+// 9-char token fallback regex regardless of the words around it.
+// ========================
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// Prefilled text for the wa.me link the user taps to message the bot. Each
+// keeps the 9-char code as a standalone token so handleIncomingMessage still
+// parses it.
+const INBOUND_CODE_TEMPLATES = [
+  c => `Hi, my code is ${c}`,
+  c => `Here's my code: ${c}`,
+  c => `Code ${c} please`,
+  c => `Hey! My status code ${c}`,
+  c => `My code: ${c}`,
+  c => `Requesting my video — code ${c}`,
+  c => `Activation code ${c}`,
+];
+function buildInboundText(code) { return pick(INBOUND_CODE_TEMPLATES)(code); }
+
+// The posting instructions are important, so they stay constant; only the
+// surrounding phrasing rotates.
+const HD_STEPS =
+  '📱 *How to post as HD Status:*\n' +
+  '1. Tap & hold the video\n' +
+  '2. Tap "Forward"\n' +
+  '3. Select "My Status"\n' +
+  '4. Post directly — done!\n\n' +
+  '⚠️ *Important:* Do NOT edit or trim the video before posting — any editing re-compresses it and drops the quality. Just forward it as-is for full HD!';
+
+function buildVerifiedMessage(count) {
+  const multi = count > 1;
+  const openers = [
+    '✓ Code verified!',
+    '✅ Got it — code confirmed!',
+    'Perfect, your code checks out! ✓',
+    'Verified! ✅',
+  ];
+  const closers = [
+    'Please wait a moment! 🎬',
+    'Sending them your way now… 🎬',
+    'Hang tight, coming right up! 🎬',
+    'One moment please! 🎬',
+  ];
+  return (
+    pick(openers) + '\n\n' +
+    `Sending ${count} video${multi ? 's' : ''} now...\n\n` +
+    (multi ? `📱 Your video was split into ${count} parts for WhatsApp Status!\n\n` : '') +
+    HD_STEPS + '\n\n' +
+    pick(closers)
+  );
+}
+
+const WELCOME_MESSAGES = [
+  '👋 Welcome to StatusDrop! Visit our website to compress and receive your HD videos! 🌐 https://wastatusvideo.com',
+  'Hey there! 👋 To get HD videos for your status, head to https://wastatusvideo.com and compress your clip first.',
+  'Hi! 👋 StatusDrop makes HD WhatsApp statuses — start at https://wastatusvideo.com 🌐',
+];
+
 async function sendWhatsAppMessage(to, message) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
@@ -760,11 +826,7 @@ async function handleIncomingMessage(from, text) {
 
   if (!codeMatch) {
     try {
-      await sendWhatsAppMessage(from,
-        '👋 Welcome to StatusDrop!' +
-        'Please visit our website to compress and receive your HD videos!' +
-        '🌐 https://wastatusvideo.com'
-      );
+      await sendWhatsAppMessage(from, pick(WELCOME_MESSAGES));
     } catch (err) {
       console.error('Failed welcome message:', err.message);
     }
@@ -826,19 +888,7 @@ async function handleIncomingMessage(from, text) {
   sessions.set(code, session);
 
   try {
-    const isMultiple = session.files.length > 1;
-    await sendWhatsAppMessage(from,
-      '✓ Code verified!\n\n' +
-      `Sending ${session.files.length} video${isMultiple ? 's' : ''} now...\n\n` +
-      (isMultiple ? `📱 Your video was split into ${session.files.length} parts for WhatsApp Status!\n\n` : '') +
-      '📱 *How to post as HD Status:*\n' +
-      '1. Tap & hold the video\n' +
-      '2. Tap "Forward"\n' +
-      '3. Select "My Status"\n' +
-      '4. Post directly — done!\n\n' +
-      '⚠️ *Important:* Do NOT edit or trim the video in WhatsApp before posting. Any editing will re-compress it and reduce quality. Just forward it as-is for full HD!\n\n' +
-      'Please wait a moment! 🎬'
-    );
+    await sendWhatsAppMessage(from, buildVerifiedMessage(session.files.length));
   } catch (err) {
     console.error('Failed code verified message:', err.message);
   }
@@ -1354,7 +1404,8 @@ app.post('/api/process', limiter, async (req, res) => {
       deliveryHandedOff = true;
 
       const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
-      const waLink = `https://wa.me/${cleanNumber}?text=Activation%20Code%3A%20${activationCode}`;
+      const waText = buildInboundText(activationCode);
+      const waLink = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(waText)}`;
       res.json({ success: true, activationCode, waLink, fileCount: r2Files.length });
 
     } catch (processingError) {
