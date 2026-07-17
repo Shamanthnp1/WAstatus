@@ -766,14 +766,19 @@ function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 // Prefilled text for the wa.me link the user taps to message the bot. Each
 // keeps the 9-char code as a standalone token so handleIncomingMessage still
 // parses it.
+// The code is embedded as a natural "order/reference" token. We deliberately
+// avoid the word "code" so the message reads like an ordinary customer request.
+// Parsing still works: codes are UPPERCASE A-Z0-9, and the parser's third
+// pattern is a CASE-SENSITIVE 9-char token match, so it picks out the token
+// without matching ordinary lowercase words around it.
 const INBOUND_CODE_TEMPLATES = [
-  c => `Hey! I just made a video on StatusDrop and I'd love the HD version — my code is ${c} 🙏`,
-  c => `Hi there, could you send me my compressed video please? My code is ${c} 😊`,
-  c => `Hello! Just finished editing on StatusDrop, my code is ${c} — please send it over.`,
-  c => `Hi, I'd like to get my HD status video. My code is ${c}, thank you!`,
-  c => `Hey, can you send my video in HD? My code is ${c} 🎬`,
-  c => `Just made my status on StatusDrop — my code is ${c}, please send it my way!`,
-  c => `Hi! Requesting my HD video, my code is ${c}. Appreciate it 🙏`,
+  c => `Hey! Just made my video on StatusDrop — order no. ${c}. Could you send the HD version? 🙏`,
+  c => `Hi, my reference is ${c}, could you send my compressed video? 😊`,
+  c => `Hello! My order number is ${c} — please send my HD status video.`,
+  c => `Hi there, ref ${c} — could you send me my video in HD? 🎬`,
+  c => `Just finished on StatusDrop, my reference number ${c}. Please send it over!`,
+  c => `Hey, order ${c} — can you send my compressed video please? 🙏`,
+  c => `Hi! My ref is ${c}, would love my HD video, thank you 😊`,
 ];
 function buildInboundText(code) { return pick(INBOUND_CODE_TEMPLATES)(code); }
 
