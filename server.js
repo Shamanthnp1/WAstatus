@@ -216,6 +216,12 @@ function generateCode() {
   for (let i = 0; i < 9; i++) {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
+  // Guarantee at least one digit. This lets the inbound parser pick the code out
+  // of a natural sentence without ever matching a plain 9-letter English word.
+  if (!/[0-9]/.test(code)) {
+    const pos = Math.floor(Math.random() * 9);
+    code = code.slice(0, pos) + Math.floor(Math.random() * 10) + code.slice(pos + 1);
+  }
   return code;
 }
 
@@ -761,13 +767,13 @@ function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 // keeps the 9-char code as a standalone token so handleIncomingMessage still
 // parses it.
 const INBOUND_CODE_TEMPLATES = [
-  c => `Hi, my code is ${c}`,
-  c => `Here's my code: ${c}`,
-  c => `Code ${c} please`,
-  c => `Hey! My status code ${c}`,
-  c => `My code: ${c}`,
-  c => `Requesting my video — code ${c}`,
-  c => `Activation code ${c}`,
+  c => `Hey! I just made a video on StatusDrop and I'd love the HD version — my code is ${c} 🙏`,
+  c => `Hi there, could you send me my compressed video please? My code is ${c} 😊`,
+  c => `Hello! Just finished editing on StatusDrop, my code is ${c} — please send it over.`,
+  c => `Hi, I'd like to get my HD status video. My code is ${c}, thank you!`,
+  c => `Hey, can you send my video in HD? My code is ${c} 🎬`,
+  c => `Just made my status on StatusDrop — my code is ${c}, please send it my way!`,
+  c => `Hi! Requesting my HD video, my code is ${c}. Appreciate it 🙏`,
 ];
 function buildInboundText(code) { return pick(INBOUND_CODE_TEMPLATES)(code); }
 
@@ -854,8 +860,17 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
 async function handleIncomingMessage(from, text) {
   console.log(`Message from ${jidToNumber(from)}: ${text}`);
 
-  const codeMatch = text?.match(/Activation Code[:\s]+([A-Z0-9]{9})/i)
-    || text?.match(/\b([A-Z0-9]{9})\b/i);
+  // Extract the 9-char code. Order matters:
+  //  1) "code (is/:) XXXXXXXXX" — the natural-sentence prefill (case-insensitive).
+  //  2) legacy "Activation Code: XXXXXXXXX" prefill (older links).
+  //  3) bare UPPERCASE 9-char token — CASE-SENSITIVE on purpose: codes are always
+  //     uppercase A-Z0-9, so this won't grab an ordinary lowercase word that
+  //     happens to be 9 letters long (e.g. "reference") when the code is embedded
+  //     in a sentence.
+  const codeMatch =
+       text?.match(/\bcode\b\s*(?:is)?\s*:?\s*([A-Z0-9]{9})\b/i)
+    || text?.match(/Activation Code[:\s]+([A-Z0-9]{9})/i)
+    || text?.match(/\b([A-Z0-9]{9})\b/);
 
   if (!codeMatch) {
     try {
