@@ -198,6 +198,20 @@ setInterval(async () => {
 // =======================
 // RATE LIMITING
 // =======================
+// Azure App Service's X-Forwarded-For includes the client PORT
+// (e.g. "1.2.3.4:56789"), which express-rate-limit rejects as an invalid IP
+// (ERR_ERL_INVALID_IP_ADDRESS) — breaking correct per-IP keying. Normalize to a
+// clean IP here so requests are rate-limited by address, not address+port.
+function clientIpKey(req) {
+  const ip = (req.ip || req.socket?.remoteAddress || 'unknown').trim();
+  const v6 = ip.match(/^\[(.+)\]:\d+$/);            // "[::1]:5678" -> "::1"
+  if (v6) return v6[1];
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(ip)) {   // "1.2.3.4:5678" -> "1.2.3.4"
+    return ip.slice(0, ip.lastIndexOf(':'));
+  }
+  return ip;
+}
+
 const limiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000,
   max: 50,
@@ -205,6 +219,10 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.path === '/api/health',
+  keyGenerator: clientIpKey,
+  // We normalize the IP ourselves (Azure appends a port), so disable the
+  // library's built-in IP validation that would otherwise error on it.
+  validate: { ip: false },
 });
 
 // ========================
