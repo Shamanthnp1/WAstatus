@@ -9,8 +9,8 @@
     "subscribe:webhook": "node scripts/subscribe-whatsapp-webhook.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Shamanthnp1",
+  "license": "AGPL-3.0-or-later",
   "type": "commonjs",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1037.0",
