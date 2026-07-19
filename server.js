@@ -9,6 +9,7 @@ const ffmpegStatic = require('ffmpeg-static');
 const ffprobePath = require('ffprobe-static').path;
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
+const ipKeyGenerator = rateLimit.ipKeyGenerator;
 const { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const compression = require('compression');
 const crypto = require('crypto');
@@ -203,13 +204,15 @@ setInterval(async () => {
 // (ERR_ERL_INVALID_IP_ADDRESS) — breaking correct per-IP keying. Normalize to a
 // clean IP here so requests are rate-limited by address, not address+port.
 function clientIpKey(req) {
-  const ip = (req.ip || req.socket?.remoteAddress || 'unknown').trim();
+  let ip = (req.ip || req.socket?.remoteAddress || 'unknown').trim();
   const v6 = ip.match(/^\[(.+)\]:\d+$/);            // "[::1]:5678" -> "::1"
-  if (v6) return v6[1];
-  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(ip)) {   // "1.2.3.4:5678" -> "1.2.3.4"
-    return ip.slice(0, ip.lastIndexOf(':'));
+  if (v6) ip = v6[1];
+  else if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(ip)) { // "1.2.3.4:5678" -> "1.2.3.4"
+    ip = ip.slice(0, ip.lastIndexOf(':'));
   }
-  return ip;
+  // Run through the library's helper so IPv6 addresses are keyed by subnet
+  // (prevents IPv6 users bypassing limits by rotating within their block).
+  return ipKeyGenerator ? ipKeyGenerator(ip) : ip;
 }
 
 const limiter = rateLimit({
