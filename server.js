@@ -644,13 +644,21 @@ async function startBaileys() {
         console.log(`Baileys closed (code ${code}). Reconnect: ${shouldReconnect}`);
         reconnecting = false;
         if (shouldReconnect) {
-          // Exponential backoff with jitter (3s → 6s → 12s … capped 60s) so a
-          // repeated 403/close loop doesn't hammer WhatsApp, which itself looks
-          // abusive and worsens flagging.
           reconnectAttempts += 1;
-          // Fast recovery for transient drops; mild backoff only if it keeps
-          // failing, capped low (15s) so the bot never stays offline long.
-          const delay = Math.min(15000, 3000 * reconnectAttempts) + randBetween(0, 1500);
+          // If we're not linked yet, reconnecting fast spits out a brand-new
+          // pairing code every few seconds — the user can never type one before
+          // it changes. So while UNREGISTERED, wait a full minute between tries
+          // so ONE code stays on screen long enough to actually enter.
+          const isRegistered = rawSock?.authState?.creds?.registered;
+          let delay;
+          if (!isRegistered) {
+            delay = 60000 + randBetween(0, 3000);
+            console.log('Not linked yet — showing one pairing code per minute. Enter the MOST RECENT code above and ignore the older ones.');
+          } else {
+            // Fast recovery for transient drops; mild backoff only if it keeps
+            // failing, capped low (15s) so the bot never stays offline long.
+            delay = Math.min(15000, 3000 * reconnectAttempts) + randBetween(0, 1500);
+          }
           console.log(`Reconnecting in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts})`);
           setTimeout(() => startBaileys().catch(e => console.error('Reconnect failed:', e)), delay);
         } else {
