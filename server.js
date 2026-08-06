@@ -20,6 +20,8 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   Browsers,
+  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const { enforceInputLimits } = require('./src/server/inputLimits');
@@ -602,16 +604,49 @@ function getOrCreateDeviceFootprint(dir) {
   return choice;
 }
 
+// Resolve the CURRENT WhatsApp Web protocol version at runtime. WhatsApp rejects
+// clients announcing a stale version with a `405` close right after connecting —
+// which looks exactly like a broken link. Baileys ships a hardcoded version that
+// goes stale over time, so we fetch the live version instead: first straight from
+// WhatsApp, then Baileys' own tracker, and only fall back to the bundled default
+// if both network fetches fail. Cached so reconnects don't refetch every time.
+let cachedWaVersion = null;
+async function resolveWaVersion() {
+  if (cachedWaVersion) return cachedWaVersion;
+  try {
+    const { version } = await fetchLatestWaWebVersion();
+    cachedWaVersion = version;
+    console.log(`WA Web version (live from WhatsApp): ${version.join('.')}`);
+    return cachedWaVersion;
+  } catch (e) {
+    console.warn('Could not fetch live WA Web version:', e.message);
+  }
+  try {
+    const { version } = await fetchLatestBaileysVersion();
+    cachedWaVersion = version;
+    console.log(`WA Web version (Baileys tracker): ${version.join('.')}`);
+    return cachedWaVersion;
+  } catch (e) {
+    console.warn('Could not fetch Baileys tracker version:', e.message);
+  }
+  console.warn('Falling back to Baileys bundled WA Web version (may be stale → 405 risk).');
+  return undefined; // let makeWASocket use its bundled default
+}
+
 async function startBaileys() {
   if (reconnecting) return;
   reconnecting = true;
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(BAILEYS_AUTH_DIR);
+    const waVersion = await resolveWaVersion();
 
     const rawSock = makeWASocket({
       auth: state,
       logger: pino({ level: 'silent' }),
+      // Use the live WhatsApp Web version so WhatsApp doesn't 405 us for looking
+      // outdated. `undefined` means "use Baileys' bundled default" (fetch failed).
+      ...(waVersion ? { version: waVersion } : {}),
       // Random-but-persisted device footprint: consistent across reconnects of
       // this session, but a fresh RESET_BAILEYS re-link picks a new one so the
       // new device doesn't look like the previously flagged one.
