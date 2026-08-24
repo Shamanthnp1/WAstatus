@@ -111,23 +111,54 @@
   }
   </script>
 
-  <!-- ✅ Delayed GA — better page speed score -->
+  <!-- ✅ GA — loaded off the critical path, but EARLY enough to count fast bounces.
+       A fixed 3s delay used to drop every visitor who left in under 3 seconds,
+       which undercounted real traffic. Now it loads on whichever comes first:
+       the first user interaction, window load, or a short idle fallback. -->
   <script>
     window.dataLayer = window.dataLayer || [];
     function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'G-SFFCBRYRH1');
 
-    setTimeout(() => {
-      const script = document.createElement('script');
-      script.src =
-        'https://www.googletagmanager.com/gtag/js?id=G-SFFCBRYRH1';
-      script.async = true;
-      document.head.appendChild(script);
+    (function () {
+      var GA_ID = 'G-SFFCBRYRH1';
+      var loaded = false;
+      var events = ['scroll', 'click', 'touchstart', 'keydown', 'mousemove'];
 
-      script.onload = () => {
-        gtag('js', new Date());
-        gtag('config', 'G-SFFCBRYRH1');
-      };
-    }, 3000);
+      function loadGA() {
+        if (loaded) return;
+        loaded = true;
+        events.forEach(function (e) {
+          window.removeEventListener(e, loadGA, { passive: true });
+        });
+        var s = document.createElement('script');
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=' + GA_ID;
+        s.async = true;
+        document.head.appendChild(s);
+      }
+
+      // Any real interaction — counts engaged users immediately.
+      events.forEach(function (e) {
+        window.addEventListener(e, loadGA, { passive: true, once: true });
+      });
+
+      // Otherwise once the page is done loading, during idle time.
+      if (document.readyState === 'complete') {
+        setTimeout(loadGA, 300);
+      } else {
+        window.addEventListener('load', function () {
+          if ('requestIdleCallback' in window) {
+            requestIdleCallback(loadGA, { timeout: 1200 });
+          } else {
+            setTimeout(loadGA, 300);
+          }
+        });
+      }
+
+      // Hard safety net so GA never fails to fire on slow pages.
+      setTimeout(loadGA, 2500);
+    })();
   </script>
 
   <style>
