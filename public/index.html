@@ -905,10 +905,10 @@
 <body>
 
   <!-- Feedback / support banner -->
-  <div 
-  $seg = $args[0].Groups[1].Value
-  $seg = $seg -replace 'color:#515739', 'color:#FFEAD1'
-  $seg + $args[0].Groups[2].Value
+  <div id="sdFeedbackBar" style="display:flex;align-items:center;justify-content:center;gap:8px;position:relative;background:linear-gradient(90deg,#515739,#C4381A);color:#FFEAD1;font-size:13px;line-height:1.45;padding:10px 38px 10px 16px;text-align:center;">
+    <span>👋 Facing an issue or have feedback? <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#FFEAD1;font-weight:700;text-decoration:underline;">DM me on Instagram</a> &nbsp;·&nbsp; Love StatusDrop? <a href="https://ko-fi.com/wastatus" target="_blank" rel="noopener" style="color:#FFEAD1;font-weight:700;text-decoration:underline;">Support the server ☕</a> &nbsp;·&nbsp; <a href="https://github.com/Shamanthnp1/WAstatus" target="_blank" rel="noopener" style="color:#FFEAD1;font-weight:700;text-decoration:underline;">⭐ Open source</a></span>
+    <button id="sdFeedbackClose" aria-label="Dismiss" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#FFEAD1;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+  </div>
 
   <script>
     (function () {
