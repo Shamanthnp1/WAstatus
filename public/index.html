@@ -11,7 +11,7 @@
   <link rel="icon" type="image/png" href="/logo.png"/>
   <link rel="icon" href="/logo.png" sizes="32x32">
   <link rel="apple-touch-icon" href="/logo.png">
-  <meta name="theme-color" content="#25D366">
+  <meta name="theme-color" content="#FD4F2F">
 
   <!-- ✅ Verification -->
   <meta name="yandex-verification" content="18f62c2f8df9771d" />
@@ -169,14 +169,30 @@
     }
 
     :root {
-      --black: #000000;
-      --dark: #111111;
-      --dark2: #1a1a1a;
-      --green: #25D366;
-      --dark-green: #128C7E;
-      --white: #ffffff;
-      --grey: #666666;
-      --light-grey: #333333;
+      /* ---- Brand palette: cream / orange / sage-green ---- */
+      --cream:        #FFEAD1;  /* page background        */
+      --sage:         #DCE4B8;  /* soft green surface     */
+      --olive:        #515739;  /* deep green, main text  */
+      --orange:       #FD4F2F;  /* primary accent / CTA   */
+
+      --surface:      #FFFFFF;  /* cards                  */
+      --surface-soft: #FFF6EA;  /* inset panels           */
+      --border:       #E4D9C4;
+      --border-strong:#C9D4A4;
+      --olive-soft:   #636B45;  /* muted text             */
+      --orange-deep:  #C4381A;  /* orange that passes contrast as small text */
+      --on-accent:    #FFFFFF;  /* text on an orange fill */
+
+      /* ---- Legacy names kept so existing rules keep working ----
+         Names read "dark" for historical reasons; values are now light. */
+      --black:      var(--cream);        /* page background */
+      --dark:       var(--surface);      /* card surface    */
+      --dark2:      var(--surface-soft); /* inset surface   */
+      --green:      var(--orange);       /* accent          */
+      --dark-green: var(--olive);        /* deep accent     */
+      --white:      var(--olive);        /* primary text    */
+      --grey:       var(--olive-soft);   /* muted text      */
+      --light-grey: var(--border);       /* borders         */
     }
 
     html {
@@ -206,7 +222,7 @@
     .hero {
       text-align: center;
       padding: 60px 20px 40px;
-      background: linear-gradient(180deg, #0a1f0a 0%, #000000 100%);
+      background: linear-gradient(180deg, #FFF3E4 0%, #FFEAD1 100%);
     }
 
     .logo {
@@ -233,7 +249,7 @@
       color: var(--white);
     }
 
-    .logo-text span { color: var(--green); }
+    .logo-text span { color: var(--orange-deep); }
 
     .hero h1 {
       font-size: 48px;
@@ -243,7 +259,7 @@
       color: var(--white);
     }
 
-    .hero h1 span { color: var(--green); }
+    .hero h1 span { color: var(--orange-deep); }
 
     .hero p {
       font-size: 18px;
@@ -261,7 +277,7 @@
     .badge {
       background: var(--dark2);
       border: 1px solid var(--light-grey);
-      color: var(--green);
+      color: var(--orange-deep);
       padding: 6px 16px;
       border-radius: 20px;
       font-size: 14px;
@@ -269,7 +285,7 @@
 
     /* NEW — split feature banner */
     .split-banner {
-      background: linear-gradient(90deg, #0a2a0a, #0d3d0d);
+      background: linear-gradient(90deg, #EFF3DE, #DCE4B8);
       border: 1px solid var(--dark-green);
       border-radius: 12px;
       padding: 14px 20px;
@@ -285,7 +301,7 @@
     }
 
     .split-banner-text h4 {
-      color: var(--green);
+      color: var(--orange-deep);
       font-size: 14px;
       font-weight: 700;
       margin-bottom: 2px;
@@ -306,7 +322,7 @@
 
     .card {
       background: var(--dark);
-      border: 1px solid var(--dark2);
+      border: 1px solid var(--border);
       border-radius: 16px;
       padding: 28px;
       margin-bottom: 20px;
@@ -330,18 +346,18 @@
     }
 
     ::-webkit-scrollbar-track {
-      background: #111;
+      background: #F0E6D6;
     }
 
     ::-webkit-scrollbar-thumb {
-      background: #25D366;
+      background: #FD4F2F;
       border-radius: 3px;
     }
 
     /* Better text selection */
     ::selection {
-      background: rgba(37,211,102,0.3);
-      color: #fff;
+      background: rgba(253,79,47,0.3);
+      color: #515739;
     }
 
     .card-title {
@@ -356,7 +372,7 @@
 
     .step-badge {
       background: var(--green);
-      color: var(--black);
+      color: var(--on-accent);
       width: 28px;
       height: 28px;
       border-radius: 50%;
@@ -375,7 +391,7 @@
       text-align: center;
       cursor: pointer;
       transition: all 0.3s ease;
-      background: #050f05;
+      background: #FFF9F0;
       position: relative;
       overflow: hidden;
     }
@@ -386,7 +402,7 @@
       position: absolute;
       inset: -2px;
       background: linear-gradient(90deg,
-        #25D366, #128C7E, #25D366);
+        #FD4F2F, #515739, #FD4F2F);
       background-size: 200%;
       border-radius: 12px;
       z-index: -1;
@@ -408,8 +424,8 @@
     .upload-zone:hover,
     .upload-zone.dragover {
       border-color: transparent;
-      background: #0a1f0a;
-      box-shadow: 0 0 30px rgba(37,211,102,0.15);
+      background: #FFF3E4;
+      box-shadow: 0 0 30px rgba(253,79,47,0.15);
       transform: translateY(-2px);
     }
 
@@ -439,7 +455,7 @@
 
     .format-tag {
       background: var(--dark2);
-      color: var(--green);
+      color: var(--orange-deep);
       padding: 4px 10px;
       border-radius: 6px;
       font-size: 12px;
@@ -496,7 +512,7 @@
       flex-shrink: 0;
     }
 
-    .file-remove:hover { color: #ff4444; }
+    .file-remove:hover { color: #D93025; }
 
     .size-tracker {
       display: flex;
@@ -509,7 +525,7 @@
     }
 
     .size-text { font-size: 14px; color: var(--grey); }
-    .size-text span { color: var(--green); font-weight: 700; }
+    .size-text span { color: var(--orange-deep); font-weight: 700; }
 
     .progress-container { display: none; }
     .progress-container.visible { display: block; }
@@ -524,7 +540,7 @@
       color: var(--grey);
     }
 
-    .progress-label span:last-child { color: var(--green); }
+    .progress-label span:last-child { color: var(--orange-deep); }
 
     .progress-bar {
       height: 6px;
@@ -574,12 +590,12 @@
 
     .step-indicator.active,
     .step-indicator.complete {
-      color: var(--green);
+      color: var(--orange-deep);
     }
 
     .step-indicator.active .step-dot {
       background: var(--green);
-      box-shadow: 0 0 10px rgba(37,211,102,0.6);
+      box-shadow: 0 0 10px rgba(253,79,47,0.6);
     }
 
     .step-indicator.complete .step-dot {
@@ -588,13 +604,13 @@
 
     /* NEW — splitting status message */
     .splitting-info {
-      background: #0a2a0a;
+      background: #EFF3DE;
       border: 1px solid var(--dark-green);
       border-radius: 10px;
       padding: 14px 16px;
       margin-bottom: 16px;
       font-size: 13px;
-      color: var(--green);
+      color: var(--orange-deep);
       display: flex;
       align-items: center;
       gap: 10px;
@@ -630,12 +646,12 @@
       gap: 10px;
     }
 
-    .btn-primary { background: var(--green); color: var(--black); }
+    .btn-primary { background: var(--green); color: var(--on-accent); }
 
     .btn-primary:hover {
-      background: #20c55a;
+      background: #E64420;
       transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(37,211,102,0.3);
+      box-shadow: 0 8px 25px rgba(253,79,47,0.3);
     }
 
     .btn-primary:disabled {
@@ -656,15 +672,15 @@
 
     .btn-whatsapp {
       background: var(--green);
-      color: var(--black);
+      color: var(--on-accent);
       font-size: 18px;
       padding: 20px;
     }
 
     .btn-whatsapp:hover {
-      background: #20c55a;
+      background: #E64420;
       transform: translateY(-2px);
-      box-shadow: 0 8px 30px rgba(37,211,102,0.4);
+      box-shadow: 0 8px 30px rgba(253,79,47,0.4);
     }
 
     .activation-section { display: none; }
@@ -708,11 +724,11 @@
     .code-value {
       font-size: 36px;
       font-weight: 800;
-      color: var(--green);
+      color: var(--orange-deep);
       letter-spacing: 6px;
       margin-bottom: 8px;
       font-family: monospace;
-      text-shadow: 0 0 20px rgba(37,211,102,0.4);
+      text-shadow: 0 0 20px rgba(253,79,47,0.4);
     }
 
     .code-copy {
@@ -726,7 +742,7 @@
       transition: all 0.2s;
     }
 
-    .code-copy:hover { border-color: var(--green); color: var(--green); }
+    .code-copy:hover { border-color: var(--orange-deep); color: var(--orange-deep); }
 
     /* NEW — file count info */
     .file-count-info {
@@ -739,7 +755,7 @@
       text-align: center;
     }
 
-    .file-count-info span { color: var(--green); font-weight: 700; }
+    .file-count-info span { color: var(--orange-deep); font-weight: 700; }
 
     .activation-steps {
       background: var(--dark2);
@@ -793,7 +809,7 @@
     .success-title {
       font-size: 24px;
       font-weight: 800;
-      color: var(--green);
+      color: var(--orange-deep);
       margin: 16px 0 8px;
     }
 
@@ -813,7 +829,7 @@
     .share-buttons .btn { flex: 1; }
 
     footer {
-      border-top: 1px solid var(--dark2);
+      border-top: 1px solid var(--border);
       padding: 30px 20px;
       text-align: center;
       margin-top: 40px;
@@ -830,7 +846,7 @@
       transition: color 0.2s;
     }
 
-    .footer-links a:hover { color: var(--green); }
+    .footer-links a:hover { color: var(--orange-deep); }
 
     @media (max-width: 600px) {
       .hero h1 { font-size: 32px; }
@@ -861,37 +877,37 @@
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: #333;
+      background: #E4D9C4;
       transition: all 0.5s ease;
     }
 
     .step-indicator.active .step-dot {
-      background: #25D366;
-      box-shadow: 0 0 8px rgba(37,211,102,0.6);
+      background: #FD4F2F;
+      box-shadow: 0 0 8px rgba(253,79,47,0.6);
       animation: dotPulse 1s ease-in-out infinite;
     }
 
     .step-indicator.done .step-dot {
-      background: #25D366;
+      background: #FD4F2F;
     }
 
     .step-indicator span {
       font-size: 10px;
-      color: #444;
+      color: #C9D4A4;
       transition: color 0.5s ease;
     }
 
     .step-indicator.active span {
-      color: #25D366;
+      color: var(--orange-deep);
     }
 
     .step-indicator.done span {
-      color: #128C7E;
+      color: #515739;
     }
 
     @keyframes dotPulse {
-      0%, 100% { transform: scale(1); box-shadow: 0 0 8px rgba(37,211,102,0.6); }
-      50% { transform: scale(1.3); box-shadow: 0 0 14px rgba(37,211,102,0.9); }
+      0%, 100% { transform: scale(1); box-shadow: 0 0 8px rgba(253,79,47,0.6); }
+      50% { transform: scale(1.3); box-shadow: 0 0 14px rgba(253,79,47,0.9); }
     }
 
     @keyframes shine {
@@ -907,9 +923,9 @@
 <body>
 
   <!-- Feedback / support banner -->
-  <div id="sdFeedbackBar" style="display:flex;align-items:center;justify-content:center;gap:8px;position:relative;background:linear-gradient(90deg,#128C7E,#25D366);color:#fff;font-size:13px;line-height:1.45;padding:10px 38px 10px 16px;text-align:center;">
-    <span>👋 Facing an issue or have feedback? <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline;">DM me on Instagram</a> &nbsp;·&nbsp; Love StatusDrop? <a href="https://ko-fi.com/wastatus" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline;">Support the server ☕</a> &nbsp;·&nbsp; <a href="https://github.com/Shamanthnp1/WAstatus" target="_blank" rel="noopener" style="color:#fff;font-weight:700;text-decoration:underline;">⭐ Open source</a></span>
-    <button id="sdFeedbackClose" aria-label="Dismiss" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+  <div id="sdFeedbackBar" style="display:flex;align-items:center;justify-content:center;gap:8px;position:relative;background:linear-gradient(90deg,#515739,#FD4F2F);color:#515739;font-size:13px;line-height:1.45;padding:10px 38px 10px 16px;text-align:center;">
+    <span>👋 Facing an issue or have feedback? <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#515739;font-weight:700;text-decoration:underline;">DM me on Instagram</a> &nbsp;·&nbsp; Love StatusDrop? <a href="https://ko-fi.com/wastatus" target="_blank" rel="noopener" style="color:#515739;font-weight:700;text-decoration:underline;">Support the server ☕</a> &nbsp;·&nbsp; <a href="https://github.com/Shamanthnp1/WAstatus" target="_blank" rel="noopener" style="color:#515739;font-weight:700;text-decoration:underline;">⭐ Open source</a></span>
+    <button id="sdFeedbackClose" aria-label="Dismiss" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#515739;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
   </div>
   <script>
     (function () {
@@ -927,11 +943,11 @@
   </script>
 
   <!-- Maintenance notice — set MAINTENANCE_MODE=false (below) to turn it off -->
-  <div id="sdMaintOverlay" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.92);align-items:center;justify-content:center;padding:20px;">
-    <div style="position:relative;max-width:430px;width:100%;background:#111;border:1px solid #3a2f1e;border-radius:18px;padding:32px 24px;text-align:center;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+  <div id="sdMaintOverlay" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(81,87,57,0.92);align-items:center;justify-content:center;padding:20px;">
+    <div style="position:relative;max-width:430px;width:100%;background:#F0E6D6;border:1px solid #F6EAD6;border-radius:18px;padding:32px 24px;text-align:center;color:#515739;box-shadow:0 20px 60px rgba(81,87,57,0.55);">
       <div style="font-size:44px;margin-bottom:8px;">🚧</div>
       <h3 style="margin:0 0 10px;font-size:22px;font-weight:700;">Out of service</h3>
-      <p style="margin:0;font-size:14px;line-height:1.6;color:#c2c2c2;">
+      <p style="margin:0;font-size:14px;line-height:1.6;color:#7C8459;">
         StatusDrop is temporarily out of service while we fix things. Please check back a little later — sorry for the inconvenience, and thanks for your patience! 🙏
       </p>
     </div>
@@ -996,9 +1012,9 @@
   </div>
 
   <!-- STATS BAR -->
-  <div style="background:#0a1a0a;
-              border-top:1px solid #1a2a1a;
-              border-bottom:1px solid #1a2a1a;
+  <div style="background:#F5F0E2;
+              border-top:1px solid #EFF3DE;
+              border-bottom:1px solid #EFF3DE;
               padding:16px 20px;">
     <div style="max-width:700px;
                 margin:0 auto;
@@ -1010,43 +1026,43 @@
       <div style="text-align:center;">
         <div style="font-size:22px;
                     font-weight:800;
-                    color:#25D366;">
+                    color: var(--orange-deep);">
           10K+
         </div>
-        <div style="font-size:11px;color:#888;">
+        <div style="font-size:11px;color:var(--olive-soft);">
           Videos Processed
         </div>
       </div>
-      <div style="width:1px;height:30px;background:#1a1a1a;"></div>
+      <div style="width:1px;height:30px;background:#FFF6EA;"></div>
       <div style="text-align:center;">
         <div style="font-size:22px;
                     font-weight:800;
-                    color:#25D366;">
+                    color: var(--orange-deep);">
           HD
         </div>
-        <div style="font-size:11px;color:#888;">
+        <div style="font-size:11px;color:var(--olive-soft);">
           Quality Always
         </div>
       </div>
-      <div style="width:1px;height:30px;background:#1a1a1a;"></div>
+      <div style="width:1px;height:30px;background:#FFF6EA;"></div>
       <div style="text-align:center;">
         <div style="font-size:22px;
                     font-weight:800;
-                    color:#25D366;">
+                    color: var(--orange-deep);">
           300MB
         </div>
-        <div style="font-size:11px;color:#888;">
+        <div style="font-size:11px;color:var(--olive-soft);">
           Max Upload
         </div>
       </div>
-      <div style="width:1px;height:30px;background:#1a1a1a;"></div>
+      <div style="width:1px;height:30px;background:#FFF6EA;"></div>
       <div style="text-align:center;">
         <div style="font-size:22px;
                     font-weight:800;
-                    color:#25D366;">
+                    color: var(--orange-deep);">
           FREE
         </div>
-        <div style="font-size:11px;color:#888;">
+        <div style="font-size:11px;color:var(--olive-soft);">
           Always & Forever
         </div>
       </div>
@@ -1075,7 +1091,7 @@
         <div class="upload-icon">📁</div>
         <h3>Drop Videos Here</h3>
         <p>or click to browse files</p>
-        <p style="color:#888;font-size:13px;">
+        <p style="color:var(--olive-soft);font-size:13px;">
           Max 3 videos · 300MB total · Auto-split into 29s clips!
         </p>
         <div class="upload-formats">
@@ -1099,8 +1115,8 @@
             Total: <span id="totalSize">0 MB</span> / 300 MB
           </span>
           <button onclick="clearFiles()"
-            style="background:none;border:1px solid #333;
-            color:#666;padding:4px 12px;
+            style="background:none;border:1px solid #E4D9C4;
+            color:var(--olive-soft);padding:4px 12px;
             border-radius:6px;cursor:pointer;font-size:12px;">
             Clear All
           </button>
@@ -1109,8 +1125,8 @@
 
       <!-- Caption input (optional) -->
       <div id="captionSection" style="margin-top:20px;display:none;">
-        <label style="font-size:14px;color:#888;margin-bottom:8px;display:block;">
-          ✏️ Video Caption <span style="color:#444;font-size:12px;">(optional)</span>
+        <label style="font-size:14px;color:var(--olive-soft);margin-bottom:8px;display:block;">
+          ✏️ Video Caption <span style="color:#C9D4A4;font-size:12px;">(optional)</span>
         </label>
         <textarea id="captionInput"
           placeholder="Add a caption for your video... (shows on WhatsApp)"
@@ -1119,33 +1135,33 @@
                  min-height:70px;
                  max-height:150px;
                  padding:14px;
-                 background:#1a1a1a;
-                 border:1px solid #333;
+                 background:#FFF6EA;
+                 border:1px solid #E4D9C4;
                  border-radius:10px;
-                 color:#fff;
+                 color:#515739;
                  font-size:14px;
                  font-family:'Segoe UI',sans-serif;
                  resize:vertical;
                  outline:none;
                  transition:border-color 0.2s;"
           oninput="updateCharCount()"
-          onfocus="this.style.borderColor='#25D366'"
-          onblur="this.style.borderColor='#333'"
+          onfocus="this.style.borderColor='#FD4F2F'"
+          onblur="this.style.borderColor='#E4D9C4'"
         ></textarea>
         <div style="display:flex;justify-content:space-between;margin-top:6px;">
-          <span style="font-size:11px;color:#444;">Leave empty to send without caption</span>
-          <span id="charCount" style="font-size:11px;color:#444;">0/700</span>
+          <span style="font-size:11px;color:#C9D4A4;">Leave empty to send without caption</span>
+          <span id="charCount" style="font-size:11px;color:#C9D4A4;">0/700</span>
         </div>
       </div>
 
       <style>
         .q-opts { display: flex; gap: 10px; margin-top: 16px; }
-        .q-opt { flex: 1; display: block; cursor: pointer; background: #141414; border: 2px solid #2a2a2a; border-radius: 12px; padding: 12px 14px; transition: border-color .15s ease, background .15s ease; }
-        .q-opt .q-title { color: #fff; font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; }
-        .q-opt .q-sub { color: #888; font-size: 12px; margin-top: 4px; line-height: 1.4; }
-        .q-opt .q-dot { width: 15px; height: 15px; border-radius: 50%; border: 2px solid #555; flex: none; box-sizing: border-box; transition: border-color .15s ease, background .15s ease; }
-        .q-opt.selected { border-color: #25D366; background: #0e1c12; }
-        .q-opt.selected .q-dot { border-color: #25D366; background: #25D366; box-shadow: inset 0 0 0 3px #0e1c12; }
+        .q-opt { flex: 1; display: block; cursor: pointer; background: #FFFFFF; border: 2px solid #F3E8D8; border-radius: 12px; padding: 12px 14px; transition: border-color .15s ease, background .15s ease; }
+        .q-opt .q-title { color: #515739; font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+        .q-opt .q-sub { color: var(--olive-soft); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+        .q-opt .q-dot { width: 15px; height: 15px; border-radius: 50%; border: 2px solid #C9D4A4; flex: none; box-sizing: border-box; transition: border-color .15s ease, background .15s ease; }
+        .q-opt.selected { border-color: var(--orange-deep); background: #F1F5E3; }
+        .q-opt.selected .q-dot { border-color: var(--orange-deep); background: #FD4F2F; box-shadow: inset 0 0 0 3px #F1F5E3; }
         @media (max-width: 520px) { .q-opts { flex-direction: column; } }
       </style>
       <div id="longClipsRow" class="q-opts" style="display:none;">
@@ -1195,8 +1211,8 @@
 
         <!-- Status message -->
         <div id="statusMessage"
-          style="background:#0a2a0a;
-                 border:1px solid #128C7E;
+          style="background:#EFF3DE;
+                 border:1px solid #515739;
                  border-radius:10px;
                  padding:14px 16px;
                  margin-bottom:20px;
@@ -1206,7 +1222,7 @@
                  min-height:52px;">
           <span id="statusIcon" style="font-size:20px;">⚙️</span>
           <span id="statusText"
-            style="color:#25D366;
+            style="color: var(--orange-deep);
                    font-size:14px;
                    font-weight:600;">
             Starting...
@@ -1219,11 +1235,11 @@
                       justify-content:space-between;
                       align-items:center;
                       margin-bottom:10px;">
-            <span style="color:#666;font-size:13px;">
+            <span style="color:var(--olive-soft);font-size:13px;">
               Overall Progress
             </span>
             <span id="progressPct"
-              style="color:#25D366;
+              style="color: var(--orange-deep);
                      font-size:14px;
                      font-weight:700;
                      font-family:monospace;">
@@ -1233,14 +1249,14 @@
 
           <!-- Progress bar track -->
           <div style="height:10px;
-                      background:#1a1a1a;
+                      background:#FFF6EA;
                       border-radius:5px;
                       overflow:hidden;
                       position:relative;">
             <div id="mainProgressFill"
               style="height:100%;
                      width:0%;
-                     background:linear-gradient(90deg,#128C7E,#25D366);
+                     background:linear-gradient(90deg,#515739,#FD4F2F);
                      border-radius:5px;
                      transition:width 0.5s ease;
                      position:relative;">
@@ -1250,7 +1266,7 @@
                           right:0;bottom:0;
                           background:linear-gradient(90deg,
                             transparent 0%,
-                            rgba(255,255,255,0.2) 50%,
+                            rgba(255,255,255,0.35) 50%,
                             transparent 100%);
                           animation:shine 1.5s infinite;">
               </div>
@@ -1288,16 +1304,16 @@
         <div id="currentFileBox"
           style="margin-top:16px;
                  padding:10px 14px;
-                 background:#111;
+                 background:#F0E6D6;
                  border-radius:8px;
-                 border-left:3px solid #128C7E;
+                 border-left:3px solid #515739;
                  display:none;">
-          <div style="font-size:11px;color:#444;margin-bottom:3px;">
+          <div style="font-size:11px;color:#C9D4A4;margin-bottom:3px;">
             Processing:
           </div>
           <div id="currentFileName"
             style="font-size:13px;
-                   color:#888;
+                   color:var(--olive-soft);
                    white-space:nowrap;
                    overflow:hidden;
                    text-overflow:ellipsis;">
@@ -1334,18 +1350,18 @@
 
           <!-- ✅ NEW: 5 minute countdown -->
           <div id="timerBox" style="margin-top:16px;">
-            <div style="font-size:12px;color:#666;margin-bottom:6px;">
+            <div style="font-size:12px;color:var(--olive-soft);margin-bottom:6px;">
               ⏱️ Code expires in:
             </div>
             <div id="timerDisplay"
               style="font-size:28px;
                      font-weight:800;
-                     color:#25D366;
+                     color: var(--orange-deep);
                      font-family:monospace;
                      letter-spacing:3px;">
               05:00
             </div>
-            <div style="font-size:11px;color:#888;margin-top:4px;">
+            <div style="font-size:11px;color:var(--olive-soft);margin-top:4px;">
               Send code before timer runs out!
             </div>
           </div>
@@ -1354,17 +1370,17 @@
           <div id="expiredBox"
             style="display:none;
                    margin-top:16px;
-                   background:#1a0000;
-                   border:1px solid #ff4444;
+                   background:#FDECEA;
+                   border:1px solid #D93025;
                    border-radius:10px;
                    padding:14px;">
-            <div style="color:#ff4444;
+            <div style="color:#D93025;
                         font-size:16px;
                         font-weight:700;
                         margin-bottom:6px;">
               ❌ Code Expired!
             </div>
-            <div style="color:#666;font-size:13px;margin-bottom:12px;">
+            <div style="color:var(--olive-soft);font-size:13px;margin-bottom:12px;">
               Your 5 minutes are up. Please compress your video again.
             </div>
             <button class="btn btn-primary"
@@ -1397,13 +1413,13 @@
 
         <!-- ✅ NEW: Urgency warning -->
         <div id="urgencyWarning"
-          style="background:#1a1500;
-                 border:1px solid #856404;
+          style="background:#FFF7DB;
+                 border:1px solid #7A5A00;
                  border-radius:10px;
                  padding:12px 16px;
                  margin-bottom:16px;
                  font-size:13px;
-                 color:#ffc107;
+                 color:#B26A00;
                  display:flex;
                  align-items:center;
                  gap:8px;">
@@ -1435,7 +1451,7 @@
                     transform:translateX(-50%);
                     width:200px;height:200px;
                     background:radial-gradient(circle,
-                      rgba(37,211,102,0.15) 0%,
+                      rgba(253,79,47,0.15) 0%,
                       transparent 70%);
                     pointer-events:none;">
         </div>
@@ -1454,44 +1470,44 @@
                       justify-content:center;
                       margin-bottom:24px;
                       flex-wrap:wrap;">
-            <div style="background:#0a2a0a;
-                        border:1px solid #128C7E;
+            <div style="background:#EFF3DE;
+                        border:1px solid #515739;
                         border-radius:10px;
                         padding:10px 20px;">
               <div style="font-size:20px;
                           font-weight:800;
-                          color:#25D366;"
+                          color: var(--orange-deep);"
                    id="successClipCount">
                 1
               </div>
-              <div style="font-size:11px;color:#888;"
+              <div style="font-size:11px;color:var(--olive-soft);"
                    id="successClipLabel">
                 Video Sent
               </div>
             </div>
-            <div style="background:#0a2a0a;
-                        border:1px solid #128C7E;
+            <div style="background:#EFF3DE;
+                        border:1px solid #515739;
                         border-radius:10px;
                         padding:10px 20px;">
               <div style="font-size:20px;
                           font-weight:800;
-                          color:#25D366;">
+                          color: var(--orange-deep);">
                 HD
               </div>
-              <div style="font-size:11px;color:#888;">
+              <div style="font-size:11px;color:var(--olive-soft);">
                 Quality
               </div>
             </div>
-            <div style="background:#0a2a0a;
-                        border:1px solid #128C7E;
+            <div style="background:#EFF3DE;
+                        border:1px solid #515739;
                         border-radius:10px;
                         padding:10px 20px;">
               <div style="font-size:20px;
                           font-weight:800;
-                          color:#25D366;">
+                          color: var(--orange-deep);">
                 ✓
               </div>
-              <div style="font-size:11px;color:#888;">
+              <div style="font-size:11px;color:var(--olive-soft);">
                 Delivered
               </div>
             </div>
@@ -1551,29 +1567,29 @@
 
   <!-- ✅ FAQ SECTION — boosts SEO with real questions people search -->
   <div style="max-width:700px;margin:0 auto;padding:0 20px 40px;">
-    <div style="border-top:1px solid #1a1a1a;padding-top:40px;">
+    <div style="border-top:1px solid #FFF6EA;padding-top:40px;">
 
       <h2 style="font-size:22px;
                  font-weight:800;
-                 color:#fff;
+                 color:#515739;
                  margin-bottom:24px;
                  text-align:center;">
         ❓ Frequently Asked Questions
       </h2>
 
       <!-- Q1 -->
-      <div style="background:#111;
-                  border:1px solid #1a1a1a;
+      <div style="background:#F0E6D6;
+                  border:1px solid #FFF6EA;
                   border-radius:12px;
                   padding:20px;
                   margin-bottom:12px;">
         <h3 style="font-size:15px;
                    font-weight:700;
-                   color:#25D366;
+                   color: var(--orange-deep);
                    margin-bottom:8px;">
           Why is my WhatsApp Status video blurry?
         </h3>
-        <p style="font-size:14px;color:#888;line-height:1.6;">
+        <p style="font-size:14px;color:var(--olive-soft);line-height:1.6;">
           WhatsApp automatically destroys video quality to save bandwidth.
           StatusDrop pre-compresses your video to the exact specs WhatsApp
           expects — so it stays HD quality when posted as a Status.
@@ -1581,18 +1597,18 @@
       </div>
 
       <!-- Q2 -->
-      <div style="background:#111;
-                  border:1px solid #1a1a1a;
+      <div style="background:#F0E6D6;
+                  border:1px solid #FFF6EA;
                   border-radius:12px;
                   padding:20px;
                   margin-bottom:12px;">
         <h3 style="font-size:15px;
                    font-weight:700;
-                   color:#25D366;
+                   color: var(--orange-deep);
                    margin-bottom:8px;">
           How do I upload a long video to WhatsApp Status?
         </h3>
-        <p style="font-size:14px;color:#888;line-height:1.6;">
+        <p style="font-size:14px;color:var(--olive-soft);line-height:1.6;">
           WhatsApp Status only allows 29-second videos. StatusDrop
           automatically splits your long video into multiple 29-second
           clips and sends them all directly to your WhatsApp — completely free!
@@ -1600,18 +1616,18 @@
       </div>
 
       <!-- Q3 -->
-      <div style="background:#111;
-                  border:1px solid #1a1a1a;
+      <div style="background:#F0E6D6;
+                  border:1px solid #FFF6EA;
                   border-radius:12px;
                   padding:20px;
                   margin-bottom:12px;">
         <h3 style="font-size:15px;
                    font-weight:700;
-                   color:#25D366;
+                   color: var(--orange-deep);
                    margin-bottom:8px;">
           Is StatusDrop really free?
         </h3>
-        <p style="font-size:14px;color:#888;line-height:1.6;">
+        <p style="font-size:14px;color:var(--olive-soft);line-height:1.6;">
           Yes! 100% free. No login, no account, no watermark, no hidden
           fees. Upload videos up to 300MB and receive them in HD quality
           directly on WhatsApp.
@@ -1619,36 +1635,36 @@
       </div>
 
       <!-- Q4 -->
-      <div style="background:#111;
-                  border:1px solid #1a1a1a;
+      <div style="background:#F0E6D6;
+                  border:1px solid #FFF6EA;
                   border-radius:12px;
                   padding:20px;
                   margin-bottom:12px;">
         <h3 style="font-size:15px;
                    font-weight:700;
-                   color:#25D366;
+                   color: var(--orange-deep);
                    margin-bottom:8px;">
           What video formats are supported?
         </h3>
-        <p style="font-size:14px;color:#888;line-height:1.6;">
+        <p style="font-size:14px;color:var(--olive-soft);line-height:1.6;">
           StatusDrop supports MP4, MOV, AVI, MKV, 3GP and WMV
           formats up to 300MB in file size.
         </p>
       </div>
 
       <!-- Q5 -->
-      <div style="background:#111;
-                  border:1px solid #1a1a1a;
+      <div style="background:#F0E6D6;
+                  border:1px solid #FFF6EA;
                   border-radius:12px;
                   padding:20px;
                   margin-bottom:12px;">
         <h3 style="font-size:15px;
                    font-weight:700;
-                   color:#25D366;
+                   color: var(--orange-deep);
                    margin-bottom:8px;">
           Is my video private and secure?
         </h3>
-        <p style="font-size:14px;color:#888;line-height:1.6;">
+        <p style="font-size:14px;color:var(--olive-soft);line-height:1.6;">
           Yes! Your video is automatically deleted from our servers
           within 5 minutes after being sent to your WhatsApp.
           We never store or share your videos.
@@ -1662,7 +1678,7 @@
     <!-- ✅ Wave divider -->
     <div style="text-align:center;
                 margin-bottom:24px;
-                color:#1a1a1a;
+                color:#FFF6EA;
                 font-size:32px;
                 letter-spacing:-2px;">
       
@@ -1689,12 +1705,12 @@
         </div>
         <span style="font-size:20px;
                      font-weight:800;
-                     color:#fff;">
-          WA<span style="color:#25D366;">Status</span>
+                     color:#515739;">
+          WA<span style="color: var(--orange-deep);">Status</span>
         </span>
       </div>
 
-      <p style="color:#aaa;
+      <p style="color:#7C8459;
                 font-size:13px;
                 margin-bottom:16px;
                 line-height:1.6;">
@@ -1713,25 +1729,25 @@
                   justify-content:center;
                   flex-wrap:wrap;
                   margin-bottom:20px;">
-        <span style="background:#0a1a0a;
-                     border:1px solid #1a2a1a;
-                     color:#aaa;
+        <span style="background:#F5F0E2;
+                     border:1px solid #EFF3DE;
+                     color:#7C8459;
                      padding:4px 12px;
                      border-radius:20px;
                      font-size:11px;">
           🔒 No Account Needed
         </span>
-        <span style="background:#0a1a0a;
-                     border:1px solid #1a2a1a;
-                     color:#aaa;
+        <span style="background:#F5F0E2;
+                     border:1px solid #EFF3DE;
+                     color:#7C8459;
                      padding:4px 12px;
                      border-radius:20px;
                      font-size:11px;">
           🗑️ Auto Deleted in 5 mins
         </span>
-        <span style="background:#0a1a0a;
-                     border:1px solid #1a2a1a;
-                     color:#aaa;
+        <span style="background:#F5F0E2;
+                     border:1px solid #EFF3DE;
+                     color:#7C8459;
                      padding:4px 12px;
                      border-radius:20px;
                      font-size:11px;">
@@ -1739,10 +1755,10 @@
         </span>
       </div>
 
-      <p style="color:#888;font-size:12px;margin-bottom:8px;">
-        Built by a solo developer · open to work — <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none;font-weight:600;">say hi on Instagram</a>
+      <p style="color:var(--olive-soft);font-size:12px;margin-bottom:8px;">
+        Built by a solo developer · open to work — <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color: var(--orange-deep);text-decoration:none;font-weight:600;">say hi on Instagram</a>
       </p>
-      <p style="color:#333;font-size:12px;">
+      <p style="color:#E4D9C4;font-size:12px;">
         © 2026 StatusDrop · Made with 💚
       </p>
     </div>
@@ -1785,7 +1801,7 @@
     if (document.getElementById('sd-editbtn-css')) return;
     var s = document.createElement('style');
     s.id = 'sd-editbtn-css';
-    s.textContent = '.animated-button{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;padding:16px 36px;border:4px solid transparent;font-size:16px;background-color:#ffffff;border-radius:100px;font-weight:600;color:#1f387e;box-shadow:0 0 0 2px #ffffff;cursor:pointer;overflow:hidden;transition:all .6s cubic-bezier(0.23,1,0.32,1)}.animated-button svg{position:absolute;width:24px;fill:#1f387e;z-index:9;transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button .arr-1{right:16px}.animated-button .arr-2{left:-25%}.animated-button .circle{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:20px;height:20px;background-color:#c5e5e4;border-radius:50%;opacity:0;transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button .text{position:relative;z-index:1;transform:translateX(-12px);transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button:hover{box-shadow:0 0 0 12px transparent;color:#212121;border-radius:12px}.animated-button:hover .arr-1{right:-25%}.animated-button:hover .arr-2{left:16px}.animated-button:hover .text{transform:translateX(12px)}.animated-button:hover svg{fill:#1f387e}.animated-button:active{scale:.95;box-shadow:0 0 0 4px greenyellow}.animated-button:hover .circle{width:220px;height:220px;opacity:1}';
+    s.textContent = '.animated-button{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;padding:16px 36px;border:4px solid transparent;font-size:16px;background-color:#515739;border-radius:100px;font-weight:600;color:#274690;box-shadow:0 0 0 2px #515739;cursor:pointer;overflow:hidden;transition:all .6s cubic-bezier(0.23,1,0.32,1)}.animated-button svg{position:absolute;width:24px;fill:#274690;z-index:9;transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button .arr-1{right:16px}.animated-button .arr-2{left:-25%}.animated-button .circle{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:20px;height:20px;background-color:#515739;border-radius:50%;opacity:0;transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button .text{position:relative;z-index:1;transform:translateX(-12px);transition:all .8s cubic-bezier(0.23,1,0.32,1)}.animated-button:hover{box-shadow:0 0 0 12px transparent;color:#FFF6EA;border-radius:12px}.animated-button:hover .arr-1{right:-25%}.animated-button:hover .arr-2{left:16px}.animated-button:hover .text{transform:translateX(12px)}.animated-button:hover svg{fill:#274690}.animated-button:active{scale:.95;box-shadow:0 0 0 4px greenyellow}.animated-button:hover .circle{width:220px;height:220px;opacity:1}';
     document.head.appendChild(s);
   }
 
@@ -1809,7 +1825,7 @@
     wrap.appendChild(toggle);
     var beta = document.createElement('div');
     beta.textContent = 'Beta \u2014 this feature may not work as expected';
-    beta.style.cssText = 'margin-top:6px;text-align:center;font-size:12px;color:#9aa0a6;';
+    beta.style.cssText = 'margin-top:6px;text-align:center;font-size:12px;color:#7C8459;';
     wrap.appendChild(beta);
     anchor.parentElement.insertBefore(wrap, anchor);
   }
@@ -2444,7 +2460,7 @@
     setStatus('\u{2705}', 'Done! Your videos are ready!');
     setStep(5);
     const fill = document.getElementById('mainProgressFill');
-    if (fill) fill.style.boxShadow = '0 0 20px rgba(37,211,102,0.5)';
+    if (fill) fill.style.boxShadow = '0 0 20px rgba(253,79,47,0.5)';
   }
 
   // ========================
@@ -2489,28 +2505,28 @@
     };
 
     timerDisplay.textContent = fmt(remaining);
-    timerDisplay.style.color = '#25D366';
+    timerDisplay.style.color = '#FD4F2F';
     timerBox.style.display = 'block';
     expiredBox.style.display = 'none';
     waButton.disabled = false;
     waButton.style.opacity = '';
     waButton.style.cursor = '';
     urgencyWarning.style.display = 'flex';
-    urgencyWarning.style.borderColor = '#856404';
-    urgencyWarning.style.background = '#1a1500';
-    urgencyWarning.style.color = '#ffc107';
+    urgencyWarning.style.borderColor = '#7A5A00';
+    urgencyWarning.style.background = '#FFF7DB';
+    urgencyWarning.style.color = '#B26A00';
 
     countdownInterval = setInterval(() => {
       remaining--;
       timerDisplay.textContent = fmt(remaining);
 
       if (remaining <= 60) {
-        timerDisplay.style.color = '#ff4444';
-        urgencyWarning.style.borderColor = '#ff4444';
-        urgencyWarning.style.background = '#1a0000';
-        urgencyWarning.style.color = '#ff4444';
+        timerDisplay.style.color = '#D93025';
+        urgencyWarning.style.borderColor = '#D93025';
+        urgencyWarning.style.background = '#FDECEA';
+        urgencyWarning.style.color = '#D93025';
       } else if (remaining <= 120) {
-        timerDisplay.style.color = '#ffc107';
+        timerDisplay.style.color = '#B26A00';
       }
 
       if (remaining <= 0) {
@@ -2571,7 +2587,7 @@
     stopProcessingSimulation();
 
     document.getElementById('timerDisplay').textContent = '05:00';
-    document.getElementById('timerDisplay').style.color = '#25D366';
+    document.getElementById('timerDisplay').style.color = '#FD4F2F';
     document.getElementById('timerBox').style.display = 'block';
     document.getElementById('expiredBox').style.display = 'none';
 
@@ -2582,9 +2598,9 @@
 
     const urgency = document.getElementById('urgencyWarning');
     urgency.style.display = 'flex';
-    urgency.style.borderColor = '#856404';
-    urgency.style.background = '#1a1500';
-    urgency.style.color = '#ffc107';
+    urgency.style.borderColor = '#7A5A00';
+    urgency.style.background = '#FFF7DB';
+    urgency.style.color = '#B26A00';
 
     renderFiles();
 
