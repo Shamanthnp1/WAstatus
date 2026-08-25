@@ -1,5 +1,4 @@
 {
-  "outputDirectory": "public",
   "redirects": [
     { "source": "/hi", "destination": "/", "permanent": true },
     { "source": "/hi/", "destination": "/", "permanent": true },
