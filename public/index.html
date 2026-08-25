@@ -1085,7 +1085,10 @@
           <span class="format-tag">MKV</span>
           <span class="format-tag">3GP</span>
         </div>
-        <input type="file" id="fileInput" multiple accept="video/*"/>
+        <!-- Explicit extensions alongside video/*: some systems don't register a
+             MIME type for .mkv, so "video/*" alone hides those files in the picker. -->
+        <input type="file" id="fileInput" multiple
+          accept="video/*,.mp4,.mov,.avi,.mkv,.wmv,.3gp,.webm,.m4v,.mpeg,.mpg,.flv"/>
       </div>
 
       <div class="files-list" id="filesList">
@@ -1895,8 +1898,11 @@
   uploadZone.addEventListener('drop', (e) => {
     e.preventDefault();
     uploadZone.classList.remove('dragover');
+    // Don't rely on f.type alone — it's empty for .mkv on many systems, which
+    // silently dropped valid videos on drag-and-drop.
+    const VIDEO_EXT = /\.(mp4|mov|avi|mkv|3gp|3g2|wmv|webm|m4v|mpeg|mpg|flv|ts|m2ts|mts)$/i;
     const dropped = Array.from(e.dataTransfer.files)
-      .filter(f => f.type.startsWith('video/'));
+      .filter(f => (f.type && f.type.startsWith('video/')) || VIDEO_EXT.test(f.name || ''));
     addFiles(dropped);
   });
 
