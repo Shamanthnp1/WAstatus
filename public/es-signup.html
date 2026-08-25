@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="robots" content="noindex, nofollow"/>
+<title>Embedded Signup — Coexistence Trigger</title>
+<style>
+  :root { --green:#25D366; --dark:#128C7E; --ink:#0b141a; --muted:#667781; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    background:#f5f7fa; color:var(--ink); min-height:100vh;
+    display:flex; align-items:center; justify-content:center; padding:24px; }
+  .card { background:#fff; width:100%; max-width:640px; border-radius:18px;
+    box-shadow:0 18px 50px rgba(0,0,0,.10); overflow:hidden; }
+  .head { background:var(--dark); color:#fff; padding:22px 26px; }
+  .head h1 { font-size:19px; }
+  .head p { opacity:.85; font-size:13px; margin-top:4px; }
+  .body { padding:24px 26px 28px; }
+  .cfg { background:#f7fdf9; border:1px solid #d7efe0; border-radius:12px;
+    padding:14px 16px; font-size:13px; color:var(--muted); margin-bottom:18px; }
+  .cfg b { color:var(--ink); }
+  .cfg div { padding:3px 0; }
+  button { width:100%; border:0; border-radius:12px; padding:14px; font-size:15px;
+    font-weight:600; cursor:pointer; background:var(--green); color:#fff; transition:.15s; }
+  button:hover { background:var(--dark); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .out { margin-top:18px; background:#0b141a; color:#c8facc; border-radius:12px;
+    padding:14px; font-size:12.5px; white-space:pre-wrap; word-break:break-word;
+    max-height:280px; overflow:auto; display:none; }
+  .out.show { display:block; }
+  .note { margin-top:16px; font-size:12px; color:var(--muted); line-height:1.6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <h1>Embedded Signup — Coexistence</h1>
+      <p>Launches Facebook Login for Business with featureType injected</p>
+    </div>
+    <div class="body">
+      <div class="cfg">
+        <div><b>App ID:</b> 1456216519287158</div>
+        <div><b>Config ID:</b> 1980368389278598</div>
+        <div><b>featureType:</b> whatsapp_business_app_onboarding</div>
+        <div><b>sessionInfoVersion:</b> 3</div>
+      </div>
+
+      <button id="launch" disabled>Loading Facebook SDK…</button>
+
+      <div class="out" id="out"></div>
+
+      <div class="note">
+        Watch the business portfolio list in the popup. If your verified
+        portfolio is selectable, continue and scan the QR with WhatsApp Business.
+        The response below will show the WABA ID and Phone Number ID on success.
+      </div>
+    </div>
+  </div>
+
+<script>
+  var APP_ID    = '1456216519287158';
+  var CONFIG_ID = '1980368389278598';
+
+  var out = document.getElementById('out');
+  var btn = document.getElementById('launch');
+
+  function log(label, data) {
+    out.classList.add('show');
+    out.textContent += label + (data ? '\n' + JSON.stringify(data, null, 2) : '') + '\n\n';
+  }
+
+  // Embedded Signup posts its result back to the opener via postMessage.
+  window.addEventListener('message', function (e) {
+    var host;
+    try { host = new URL(e.origin).hostname; } catch (_) { return; }
+    if (!/facebook\.com$/.test(host)) return;
+    var d;
+    try { d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch (_) { return; }
+    if (d && d.type === 'WA_EMBEDDED_SIGNUP') {
+      log('WA_EMBEDDED_SIGNUP event:', d);
+      if (d.data && d.data.waba_id) {
+        log('WABA ID: ' + d.data.waba_id +
+            '\nPhone Number ID: ' + (d.data.phone_number_id || '(pending)'));
+      }
+    }
+  });
+
+  window.fbAsyncInit = function () {
+    FB.init({ appId: APP_ID, cookie: true, xfbml: false, version: 'v21.0' });
+    btn.disabled = false;
+    btn.textContent = 'Launch Embedded Signup (Coexistence)';
+  };
+
+  btn.addEventListener('click', function () {
+    out.textContent = '';
+    log('Launching Embedded Signup…');
+
+    FB.login(function (response) {
+      if (response && response.authResponse && response.authResponse.code) {
+        log('Auth code received (exchange server-side for a token):',
+            { code: response.authResponse.code });
+      } else {
+        log('No auth code returned. Popup was closed or cancelled.', response);
+      }
+    }, {
+      config_id: CONFIG_ID,
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: {
+        setup: {},
+        // This flag makes the flow COEXISTENCE onboarding (connect an existing
+        // WhatsApp Business app number) instead of registering a new number.
+        featureType: 'whatsapp_business_app_onboarding',
+        sessionInfoVersion: '3'
+      }
+    });
+  });
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+</body>
+</html>
