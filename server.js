@@ -25,7 +25,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const { enforceInputLimits } = require('./src/server/inputLimits');
-const { isAllowedVideoUpload } = require('./src/server/videoTypes');
+const { validateUploadRequest } = require('./src/server/videoTypes');
 const { routeRecipes, collectAvailableAssets } = require('./src/server/processRouting');
 const { planRecipeAssets, markLoopingImageInputs } = require('./src/server/assetResolver');
 const { rasterizeTextOverlay } = require('./src/server/textRaster');
@@ -1117,20 +1117,12 @@ app.get('/privacy', (req, res) => {
 app.post('/api/upload-url', limiter, async (req, res) => {
   try {
     const { filename, contentType, fileSize } = req.body;
-    const numericFileSize = Number(fileSize);
-    if (!filename || !contentType || !Number.isFinite(numericFileSize)) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-    if (numericFileSize > 300 * 1024 * 1024) {
-      return res.status(400).json({ error: 'File too large! Max 300MB.' });
-    }
-    // Accept when EITHER the MIME type or the filename extension says "video".
-    // The browser's reported MIME type is unreliable — for .mkv it is often an
-    // empty string — so a MIME-only check rejected valid videos.
-    if (!isAllowedVideoUpload(filename, contentType)) {
-      return res.status(400).json({
-        error: 'That file does not look like a video. Supported: MP4, MOV, AVI, MKV, WMV, 3GP, WEBM.'
-      });
+    // Single testable gate. contentType is NOT required: browsers frequently
+    // report an empty MIME type (notably for .mkv), so the filename extension
+    // acts as the fallback signal. See src/server/videoTypes.js.
+    const gate = validateUploadRequest({ filename, contentType, fileSize });
+    if (!gate.ok) {
+      return res.status(gate.status).json({ error: gate.error });
     }
     const ext = path.extname(filename).toLowerCase();
     const key = `uploads/${uuidv4()}${ext}`;

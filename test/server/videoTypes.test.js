@@ -79,3 +79,62 @@ test('extension is read from the basename of a path', () => {
   assert.strictEqual(extensionOf('C:\\Users\\me\\clip.mkv'), '.mkv');
   assert.strictEqual(extensionOf('/home/me/clip.mkv'), '.mkv');
 });
+
+// ---------------------------------------------------------------------------
+// Guard ORDER regression: the original handler checked `!contentType` before
+// the video-type check, so an empty MIME (what browsers send for .mkv) was
+// rejected as "Missing required fields" and the extension fallback never ran.
+// ---------------------------------------------------------------------------
+
+const { validateUploadRequest, MAX_UPLOAD_BYTES } = require('../../src/server/videoTypes');
+
+test('mkv with an EMPTY contentType passes the whole upload gate', () => {
+  const r = validateUploadRequest({
+    filename: 'holiday.mkv',
+    contentType: '',
+    fileSize: 14 * 1024 * 1024,
+  });
+  assert.deepStrictEqual(r, { ok: true });
+});
+
+test('a missing contentType key entirely still passes when the extension is a video', () => {
+  assert.deepStrictEqual(
+    validateUploadRequest({ filename: 'holiday.mkv', fileSize: 1000 }),
+    { ok: true }
+  );
+});
+
+test('normal mp4 upload passes', () => {
+  assert.deepStrictEqual(
+    validateUploadRequest({ filename: 'a.mp4', contentType: 'video/mp4', fileSize: 1000 }),
+    { ok: true }
+  );
+});
+
+test('a missing filename is still rejected', () => {
+  const r = validateUploadRequest({ contentType: 'video/mp4', fileSize: 1000 });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'Missing required fields');
+});
+
+test('a non-numeric fileSize is still rejected', () => {
+  const r = validateUploadRequest({ filename: 'a.mp4', contentType: 'video/mp4', fileSize: 'big' });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'Missing required fields');
+});
+
+test('oversize uploads are rejected before the type check', () => {
+  const r = validateUploadRequest({
+    filename: 'a.mp4',
+    contentType: 'video/mp4',
+    fileSize: MAX_UPLOAD_BYTES + 1,
+  });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /Max 300MB/);
+});
+
+test('a non-video with an empty contentType is rejected as not-a-video', () => {
+  const r = validateUploadRequest({ filename: 'resume.pdf', contentType: '', fileSize: 1000 });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /does not look like a video/);
+});

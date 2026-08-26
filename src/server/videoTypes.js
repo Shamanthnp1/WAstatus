@@ -112,3 +112,42 @@ module.exports = {
   isAllowedExtension,
   isAllowedVideoUpload,
 };
+
+/** Hard cap on a single upload (matches the client-side limit). */
+const MAX_UPLOAD_BYTES = 300 * 1024 * 1024;
+
+/**
+ * Validate an /api/upload-url request body.
+ *
+ * Kept as one pure function on purpose. The original inline version checked
+ * `!contentType` BEFORE the video-type check, so an empty MIME type (exactly
+ * what browsers send for .mkv) was rejected as "Missing required fields" and the
+ * extension fallback below never ran. Ordering bugs like that are invisible in
+ * review but obvious in a test, so the whole gate lives here.
+ *
+ * @param {{filename?: string, contentType?: string, fileSize?: any}} body
+ * @returns {{ok: true} | {ok: false, status: number, error: string}}
+ */
+function validateUploadRequest(body) {
+  const { filename, contentType, fileSize } = body || {};
+  const numericFileSize = Number(fileSize);
+
+  // contentType is deliberately NOT required — it is frequently empty.
+  if (!filename || !Number.isFinite(numericFileSize)) {
+    return { ok: false, status: 400, error: 'Missing required fields' };
+  }
+  if (numericFileSize > MAX_UPLOAD_BYTES) {
+    return { ok: false, status: 400, error: 'File too large! Max 300MB.' };
+  }
+  if (!isAllowedVideoUpload(filename, contentType)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'That file does not look like a video. Supported: MP4, MOV, AVI, MKV, WMV, 3GP, WEBM.',
+    };
+  }
+  return { ok: true };
+}
+
+module.exports.MAX_UPLOAD_BYTES = MAX_UPLOAD_BYTES;
+module.exports.validateUploadRequest = validateUploadRequest;
