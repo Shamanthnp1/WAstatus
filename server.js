@@ -26,6 +26,7 @@ const {
 const { Boom } = require('@hapi/boom');
 const { enforceInputLimits } = require('./src/server/inputLimits');
 const { validateUploadRequest } = require('./src/server/videoTypes');
+const { verifyChallenge, isValidSignature, summarizeEvent } = require('./src/server/metaWebhook');
 const { routeRecipes, collectAvailableAssets } = require('./src/server/processRouting');
 const { planRecipeAssets, markLoopingImageInputs } = require('./src/server/assetResolver');
 const { rasterizeTextOverlay } = require('./src/server/textRaster');
@@ -79,7 +80,11 @@ app.use(cors({
   methods: ['GET', 'POST'],
   credentials: true
 }));
-app.use(express.json());
+// Keep the exact bytes of the body so the Meta webhook can verify its
+// X-Hub-Signature-256 HMAC (which is computed over the raw payload).
+app.use(express.json({
+  verify: (req, res, buf) => { req.rawBody = buf; },
+}));
 app.use(express.static('public'));
 // Serve Bootstrap Icons fonts/CSS for the in-app editor controls.
 app.use('/vendor/bootstrap-icons', express.static(path.join(__dirname, 'node_modules/bootstrap-icons/font')));
@@ -1112,6 +1117,50 @@ app.get('/api/health', (req, res) => {
 
 app.get('/privacy', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
+});
+
+// ========================
+// META WEBHOOK (WhatsApp Cloud API / coexistence)
+// ========================
+// Required by Meta's "Configure Webhooks" production-setup step. Two behaviours:
+//   GET  /webhook -> echo hub.challenge when hub.verify_token matches ours.
+//   POST /webhook -> accept events and answer 200 fast, or Meta retries.
+//
+// This endpoint is RECEIVE-ONLY and has NO side effects: it does not send
+// messages, touch sessions, or trigger delivery. Message delivery stays on
+// Baileys, which is what preserves HD quality. It is intentionally public
+// (Meta must reach it unauthenticated), so it is protected by the verify token
+// on GET and, when META_APP_SECRET is set, an HMAC signature check on POST.
+const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || '';
+const META_APP_SECRET = process.env.META_APP_SECRET || '';
+
+app.get('/webhook', (req, res) => {
+  const result = verifyChallenge({
+    mode: req.query['hub.mode'],
+    token: req.query['hub.verify_token'],
+    challenge: req.query['hub.challenge'],
+  }, WEBHOOK_VERIFY_TOKEN);
+
+  if (!result.ok) {
+    console.warn(`Webhook verification refused: ${result.reason}`);
+    return res.sendStatus(result.status);
+  }
+  console.log('✓ Webhook verified by Meta');
+  res.status(200).send(result.challenge);
+});
+
+app.post('/webhook', (req, res) => {
+  if (!isValidSignature(req.rawBody, req.get('x-hub-signature-256'), META_APP_SECRET)) {
+    console.warn('Webhook POST rejected: bad X-Hub-Signature-256');
+    return res.sendStatus(403);
+  }
+  // Acknowledge immediately — Meta retries if we are slow.
+  res.sendStatus(200);
+  try {
+    console.log(`📩 Webhook event: ${summarizeEvent(req.body)}`);
+  } catch (err) {
+    console.error('Webhook logging error:', err.message);
+  }
 });
 
 app.post('/api/upload-url', limiter, async (req, res) => {
