@@ -328,6 +328,24 @@ function messageTimestampSeconds(ts) {
 // Set FPS_CAP=off to remove the flag and let the source frame rate survive.
 const FPS_CAP = process.env.FPS_CAP || '29.97';
 
+// Is a bare `ffmpeg` resolvable on PATH? Baileys needs this (it shells out to
+// `ffmpeg` for video thumbnails + metadata); our own encoding uses the
+// ffmpeg-static absolute path and does NOT depend on it. Cached after first call.
+let _ffmpegOnPath = null;
+function ffmpegOnPath() {
+  if (_ffmpegOnPath !== null) return _ffmpegOnPath;
+  try {
+    require('child_process').execFileSync('ffmpeg', ['-version'], {
+      stdio: 'ignore',
+      timeout: 5000,
+    });
+    _ffmpegOnPath = true;
+  } catch (_) {
+    _ffmpegOnPath = false;
+  }
+  return _ffmpegOnPath;
+}
+
 function getOutputOptions(duration, inputHeight = 1920, attempt = 0, enc = {}) {
   console.log(`✓ getOutputOptions called!`);
   // Encode target — defaults reproduce the exact WhatsApp_Spec 1080×1920 output
@@ -1120,9 +1138,16 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/health', (req, res) => {
+  // `ffmpegOnPath` matters for delivery quality, not just encoding: Baileys
+  // shells out to a BARE `ffmpeg` to build the video thumbnail and derive
+  // width/height/duration. Without it, outgoing videoMessages carry no
+  // metadata and WhatsApp re-encodes them when forwarded to Status instead of
+  // passing them through. Surfaced here so it can be verified, not assumed.
   res.json({
     status: '✓ Server Running!',
     baileys: baileysConnected ? 'connected' : 'disconnected',
+    ffmpegOnPath: ffmpegOnPath(),
+    fpsCap: FPS_CAP,
   });
 });
 
@@ -1689,6 +1714,16 @@ Local: http://localhost:${PORT}
     } catch (e) {
       console.error('Failed to clear baileys_auth:', e.message);
     }
+  }
+
+  // Surface the Baileys media dependency explicitly. Without a bare `ffmpeg` on
+  // PATH, Baileys silently ships videoMessages with no thumbnail/dimensions/
+  // duration, and WhatsApp re-encodes them at the Status step instead of
+  // forwarding them through.
+  if (ffmpegOnPath()) {
+    console.log('✓ ffmpeg is on PATH — Baileys can attach video thumbnail + metadata.');
+  } else {
+    console.warn('!!! ffmpeg is NOT on PATH. Baileys cannot build video thumbnails, so sent videos will lack metadata and WhatsApp will re-encode them on Status. Check the Dockerfile symlink.');
   }
 
   // Start Baileys after Express is up so QR shows in logs
