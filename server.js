@@ -883,13 +883,22 @@ function buildInboundText(code) { return pick(INBOUND_CODE_TEMPLATES)(code); }
 
 // The posting instructions are important, so they stay constant; only the
 // surrounding phrasing rotates.
+// Posting instructions.
+//
+// Why the download + re-send detour: forwarding the video straight from this
+// chat makes WhatsApp re-encode it at the Status step (you see a loading spinner
+// and the result is soft). Saving it and sending it back into the chat makes
+// WhatsApp re-upload it with its own full metadata, and forwarding THAT copy to
+// Status is instant and keeps full HD. Verified by testing both paths with the
+// same file. Baileys cannot attach everything a real WhatsApp client does
+// (notably no streamingSidecar), so this is handled in the instructions.
 const HD_STEPS =
-  '📱 *How to post as HD Status:*\n' +
-  '1. Tap & hold the video\n' +
-  '2. Tap "Forward"\n' +
-  '3. Select "My Status"\n' +
-  '4. Post directly — done!\n\n' +
-  '⚠️ *Important:* Do NOT edit or trim the video before posting — any editing re-compresses it and drops the quality. Just forward it as-is for full HD!';
+  '📱 *How to post in full HD:*\n' +
+  '1. Tap the video, then tap ⬇ *Download* to save it\n' +
+  '2. Back in this chat, tap 📎 → *Gallery* → send the same video here again\n' +
+  '3. On that *new* copy, tap the ↪ *Forward* icon → *My Status*\n' +
+  '4. Post — done!\n\n' +
+  '⚠️ *Important:* Steps 1–2 are what keep it in full HD — forwarding the original directly makes WhatsApp re-compress it. And do NOT edit or trim the video.';
 
 function buildVerifiedMessage(count) {
   const multi = count > 1;
