@@ -927,6 +927,41 @@ async function sendWhatsAppMessage(to, message) {
   await withTimeout(sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
 }
 
+/**
+ * Probe a video buffer for the metadata WhatsApp expects on a videoMessage.
+ *
+ * ffprobe needs a real path, so the buffer is written to a short-lived temp file
+ * and removed immediately. Failures are non-fatal: we return {} and the send
+ * proceeds without metadata rather than dropping the user's video.
+ *
+ * @param {Buffer} buffer encoded mp4 bytes
+ * @returns {Promise<{width?: number, height?: number, seconds?: number}>}
+ */
+async function probeVideoMeta(buffer) {
+  const tmp = path.join('compressed', `meta_${uuidv4()}.mp4`);
+  try {
+    await fs.promises.writeFile(tmp, buffer);
+    const [dims, duration] = await Promise.all([
+      getVideoDimensions(tmp),
+      getVideoDuration(tmp),
+    ]);
+    const meta = {};
+    if (Number.isFinite(dims?.width) && Number.isFinite(dims?.height)) {
+      meta.width = Math.round(dims.width);
+      meta.height = Math.round(dims.height);
+    }
+    if (Number.isFinite(duration) && duration > 0) {
+      meta.seconds = Math.round(duration);
+    }
+    return meta;
+  } catch (err) {
+    console.warn('Video metadata probe failed (sending without it):', err.message);
+    return {};
+  } finally {
+    await fs.promises.unlink(tmp).catch(() => { });
+  }
+}
+
 async function sendWhatsAppVideo(to, videoUrl, caption) {
   if (!sock || !baileysConnected) throw new Error('Baileys not connected');
   const jid = toJid(to);
@@ -945,16 +980,26 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
   });
   const videoBuffer = Buffer.from(r2Response.data);
 
+  // Baileys does NOT populate video metadata: its message builder computes
+  // `seconds` only for audio (mediaType === 'audio'), and backfills width/height
+  // from the 32x32 thumbnail probe. So videos ship with no duration and wrong or
+  // missing dimensions — unlike a real WhatsApp client, which always sends them.
+  // The receiving app then has to DECODE the file to derive them, and once it is
+  // decoding it re-encodes, which is what destroys quality when forwarding to
+  // Status. Probe the real values and pass them explicitly.
+  const meta = await probeVideoMeta(videoBuffer);
+
   await withTimeout(
     sock.sendMessage(jid, {
       video: videoBuffer,
       caption: caption,
       mimetype: 'video/mp4',
+      ...meta, // width, height, seconds — omitted entirely if the probe failed
     }),
     WA_VIDEO_SEND_TIMEOUT_MS,
     'WhatsApp video send'
   );
-  console.log('Video sent via Baileys! ✓');
+  console.log(`Video sent via Baileys! ✓ ${meta.width ? `(${meta.width}x${meta.height}, ${meta.seconds}s)` : '(metadata unavailable)'}`);
 }
 
 // ========================
