@@ -323,6 +323,11 @@ function messageTimestampSeconds(ts) {
 // ========================
 // FFMPEG OPTIONS
 // ========================
+// Output frame rate handed to ffmpeg's -r. Capping at ~30fps keeps WhatsApp from
+// re-encoding the clip at the Status step — it does not pass 60fps through.
+// Set FPS_CAP=off to remove the flag and let the source frame rate survive.
+const FPS_CAP = process.env.FPS_CAP || '29.97';
+
 function getOutputOptions(duration, inputHeight = 1920, attempt = 0, enc = {}) {
   console.log(`✓ getOutputOptions called!`);
   // Encode target — defaults reproduce the exact WhatsApp_Spec 1080×1920 output
@@ -349,7 +354,13 @@ function getOutputOptions(duration, inputHeight = 1920, attempt = 0, enc = {}) {
     '-profile:v', 'high',
     '-level:v', '4.0',
     '-x264-params', 'sei=0',
-    // '-r', '29.97',
+    // Frame-rate cap. This was disabled in "fps boosting" (2bbca92) to keep 60fps
+    // smoothness, but that removed the guard the earlier comment warned about:
+    // WhatsApp struggles with 60 FPS statuses and re-encodes them at the Status
+    // step, which destroys the passthrough this whole spec exists to achieve.
+    // Modern phones record 1080p60/4K60 by default, so most uploads were hitting it.
+    // Set FPS_CAP=off to restore the uncapped behaviour for comparison.
+    ...(FPS_CAP === 'off' ? [] : ['-r', FPS_CAP]),
     '-c:a', 'aac',
     '-ar', '44100',
     '-ac', '2',
