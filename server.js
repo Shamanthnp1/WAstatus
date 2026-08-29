@@ -895,7 +895,8 @@ function buildInboundText(code) { return pick(INBOUND_CODE_TEMPLATES)(code); }
 const HD_STEPS =
   '📱 *How to post in full HD:*\n' +
   '1. Tap the video, then tap ⬇ *Download* to save it\n' +
-  '2. Back in this chat, tap 📎 → *Gallery* → send the same video here again\n' +
+  '2. Send it into any chat — easiest is *Message yourself* — via 📎 → *Gallery*\n' +
+  '   (add your caption right there in "Add a caption…" if you want one)\n' +
   '3. On that *new* copy, tap the ↪ *Forward* icon → *My Status*\n' +
   '4. Post — done!\n\n' +
   '⚠️ *Important:* Steps 1–2 are what keep it in full HD — forwarding the original directly makes WhatsApp re-compress it. And do NOT edit or trim the video.';

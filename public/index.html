@@ -1054,6 +1054,46 @@
 
   <div class="container">
 
+    <!-- Change notice: the posting steps and caption handling both changed.
+         WhatsApp now re-compresses a video that's forwarded straight out of the
+         chat, so the flow is save -> re-send -> forward, and the caption is added
+         in WhatsApp at the re-send step instead of on this site. Dismissable. -->
+    <div id="sdChangeNotice" class="split-banner"
+         style="background:linear-gradient(90deg,#FFE2D9,#FFEAD1);border-color:var(--orange);position:relative;">
+      <div class="split-banner-icon">📢</div>
+      <div class="split-banner-text">
+        <h4>Posting steps have changed — please read</h4>
+        <p style="color:var(--olive);">
+          WhatsApp now re-compresses videos forwarded straight from the chat.
+          <strong>Save the video first, send it into any chat (e.g. "Message
+          yourself"), then forward that copy to My Status.</strong>
+          Full steps arrive with your video.
+          <br/>
+          <strong>Captions:</strong> add your caption in WhatsApp when you
+          re-send it — the caption box has been removed from this site because it
+          no longer carries over to Status.
+        </p>
+      </div>
+      <button id="sdChangeNoticeClose" aria-label="Dismiss"
+              style="position:absolute;right:8px;top:6px;background:transparent;border:none;color:var(--olive);font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+    </div>
+    <script>
+      (function () {
+        try {
+          var n = document.getElementById('sdChangeNotice');
+          if (!n) return;
+          // Version the key so a future notice can be shown again to everyone.
+          var KEY = 'sdNoticeDismissed_postingSteps_v1';
+          if (localStorage.getItem(KEY) === '1') { n.style.display = 'none'; return; }
+          var b = document.getElementById('sdChangeNoticeClose');
+          if (b) b.addEventListener('click', function () {
+            n.style.display = 'none';
+            try { localStorage.setItem(KEY, '1'); } catch (e) {}
+          });
+        } catch (e) {}
+      })();
+    </script>
+
     <!-- NEW — Split Feature Banner -->
     <div class="split-banner">
       <div class="split-banner-icon">✂️</div>
@@ -1106,36 +1146,13 @@
         </div>
       </div>
 
-      <!-- Caption input (optional) -->
-      <div id="captionSection" style="margin-top:20px;display:none;">
-        <label style="font-size:14px;color:var(--olive-soft);margin-bottom:8px;display:block;">
-          ✏️ Video Caption <span style="color:#C9D4A4;font-size:12px;">(optional)</span>
-        </label>
-        <textarea id="captionInput"
-          placeholder="Add a caption for your video... (shows on WhatsApp)"
-          maxlength="700"
-          style="width:100%;
-                 min-height:70px;
-                 max-height:150px;
-                 padding:14px;
-                 background:#FFF6EA;
-                 border:1px solid #E4D9C4;
-                 border-radius:10px;
-                 color:#515739;
-                 font-size:14px;
-                 font-family:'Segoe UI',sans-serif;
-                 resize:vertical;
-                 outline:none;
-                 transition:border-color 0.2s;"
-          oninput="updateCharCount()"
-          onfocus="this.style.borderColor='#FD4F2F'"
-          onblur="this.style.borderColor='#E4D9C4'"
-        ></textarea>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;">
-          <span style="font-size:11px;color:#C9D4A4;">Leave empty to send without caption</span>
-          <span id="charCount" style="font-size:11px;color:#C9D4A4;">0/700</span>
-        </div>
-      </div>
+      <!-- Caption input removed on purpose.
+           A caption set here only lands on the message the bot sends. Because
+           posting in full HD now requires saving the video and re-sending it,
+           WhatsApp treats that as a fresh upload and the original caption is
+           lost — so it never reached Status. Users add the caption in WhatsApp's
+           own "Add a caption..." box at the re-send step instead.
+           The server still accepts a `caption` field, so the API is unchanged. -->
 
       <style>
         .q-opts { display: flex; gap: 10px; margin-top: 16px; }
@@ -1519,8 +1536,10 @@
           <div class="step-item">
             <div class="step-num">3</div>
             <div class="step-text">
-              Back in the chat, tap <strong>📎</strong> →
-              <strong>Gallery</strong> → send the same video into the chat again
+              Send it into <strong>any chat</strong> — easiest is
+              <strong>Message yourself</strong> — via <strong>📎</strong> →
+              <strong>Gallery</strong>.
+              Add your caption there in <em>"Add a caption…"</em> if you want one
             </div>
           </div>
           <div class="step-item">
@@ -1945,7 +1964,7 @@
     if (files.length === 0) {
       filesList.classList.remove('visible');
       compressBtn.disabled = true;
-      document.getElementById('captionSection').style.display = 'none';
+      /* caption UI removed */
       resetEditor();
       showEditorToggle(false);
       var _lcHide = document.getElementById('longClipsRow'); if (_lcHide) _lcHide.style.display = 'none';
@@ -1954,7 +1973,7 @@
 
     filesList.classList.add('visible');
     compressBtn.disabled = false;
-    document.getElementById('captionSection').style.display = 'block';
+    /* caption UI removed */
     // Surface the optional "Edit videos" toggle (opens the full-screen editor).
     showEditorToggle(true);
     var _lcShow = document.getElementById('longClipsRow'); if (_lcShow) _lcShow.style.display = 'flex';
@@ -2173,6 +2192,9 @@
     });
   }
 
+  // Retained for safety only — the caption UI was removed (users caption the
+  // video in WhatsApp at the re-send step). Both lookups return null now, so the
+  // guard below makes this a no-op rather than an error.
   function updateCharCount() {
     const input = document.getElementById('captionInput');
     const count = document.getElementById('charCount');
@@ -2597,11 +2619,6 @@
     urgency.style.color = '#B26A00';
 
     renderFiles();
-
-    const captionInput = document.getElementById('captionInput');
-    if (captionInput) captionInput.value = '';
-    document.getElementById('captionSection').style.display = 'none';
-    updateCharCount();
 
     document.getElementById('progressCard').style.display = 'none';
     document.getElementById('fileCountInfo').style.display = 'none';
