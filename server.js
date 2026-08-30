@@ -27,6 +27,7 @@ const { Boom } = require('@hapi/boom');
 const { enforceInputLimits } = require('./src/server/inputLimits');
 const { validateUploadRequest } = require('./src/server/videoTypes');
 const { verifyChallenge, isValidSignature, summarizeEvent } = require('./src/server/metaWebhook');
+const { isStaleMessage, MessageDeduper, WelcomeThrottle } = require('./src/server/inboundGuards');
 const { routeRecipes, collectAvailableAssets } = require('./src/server/processRouting');
 const { planRecipeAssets, markLoopingImageInputs } = require('./src/server/assetResolver');
 const { rasterizeTextOverlay } = require('./src/server/textRaster');
@@ -306,19 +307,17 @@ function jidToNumber(jid) {
   return jid.split('@')[0];
 }
 
-// Incoming messages older than this (seconds) are treated as replays from a
-// reconnect/relink history sync, not live requests, and are ignored. A real
-// user sends their code within seconds of receiving it, so this window is safe.
-const STALE_MESSAGE_SECONDS = 90;
 
-// Normalize Baileys' messageTimestamp (number | Long | string) to seconds.
-function messageTimestampSeconds(ts) {
-  if (ts == null) return 0;
-  if (typeof ts === 'number') return ts;
-  if (typeof ts.toNumber === 'function') { try { return ts.toNumber(); } catch (_) { return 0; } }
-  const n = Number(ts);
-  return Number.isFinite(n) ? n : 0;
-}
+
+// Inbound guards (see src/server/inboundGuards.js for the full rationale).
+// These exist because one customer received the welcome reply eight times in a
+// minute: history replays looked live, duplicate deliveries were answered twice,
+// and there was no per-sender throttle at all.
+const messageDeduper = new MessageDeduper();
+const welcomeThrottle = new WelcomeThrottle();
+
+// Keep the throttle map from growing unbounded on a long-running process.
+setInterval(() => welcomeThrottle.prune(), 10 * 60 * 1000).unref?.();
 
 // ========================
 // FFMPEG OPTIONS
@@ -778,6 +777,24 @@ async function startBaileys() {
         if (!msg.message || msg.key.fromMe) continue;
         const from = msg.key.remoteJid;
         if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
+
+        // GUARD 1 — drop history replays. On reconnect/relink Baileys re-emits
+        // old messages as type 'notify', so they looked brand new and were
+        // answered again.
+        const staleness = isStaleMessage(msg.messageTimestamp);
+        if (staleness.stale) {
+          console.log(`Ignoring stale message from ${jidToNumber(from)} (${staleness.ageSeconds}s old)`);
+          continue;
+        }
+
+        // GUARD 2 — exact-duplicate suppression. WhatsApp can deliver the same
+        // message id more than once; two upsert events for one message would
+        // otherwise produce two replies.
+        if (messageDeduper.isDuplicate(msg.key.id)) {
+          console.log(`Duplicate message id ${msg.key.id} — ignored`);
+          continue;
+        }
+
         const text = msg.message.conversation
           || msg.message.extendedTextMessage?.text
           || msg.message.imageMessage?.caption
@@ -1032,10 +1049,20 @@ async function handleIncomingMessage(from, text) {
     || text?.match(/\b([A-Z0-9]{9})\b/);
 
   if (!codeMatch) {
+    // GUARD 3 — one welcome per sender per cooldown window. Someone typing
+    // "hi", "hello", "?" in quick succession used to get a reply to every one,
+    // which reads as spam and is exactly the behaviour that gets a number
+    // reported. Silence is the right response to a repeat non-code message.
+    if (!welcomeThrottle.shouldSend(from)) {
+      console.log(`Welcome already sent to ${jidToNumber(from)} recently — staying quiet`);
+      return;
+    }
+    welcomeThrottle.markSent(from);
     try {
       await sendWhatsAppMessage(from, pick(WELCOME_MESSAGES));
     } catch (err) {
       console.error('Failed welcome message:', err.message);
+      welcomeThrottle.clear(from); // send failed — allow a retry next time
     }
     return;
   }
