@@ -28,6 +28,7 @@ const { enforceInputLimits } = require('./src/server/inputLimits');
 const { validateUploadRequest } = require('./src/server/videoTypes');
 const { verifyChallenge, isValidSignature, summarizeEvent } = require('./src/server/metaWebhook');
 const { isStaleMessage, MessageDeduper, WelcomeThrottle } = require('./src/server/inboundGuards');
+const { JobStore } = require('./src/server/jobStore');
 const { routeRecipes, collectAvailableAssets } = require('./src/server/processRouting');
 const { planRecipeAssets, markLoopingImageInputs } = require('./src/server/assetResolver');
 const { rasterizeTextOverlay } = require('./src/server/textRaster');
@@ -1303,7 +1304,53 @@ app.post('/api/upload-url', limiter, async (req, res) => {
   }
 });
 
+// Background job store for /api/process. See src/server/jobStore.js for why.
+const jobStore = new JobStore();
+setInterval(() => jobStore.sweep(), 5 * 60 * 1000).unref?.();
+
+/**
+ * Poll a background job. The client hits this after /api/process hands back a
+ * jobId, so a killed connection (Azure's ~240s cap, a backgrounded mobile tab,
+ * flaky network) no longer loses the activation code.
+ */
+app.get('/api/job/:jobId', (req, res) => {
+  const job = jobStore.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found or expired. Please compress again.' });
+  }
+  if (job.status === 'processing') return res.json({ status: 'processing' });
+  if (job.status === 'done') return res.json({ status: 'done', ...job.result });
+  return res.json({ status: 'error', ...job.error, httpStatus: job.httpStatus });
+});
+
 app.post('/api/process', limiter, async (req, res) => {
+  // Async mode: answer immediately with a jobId and finish the work in the
+  // background. The client opts in with `async: true`, so an older cached
+  // frontend still gets the original synchronous response and keeps working
+  // during the window where Vercel and Azure are on different versions.
+  const asyncMode = req.body && req.body.async === true;
+  let jobId = null;
+  if (asyncMode) {
+    jobId = jobStore.create();
+    res.status(202).json({ jobId });
+  }
+
+  // Routes each of the handler's responses to either the live HTTP response
+  // (sync mode) or the job record (async mode), so the logic below is identical
+  // in both modes.
+  const reply = {
+    json: (body) => {
+      if (asyncMode) jobStore.resolve(jobId, body);
+      else res.json(body);
+    },
+    status: (code) => ({
+      json: (body) => {
+        if (asyncMode) jobStore.reject(jobId, code, body);
+        else res.status(code).json(body);
+      },
+    }),
+  };
+
   try {
     const { files } = req.body;
 
@@ -1321,7 +1368,7 @@ app.post('/api/process', limiter, async (req, res) => {
         : undefined,
     });
     if (!gate.ok) {
-      return res.status(400).json({ error: gate.error, limit: gate.limit });
+      return reply.status(400).json({ error: gate.error, limit: gate.limit });
     }
 
     // Process only the retained set (first 3 videos in upload order).
@@ -1684,7 +1731,7 @@ app.post('/api/process', limiter, async (req, res) => {
       const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
       const waText = buildInboundText(activationCode);
       const waLink = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(waText)}`;
-      res.json({ success: true, activationCode, waLink, fileCount: r2Files.length });
+      reply.json({ success: true, activationCode, waLink, fileCount: r2Files.length });
 
     } catch (processingError) {
       // A recipe that failed validation rejects the request with HTTP 400,
@@ -1696,7 +1743,7 @@ app.post('/api/process', limiter, async (req, res) => {
           try { await deleteFromR2(key); } catch (cleanupErr) { console.error(`Failed cleanup ${key}:`, cleanupErr.message); }
         }
         const ve = processingError.validationError || {};
-        return res.status(400).json({
+        return reply.status(400).json({
           error: processingError.message,
           field: ve.field,
           bound: ve.bound,
@@ -1709,7 +1756,7 @@ app.post('/api/process', limiter, async (req, res) => {
       // Cleanup_Process below.
       if (processingError && processingError.isRenderError) {
         console.error(`✗ Render failed: ${processingError.message}`);
-        return res.status(422).json({
+        return reply.status(422).json({
           error: processingError.message,
           fileName: processingError.fileName,
           cause: processingError.cause,
@@ -1747,7 +1794,7 @@ app.post('/api/process', limiter, async (req, res) => {
     }
   } catch (error) {
     console.error('✗ Process error:', error);
-    res.status(500).json({ error: error.message });
+    reply.status(500).json({ error: error.message });
   }
 });
 

@@ -2346,10 +2346,19 @@
       const totalSizeMB = filesToProcess.reduce((s, f) => s + f.size, 0) / (1024 * 1024);
       startProcessingSimulation(totalSizeMB);
 
-      // ✅ Add timeout to process request
-      const processController = new AbortController();
-      const processTimeoutId = setTimeout(() => processController.abort(), 900000); // 15 min
+      // Kick off processing. `async: true` makes the server answer immediately
+      // with a jobId and encode in the background, then we poll for the result.
+      //
+      // Why: holding one request open for the whole encode broke in three ways —
+      // Azure App Service cuts any request at ~240s, mobile browsers suspend
+      // backgrounded tabs (switching apps mid-compress surfaced "Failed to
+      // fetch"), and any network blip lost the activation code even though the
+      // server had finished. Polling separates "work finished" from "client
+      // currently connected".
+      const startController = new AbortController();
+      const startTimeoutId = setTimeout(() => startController.abort(), 60000);
 
+      let startBody;
       try {
         const processRes = await fetch(`${BACKEND_URL}/api/process`, {
           method: 'POST',
@@ -2357,30 +2366,39 @@
           body: JSON.stringify({
             files: allFileInfos,
             recipes: getEditorRecipes(),
-            caption: document.getElementById('captionInput')?.value.trim() || '',
-            longClips: (document.querySelector('input[name="quality"]:checked') || {}).value === 'long'
+            longClips: (document.querySelector('input[name="quality"]:checked') || {}).value === 'long',
+            async: true
           }),
-          signal: processController.signal
+          signal: startController.signal
         });
-
-        clearTimeout(processTimeoutId);
-        stopProcessingSimulation();
+        clearTimeout(startTimeoutId);
 
         if (!processRes.ok) {
-          const err = await processRes.json();
+          const err = await processRes.json().catch(() => ({}));
+          stopProcessingSimulation();
           throw new Error(err.error || 'Processing failed');
         }
-
-        const result = await processRes.json();
-        updateProgressBar(98);
-        setStatus('✅', 'Almost done...');
-
-        return result;
-
+        startBody = await processRes.json();
       } catch (err) {
-        clearTimeout(processTimeoutId);
+        clearTimeout(startTimeoutId);
+        stopProcessingSimulation();
         throw err;
       }
+
+      // An older backend (or a deploy still rolling out) ignores `async` and
+      // returns the finished result directly — accept that too.
+      if (!startBody.jobId) {
+        stopProcessingSimulation();
+        updateProgressBar(98);
+        setStatus('✅', 'Almost done...');
+        return startBody;
+      }
+
+      const result = await pollJobUntilDone(startBody.jobId);
+      stopProcessingSimulation();
+      updateProgressBar(98);
+      setStatus('✅', 'Almost done...');
+      return result;
 
     } finally {
       releaseWakeLock();
@@ -2388,10 +2406,95 @@
   }
 
   // ========================
+  // JOB POLLING
+  // ========================
+  // Waits `ms`, but returns early if the tab becomes visible again — so coming
+  // back from another app resumes immediately instead of sitting out the delay.
+  function sleepOrVisible(ms) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        document.removeEventListener('visibilitychange', onVisible);
+        resolve();
+      };
+      const onVisible = () => { if (!document.hidden) finish(); };
+      const timer = setTimeout(finish, ms);
+      document.addEventListener('visibilitychange', onVisible);
+    });
+  }
+
+  // Poll a background job to completion.
+  //
+  // The important behaviour: a failed poll is NOT an error. While the tab is
+  // backgrounded the browser may refuse or kill fetches, which is exactly what
+  // produced "Failed to fetch" before. Those are swallowed and retried, because
+  // the server keeps encoding regardless of whether we're connected.
+  async function pollJobUntilDone(jobId) {
+    const POLL_INTERVAL_MS = 3000;
+    const MAX_WAIT_MS = 20 * 60 * 1000;
+    const MAX_CONSECUTIVE_NETWORK_FAILURES = 40; // ~2 min of solid failure
+    const startedAt = Date.now();
+    let consecutiveFailures = 0;
+
+    while (Date.now() - startedAt < MAX_WAIT_MS) {
+      await sleepOrVisible(POLL_INTERVAL_MS);
+
+      let res;
+      try {
+        res = await fetch(`${BACKEND_URL}/api/job/${encodeURIComponent(jobId)}`, {
+          cache: 'no-store'
+        });
+      } catch (err) {
+        // Offline, or the tab was suspended mid-request. Keep waiting.
+        if (++consecutiveFailures > MAX_CONSECUTIVE_NETWORK_FAILURES) {
+          throw new Error('Lost connection while processing. Please check your internet and try again.');
+        }
+        continue;
+      }
+
+      if (res.status === 404) {
+        throw new Error('This job expired. Please compress again.');
+      }
+      if (!res.ok) {
+        if (++consecutiveFailures > MAX_CONSECUTIVE_NETWORK_FAILURES) {
+          throw new Error('Server error while processing. Please try again.');
+        }
+        continue;
+      }
+
+      consecutiveFailures = 0;
+
+      let body;
+      try {
+        body = await res.json();
+      } catch (err) {
+        continue; // truncated response — just poll again
+      }
+
+      if (body.status === 'processing') continue;
+      if (body.status === 'error') throw new Error(body.error || 'Processing failed');
+      if (body.status === 'done') return body;
+    }
+
+    throw new Error('Processing is taking longer than expected. Please try again.');
+  }
+
+  // ========================
   // PROGRESS SIMULATION
   // Scales with file size so it doesn't freeze
   // ========================
   let processingInterval = null;
+
+  // The screen wake lock is released by the browser whenever the page is hidden,
+  // so re-acquire it when the user returns while a job is still running.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && processingInterval) {
+      requestWakeLock().catch(() => { });
+    }
+  });
 
   function startProcessingSimulation(totalSizeMB) {
     let current = 50;
