@@ -121,7 +121,7 @@ Finished job records are stored in process memory for a limited time. Jobs and a
 |---|---|
 | Frontend | Vanilla HTML/CSS/JavaScript, static deployment on Vercel |
 | Editor | Browser-side recipe/state UI; server-side rendering |
-| Backend | Node.js 20, Express 5 |
+| Backend | Node.js 24, Express 5 |
 | Video | ffmpeg/ffprobe via `ffmpeg-static` and `ffprobe-static` |
 | Rasterization | `@napi-rs/canvas`, Pako and Lottie infrastructure |
 | Storage | Cloudflare R2 through the AWS SDK v3 S3-compatible API |
@@ -134,7 +134,7 @@ Finished job records are stored in process memory for a limited time. Jobs and a
 
 ### Requirements
 
-- Node.js 20 (the deployed Docker baseline)
+- Node.js 24 (the deployed Docker baseline)
 - npm
 - Cloudflare R2 credentials and a compatible upload Worker for the full hosted flow
 - A WhatsApp account/number for the Baileys linked-device session
@@ -227,7 +227,7 @@ public/privacy.html             Production privacy disclosure
 scripts/subscribe-whatsapp-webhook.js
                                 Optional Meta webhook subscription helper
 test/                           Unit, property-based and integration-shaped tests
-Dockerfile                      Node 20 Azure/GHCR production image
+Dockerfile                      Node 24 Azure/GHCR production image
 vercel.json                     Static frontend output + old locale redirects
 .github/workflows/deploy-azure.yml
                                 GHCR build and optional Azure webhook trigger
@@ -243,7 +243,7 @@ The root `vercel.json` publishes `public/`. Previous `/hi`, `/es` and `/pt` rout
 
 The Dockerfile:
 
-- uses `node:20-bullseye-slim`;
+- uses `node:24-bookworm-slim`;
 - installs production dependencies with `npm ci --omit=dev`;
 - exposes port 3000;
 - links the packaged ffmpeg binary to `/usr/local/bin/ffmpeg`; and

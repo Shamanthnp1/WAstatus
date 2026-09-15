@@ -1,4 +1,4 @@
-FROM node:20-bullseye-slim
+FROM node:24-bookworm-slim
 
 # Install ca-certificates (HTTPS) and libfontconfig1 (font support for
 # @napi-rs/canvas text rasterization on the slim Debian image).
