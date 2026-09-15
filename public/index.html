@@ -289,6 +289,187 @@
       font-size: 14px;
     }
 
+    /* Nine-step visual guide: horizontally scrollable, touch-first, and kept
+       outside the task-critical upload card. Full-size posters open separately. */
+    .tutorial-section {
+      background: var(--sage);
+      border-top: 1px solid var(--border-strong);
+      border-bottom: 1px solid var(--border-strong);
+      padding: 32px 0 26px;
+    }
+
+    .tutorial-header {
+      width: min(1080px, 100%);
+      margin: 0 auto 18px;
+      padding: 0 20px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .tutorial-copy { max-width: 620px; }
+
+    .tutorial-eyebrow {
+      color: var(--orange-deep);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .tutorial-title {
+      color: var(--olive);
+      font-size: 28px;
+      line-height: 1.2;
+      margin-bottom: 6px;
+    }
+
+    .tutorial-description {
+      color: var(--olive-soft);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .tutorial-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .tutorial-position {
+      min-width: 82px;
+      color: var(--olive);
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .tutorial-arrow {
+      width: 44px;
+      height: 44px;
+      border: 1px solid var(--border-strong);
+      border-radius: 50%;
+      background: var(--surface);
+      color: var(--olive);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+      transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
+    }
+
+    .tutorial-arrow:hover:not(:disabled) {
+      background: var(--orange);
+      color: var(--on-accent);
+      transform: translateY(-1px);
+    }
+
+    .tutorial-arrow:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .tutorial-arrow:focus-visible,
+    .tutorial-track:focus-visible,
+    .tutorial-image-link:focus-visible {
+      outline: 3px solid var(--orange);
+      outline-offset: 3px;
+    }
+
+    .tutorial-track {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: max-content;
+      gap: 16px;
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+      scroll-snap-type: inline mandatory;
+      scroll-padding-inline: max(20px, calc((100vw - 1080px) / 2));
+      padding: 4px max(20px, calc((100vw - 1080px) / 2)) 18px;
+      list-style: none;
+      scrollbar-color: var(--orange) var(--surface-soft);
+      scrollbar-width: thin;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .tutorial-track::-webkit-scrollbar { height: 7px; }
+    .tutorial-track::-webkit-scrollbar-track { background: var(--surface-soft); }
+    .tutorial-track::-webkit-scrollbar-thumb { background: var(--orange); }
+
+    .tutorial-card {
+      width: clamp(220px, 68vw, 270px);
+      scroll-snap-align: center;
+      scroll-snap-stop: always;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .tutorial-image-link {
+      display: block;
+      background: var(--olive);
+      text-decoration: none;
+    }
+
+    .tutorial-image {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 793 / 1983;
+      object-fit: cover;
+      display: block;
+    }
+
+    .tutorial-card-copy {
+      padding: 14px 16px 16px;
+    }
+
+    .tutorial-card-step {
+      display: block;
+      color: var(--orange-deep);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 3px;
+    }
+
+    .tutorial-card-title {
+      color: var(--olive);
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .tutorial-zoom-hint {
+      display: block;
+      color: var(--olive-soft);
+      font-size: 12px;
+      margin-top: 5px;
+    }
+
+    @media (max-width: 600px) {
+      .tutorial-section { padding-top: 26px; }
+      .tutorial-header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .tutorial-title { font-size: 24px; }
+      .tutorial-controls { width: 100%; justify-content: space-between; }
+      .tutorial-card { width: min(72vw, 270px); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .tutorial-arrow { transition: none; }
+      .tutorial-track { scroll-behavior: auto; }
+    }
+
     /* NEW — split feature banner */
     .split-banner {
       background: linear-gradient(90deg, #EFF3DE, #DCE4B8);
@@ -984,6 +1165,235 @@
       <span class="badge">🌍 Works Worldwide</span>
     </div>
   </div>
+
+  <!-- VISUAL TUTORIAL — manual horizontal scroll; no autoplay so users can
+       read each step at their own pace. Posters open full-size for zooming. -->
+  <section class="tutorial-section" aria-labelledby="tutorialTitle">
+    <div class="tutorial-header">
+      <div class="tutorial-copy">
+        <div class="tutorial-eyebrow">9-step visual guide</div>
+        <h2 class="tutorial-title" id="tutorialTitle">Post your video in full HD</h2>
+        <p class="tutorial-description">
+          Swipe through the complete WhatsApp flow. Tap any image to open it full size.
+        </p>
+      </div>
+      <div class="tutorial-controls" aria-label="Tutorial controls">
+        <button class="tutorial-arrow" id="tutorialPrev" type="button"
+                aria-label="Previous tutorial step" aria-controls="tutorialTrack" disabled>
+          &lsaquo;
+        </button>
+        <span class="tutorial-position" id="tutorialPosition" aria-live="polite">Step 1 of 9</span>
+        <button class="tutorial-arrow" id="tutorialNext" type="button"
+                aria-label="Next tutorial step" aria-controls="tutorialTrack">
+          &rsaquo;
+        </button>
+      </div>
+    </div>
+
+    <ol class="tutorial-track" id="tutorialTrack" tabindex="0"
+        aria-label="Nine-step WhatsApp Status posting tutorial">
+      <li class="tutorial-card" data-step="1" aria-label="Step 1 of 9" aria-current="step">
+        <a class="tutorial-image-link" href="/tutorial/01-activate-on-whatsapp.png"
+           target="_blank" rel="noopener" aria-label="Open step 1 image full size">
+          <img class="tutorial-image" src="/tutorial/01-activate-on-whatsapp.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 1: On StatusDrop, read the instructions and tap Activate on WhatsApp."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 1 of 9</span>
+          <div class="tutorial-card-title">Activate on WhatsApp</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="2" aria-label="Step 2 of 9">
+        <a class="tutorial-image-link" href="/tutorial/02-send-the-code.png"
+           target="_blank" rel="noopener" aria-label="Open step 2 image full size">
+          <img class="tutorial-image" src="/tutorial/02-send-the-code.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 2: In WhatsApp, send the activation message that is already filled in."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 2 of 9</span>
+          <div class="tutorial-card-title">Send the code</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="3" aria-label="Step 3 of 9">
+        <a class="tutorial-image-link" href="/tutorial/03-read-and-download.png"
+           target="_blank" rel="noopener" aria-label="Open step 3 image full size">
+          <img class="tutorial-image" src="/tutorial/03-read-and-download.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 3: Read the posting instructions in the StatusDrop chat and download the delivered video."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 3 of 9</span>
+          <div class="tutorial-card-title">Read and download</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="4" aria-label="Step 4 of 9">
+        <a class="tutorial-image-link" href="/tutorial/04-open-chat-and-gallery.png"
+           target="_blank" rel="noopener" aria-label="Open step 4 image full size">
+          <img class="tutorial-image" src="/tutorial/04-open-chat-and-gallery.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 4: Open any chat, tap the paperclip attachment button, and choose Gallery."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 4 of 9</span>
+          <div class="tutorial-card-title">Open a chat and Gallery</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="5" aria-label="Step 5 of 9">
+        <a class="tutorial-image-link" href="/tutorial/05-select-your-video.png"
+           target="_blank" rel="noopener" aria-label="Open step 5 image full size">
+          <img class="tutorial-image" src="/tutorial/05-select-your-video.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 5: In Gallery Recents, select the StatusDrop video you just downloaded."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 5 of 9</span>
+          <div class="tutorial-card-title">Select your video</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="6" aria-label="Step 6 of 9">
+        <a class="tutorial-image-link" href="/tutorial/06-add-caption-and-send.png"
+           target="_blank" rel="noopener" aria-label="Open step 6 image full size">
+          <img class="tutorial-image" src="/tutorial/06-add-caption-and-send.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 6: Confirm HD is enabled, optionally add a caption, and send the video into the chat."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 6 of 9</span>
+          <div class="tutorial-card-title">Add a caption and send</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="7" aria-label="Step 7 of 9">
+        <a class="tutorial-image-link" href="/tutorial/07-forward-the-new-video.png"
+           target="_blank" rel="noopener" aria-label="Open step 7 image full size">
+          <img class="tutorial-image" src="/tutorial/07-forward-the-new-video.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 7: Tap Forward on the new video copy you just sent, not the original bot message."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 7 of 9</span>
+          <div class="tutorial-card-title">Forward the new video</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="8" aria-label="Step 8 of 9">
+        <a class="tutorial-image-link" href="/tutorial/08-choose-status-and-send.png"
+           target="_blank" rel="noopener" aria-label="Open step 8 image full size">
+          <img class="tutorial-image" src="/tutorial/08-choose-status-and-send.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 8: Select My status on the Forward to screen and tap Send."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 8 of 9</span>
+          <div class="tutorial-card-title">Choose My Status and send</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+
+      <li class="tutorial-card" data-step="9" aria-label="Step 9 of 9">
+        <a class="tutorial-image-link" href="/tutorial/09-status-posted.png"
+           target="_blank" rel="noopener" aria-label="Open step 9 image full size">
+          <img class="tutorial-image" src="/tutorial/09-status-posted.png"
+               width="793" height="1983" loading="lazy" decoding="async" fetchpriority="low"
+               alt="Step 9: The full-HD video is posted successfully to My status."/>
+        </a>
+        <div class="tutorial-card-copy">
+          <span class="tutorial-card-step">Step 9 of 9</span>
+          <div class="tutorial-card-title">Done! Status posted</div>
+          <span class="tutorial-zoom-hint">Tap image to view full size</span>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <script>
+    (function () {
+      var track = document.getElementById('tutorialTrack');
+      var prev = document.getElementById('tutorialPrev');
+      var next = document.getElementById('tutorialNext');
+      var position = document.getElementById('tutorialPosition');
+      if (!track || !prev || !next || !position) return;
+
+      var cards = Array.prototype.slice.call(track.querySelectorAll('.tutorial-card'));
+      var current = 0;
+      var scrollFrame = null;
+      var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      function updateControls() {
+        prev.disabled = current <= 0;
+        next.disabled = current >= cards.length - 1;
+        position.textContent = 'Step ' + (current + 1) + ' of ' + cards.length;
+        cards.forEach(function (card, index) {
+          if (index === current) card.setAttribute('aria-current', 'step');
+          else card.removeAttribute('aria-current');
+        });
+      }
+
+      function goTo(index) {
+        current = Math.max(0, Math.min(cards.length - 1, index));
+        var card = cards[current];
+        var left = card.offsetLeft - ((track.clientWidth - card.offsetWidth) / 2);
+        track.scrollTo({ left: Math.max(0, left), behavior: reducedMotion ? 'auto' : 'smooth' });
+        updateControls();
+      }
+
+      function syncToScroll() {
+        scrollFrame = null;
+        var center = track.scrollLeft + (track.clientWidth / 2);
+        var nearest = 0;
+        var distance = Infinity;
+        cards.forEach(function (card, index) {
+          var cardCenter = card.offsetLeft + (card.offsetWidth / 2);
+          var delta = Math.abs(center - cardCenter);
+          if (delta < distance) {
+            distance = delta;
+            nearest = index;
+          }
+        });
+        if (nearest !== current) {
+          current = nearest;
+          updateControls();
+        }
+      }
+
+      prev.addEventListener('click', function () { goTo(current - 1); });
+      next.addEventListener('click', function () { goTo(current + 1); });
+      track.addEventListener('scroll', function () {
+        if (!scrollFrame) scrollFrame = requestAnimationFrame(syncToScroll);
+      }, { passive: true });
+      track.addEventListener('keydown', function (event) {
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          goTo(current - 1);
+        } else if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          goTo(current + 1);
+        } else if (event.key === 'Home') {
+          event.preventDefault();
+          goTo(0);
+        } else if (event.key === 'End') {
+          event.preventDefault();
+          goTo(cards.length - 1);
+        }
+      });
+      window.addEventListener('resize', syncToScroll, { passive: true });
+      updateControls();
+    })();
+  </script>
 
   <!-- STATS BAR -->
   <div style="background:#F5F0E2;
