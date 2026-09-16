@@ -45,20 +45,18 @@ These observations show that **direct delivery provenance and the Gallery-resend
 - Accepts up to **3 videos / 300 MB total** per request.
 - Supports common ffmpeg-readable formats, including MP4, MOV, AVI, MKV, 3GP, WMV, WebM, M4V, MPEG/MPG, FLV, TS/MTS and M2TS.
 - Uses a tested default profile targeting **1080 × 1920 H.264/AAC** output and approximately **29-second** parts.
-- Offers an optional **720 × 1280 / approximately 59-second** mode for videos that have no editor recipe. If a video is edited, it uses the edited 1080p/approximately-29-second path even when longer-clips mode is selected.
-- Includes an optional beta editor for **trim, styled text overlays, and static stickers**.
-- Validates edit recipes and folds edits into the server compression pass instead of rendering in the browser.
+- Offers an optional **720 × 1280 / approximately 59-second** mode for fewer, longer parts.
 - Uploads files directly from the browser to Cloudflare storage through an upload Worker, including multipart uploads for large files.
 - Runs processing as a background job and polls for completion, so switching apps or temporarily losing the browser connection does not stop the server encode.
 - Returns a short-lived activation code and delivers all output clips to the WhatsApp account that sends that code.
 - Requires no StatusDrop login and adds no watermark.
 
-Music, original-audio controls and animated-sticker controls exist as unfinished/disabled beta infrastructure and are not current public editor features. The public interface is currently English-only.
+The public website intentionally focuses on compression and delivery without video-editing controls. The interface is currently English-only.
 
 ## User flow
 
-1. Select up to three videos and optionally apply supported edits.
-2. Choose the default 1080p profile or the 720p longer-clips profile. Longer clips apply only to videos without editor changes; edited videos use the 1080p/approximately-29-second recipe path.
+1. Select up to three videos.
+2. Choose the default 1080p profile or the 720p longer-clips profile.
 3. The browser obtains upload URLs from `POST /api/upload-url` and uploads media directly through the external Cloudflare Worker.
 4. The frontend starts `POST /api/process` with `async: true`, receives a job ID, and polls `GET /api/job/:jobId` while the backend downloads, validates, renders, compresses, splits, and uploads the results.
 5. StatusDrop returns a nine-character activation code and a WhatsApp deep link. The code is valid for approximately five minutes.
@@ -71,7 +69,7 @@ Music, original-audio controls and animated-sticker controls exist as unfinished
 ```text
 ┌────────────────────────────┐
 │ Static frontend on Vercel  │
-│ upload + optional editor   │
+│ upload + quality choice    │
 └─────────────┬──────────────┘
               │ request upload URL
               ▼
@@ -105,9 +103,6 @@ The upload Worker's source and production Cloudflare configuration are not part 
 | `POST /api/upload-url` | Validate upload metadata and return a Worker upload URL/key |
 | `POST /api/process` | Start processing; async clients receive HTTP 202 and a job ID |
 | `GET /api/job/:jobId` | Poll processing, completion or error state |
-| `GET /api/library` | Curated media-library metadata used by editor infrastructure |
-| `POST /api/music/upload-url` | Optional asset-upload infrastructure; public Music UI is currently disabled |
-| `POST /api/music/validate` | Validate uploaded editor assets |
 | `GET /webhook` | Optional Meta webhook verification |
 | `POST /webhook` | Receive-only Meta event intake; HMAC-verified when `META_APP_SECRET` is configured |
 
@@ -120,7 +115,6 @@ Finished job records are stored in process memory for a limited time. Jobs and a
 | Layer | Technology |
 |---|---|
 | Frontend | Vanilla HTML/CSS/JavaScript, static deployment on Vercel |
-| Editor | Browser-side recipe/state UI; server-side rendering |
 | Backend | Node.js 24, Express 5 |
 | Video | ffmpeg/ffprobe via `ffmpeg-static` and `ffprobe-static` |
 | Rasterization | `@napi-rs/canvas`, Pako and Lottie infrastructure |
@@ -152,8 +146,7 @@ npm ci
 # Run the automated suite once
 npm test
 
-# Local editor/render harness (default http://localhost:8080)
-# Uses local ffmpeg, but not R2 or WhatsApp delivery.
+# Local static/render development harness (default http://localhost:8080)
 node dev-server.js
 
 # Full server (default http://localhost:3000)
@@ -222,7 +215,7 @@ src/server/                     Validation, jobs, rendering, cleanup, webhooks
 src/shared/constants.js         Shared media/profile limits
 dev-server.js                   Local editor + ffmpeg render harness
 public/index.html               Production single-page frontend
-public/js/                      Editor state, audio model and UI
+public/js/                      Legacy rendering modules retained for tests
 public/privacy.html             Production privacy disclosure
 scripts/subscribe-whatsapp-webhook.js
                                 Optional Meta webhook subscription helper
@@ -303,7 +296,7 @@ Network services and Baileys are mocked in relevant integration tests. Job tests
 - Processing jobs and activation sessions are in memory and are lost on backend restart.
 - The current deployment assumes one active backend instance and one Baileys session.
 - Default limits are three videos and 300 MB total; the activation code expires after approximately five minutes.
-- The public editor does not currently provide crop, music, original-audio controls or animated-sticker features.
+- The public website intentionally provides compression and delivery only, without video-editing controls.
 - The upload Worker and production cloud configuration are maintained outside this repository.
 
 ## Contributing
