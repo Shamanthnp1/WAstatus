@@ -1833,12 +1833,8 @@
               05:00
             </div>
             <div style="font-size:11px;color:var(--olive-soft);margin-top:4px;">
-              Send code before timer runs out!
+              Send code before timer runs out. For privacy, this limit cannot be extended.
             </div>
-            <button id="extendTimeBtn" type="button" class="code-copy"
-                    onclick="extendActivationTime()" style="margin-top:10px;">
-              Extend time by 5 minutes
-            </button>
           </div>
 
           <!-- ✅ NEW: Expired state (hidden initially) -->
@@ -3301,7 +3297,6 @@
   var oldSuccess=showSuccess; showSuccess=function(){oldSuccess();setTimeout(function(){document.getElementById('successHeading')?.focus();announce('WhatsApp opened. Follow the posting instructions.');},150);};
 
   copyCode=async function(){var btn=document.querySelector('.code-copy');try{await navigator.clipboard.writeText(activationCode);btn.textContent='✅ Copied!';announce('Activation code copied');setTimeout(function(){btn.textContent='📋 Copy Code';},2000);}catch(e){announce('Could not copy the code. Select and copy it manually.');}};
-  window.extendActivationTime=async function(){var btn=document.getElementById('extendTimeBtn');btn.disabled=true;try{var r=await fetch(BACKEND_URL+'/api/session/'+encodeURIComponent(activationCode)+'/extend',{method:'POST'});if(!r.ok)throw new Error();startCountdown(300);announce('Activation time extended by 5 minutes');}catch(e){announce('Could not extend the activation time. Please activate now or process again.');}finally{btn.disabled=false;}};
 })();
 </script>
 </body>

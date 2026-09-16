@@ -1323,34 +1323,6 @@ app.get('/api/job/:jobId', (req, res) => {
   return res.json({ status: 'error', ...job.error, httpStatus: job.httpStatus });
 });
 
-// Allow keyboard/screen-reader users to extend the short activation window.
-// The activation code itself is the bearer capability; no phone number is exposed.
-app.post('/api/session/:code/extend', limiter, (req, res) => {
-  const code = String(req.params.code || '').toUpperCase();
-  const session = sessions.get(code);
-  if (!session || session.status === 'sent') {
-    return res.status(404).json({ error: 'Activation session not found or expired.' });
-  }
-  session.extensions = Number(session.extensions || 0);
-  if (session.extensions >= 10) {
-    return res.status(429).json({ error: 'Maximum extensions reached.' });
-  }
-  if (session.expiryTimer) clearTimeout(session.expiryTimer);
-  session.extensions += 1;
-  session.createdAt = Date.now();
-  session.expiryTimer = setTimeout(async () => {
-    const live = sessions.get(code);
-    if (!live) return;
-    for (const file of live.files || []) {
-      try { await deleteFromR2(file.fileName); } catch (err) { console.error('R2 cleanup:', err.message); }
-    }
-    sessions.delete(code);
-    console.log(`Session expired after extension: ${code}`);
-  }, 300000);
-  sessions.set(code, session);
-  res.json({ ok: true, secondsRemaining: 300, extensionsRemaining: 10 - session.extensions });
-});
-
 app.post('/api/process', limiter, async (req, res) => {
   // Async mode: answer immediately with a jobId and finish the work in the
   // background. The client opts in with `async: true`, so an older cached
