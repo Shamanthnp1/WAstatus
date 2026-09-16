@@ -179,14 +179,14 @@
       --cream:        #FFEAD1;  /* page background        */
       --sage:         #DCE4B8;  /* soft green surface     */
       --olive:        #515739;  /* deep green, main text  */
-      --orange:       #FD4F2F;  /* primary accent / CTA   */
+      --orange:       #A52F19;  /* primary accent / CTA; white text passes AA */
 
       --surface:      #FFFFFF;  /* cards                  */
       --surface-soft: #FFF6EA;  /* inset panels           */
-      --border:       #E4D9C4;
-      --border-strong:#C9D4A4;
-      --olive-soft:   #636B45;  /* muted text             */
-      --orange-deep:  #C4381A;  /* orange that passes contrast as small text */
+      --border:       #948B78;
+      --border-strong:#747C55;
+      --olive-soft:   #4F5637;  /* muted text, AA on light surfaces */
+      --orange-deep:  #8F2A17;  /* high-contrast orange text */
       --on-accent:    #FFFFFF;  /* text on an orange fill */
 
       /* ---- Legacy names kept so existing rules keep working ----
@@ -487,7 +487,7 @@
       flex-shrink: 0;
     }
 
-    .split-banner-text h4 {
+    .split-banner-text h2 {
       color: var(--orange-deep);
       font-size: 14px;
       font-weight: 700;
@@ -1068,6 +1068,79 @@
       0% { transform: translateX(-100%); }
       100% { transform: translateX(200%); }
     }
+
+    /* WCAG 2.1 AA: keyboard focus, reflow, readable controls and announcements. */
+    .skip-link {
+      position: fixed;
+      left: 12px;
+      top: 12px;
+      z-index: 200000;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: var(--olive);
+      color: var(--on-accent);
+      font-weight: 800;
+      transform: translateY(-180%);
+    }
+    .skip-link:focus { transform: translateY(0); }
+    :where(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+      outline: 3px solid var(--orange-deep);
+      outline-offset: 3px;
+    }
+    .sr-only {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+    .upload-zone[role="button"]:focus-visible,
+    .upload-zone:focus-within {
+      outline: 3px solid var(--orange-deep);
+      outline-offset: 4px;
+      border-color: var(--orange-deep);
+    }
+    .upload-zone input,
+    .q-opt input { display: block !important; }
+    .q-opt:focus-within { outline: 3px solid var(--orange-deep); outline-offset: 2px; }
+    .q-opt.selected .q-dot { background: var(--orange-deep) !important; }
+    .step-badge { background: var(--orange); color: var(--on-accent); }
+    .step-num { color: var(--on-accent); }
+    .step-indicator span { color: var(--olive-soft); }
+    .file-name {
+      max-width: none;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .file-remove { min-width: 44px; min-height: 44px; }
+    .code-copy { min-height: 44px; border-color: var(--border-strong); }
+    footer p,
+    footer [style*="color:#7C8459"],
+    footer [style*="color:#E4D9C4"],
+    footer [style*="color: #E4D9C4"] { color: var(--olive-soft) !important; }
+    .footer-links a { text-decoration: underline; text-underline-offset: 3px; }
+    #urgencyWarning { color: #624500 !important; }
+    #expiredBox > div:first-child { color: #9B2018 !important; }
+    .a11y-status { margin-top: 10px; color: var(--olive); font-size: 14px; }
+
+    @media (max-width: 600px) {
+      body { width: auto; max-width: none; }
+      .container { overflow: visible; }
+      .file-name { max-width: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
   <!-- ✅ Preconnect — browser connects early -->
   <link rel="preconnect" href="https://api.wastatusvideo.com"/>
@@ -1075,11 +1148,13 @@
   <link rel="dns-prefetch" href="https://www.googletagmanager.com"/>
 </head>
 <body>
+  <a class="skip-link" href="#uploadHeading">Skip to video upload</a>
+  <div id="globalStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Feedback / support banner -->
   <div id="sdFeedbackBar" style="display:flex;align-items:center;justify-content:center;gap:8px;position:relative;background:linear-gradient(90deg,#515739,#C4381A);color:#FFEAD1;font-size:13px;line-height:1.45;padding:10px 38px 10px 16px;text-align:center;">
     <span>👋 Facing an issue or have feedback? <a href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener" style="color:#FFEAD1;font-weight:700;text-decoration:underline;">DM me on Instagram</a> &nbsp;·&nbsp; Love StatusDrop? <a href="https://ko-fi.com/wastatus" target="_blank" rel="noopener" style="color:#FFEAD1;font-weight:700;text-decoration:underline;">Support the server ☕</a> &nbsp;·&nbsp; <a href="https://github.com/Shamanthnp1/WAstatus" target="_blank" rel="noopener" style="color:#FFEAD1;font-weight:700;text-decoration:underline;">⭐ Open source</a></span>
-    <button id="sdFeedbackClose" aria-label="Dismiss" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#FFEAD1;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+    <button id="sdFeedbackClose" aria-label="Dismiss feedback banner" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:#FFEAD1;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
   </div>
 
   <script>
@@ -1137,6 +1212,7 @@
   </script>
 
   <!-- HERO -->
+  <main id="mainContent">
   <div class="hero">
     <div class="logo">
       <div class="logo-icon">
@@ -1463,7 +1539,7 @@
          style="background:linear-gradient(90deg,#FFE2D9,#FFEAD1);border-color:var(--orange);position:relative;">
       <div class="split-banner-icon">📢</div>
       <div class="split-banner-text">
-        <h4>Posting steps have changed — please read</h4>
+        <h2>Posting steps have changed — please read</h2>
         <p style="color:var(--olive);">
           WhatsApp now re-compresses videos forwarded straight from the chat.
           <strong>Save the video first, send it into any chat (e.g. "Message
@@ -1475,7 +1551,7 @@
           no longer carries over to Status.
         </p>
       </div>
-      <button id="sdChangeNoticeClose" aria-label="Dismiss"
+      <button id="sdChangeNoticeClose" aria-label="Dismiss posting-steps update"
               style="position:absolute;right:8px;top:6px;background:transparent;border:none;color:var(--olive);font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
     </div>
     <script>
@@ -1499,7 +1575,7 @@
     <div class="split-banner">
       <div class="split-banner-icon">✂️</div>
       <div class="split-banner-text">
-        <h4>Auto Split & Compress — Any Size Video!</h4>
+        <h2>Auto Split & Compress — Any Size Video!</h2>
         <p>Long videos are automatically split into 29-second WhatsApp-ready clips. Upload up to 300MB!</p>
       </div>
     </div>
@@ -1748,7 +1824,7 @@
             <div style="font-size:12px;color:var(--olive-soft);margin-bottom:6px;">
               ⏱️ Code expires in:
             </div>
-            <div id="timerDisplay"
+            <div id="timerDisplay" role="timer" aria-label="Activation code time remaining"
               style="font-size:28px;
                      font-weight:800;
                      color: var(--orange-deep);
@@ -1759,6 +1835,10 @@
             <div style="font-size:11px;color:var(--olive-soft);margin-top:4px;">
               Send code before timer runs out!
             </div>
+            <button id="extendTimeBtn" type="button" class="code-copy"
+                    onclick="extendActivationTime()" style="margin-top:10px;">
+              Extend time by 5 minutes
+            </button>
           </div>
 
           <!-- ✅ NEW: Expired state (hidden initially) -->
@@ -2080,6 +2160,7 @@
 
     </div>
   </div>
+  </main>
 
   <footer>
     <!-- ✅ Wave divider -->
@@ -3145,6 +3226,83 @@
       alert('Link copied! Share it! \u{1F517}');
     }
   }
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var announce = function (message) {
+    var region = document.getElementById('globalStatus');
+    if (region) { region.textContent = ''; setTimeout(function () { region.textContent = message; }, 20); }
+  };
+  window.announceStatus = announce;
+  window.a11yReducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  document.querySelectorAll('img[alt="StatusDrop"]').forEach(function (img) { img.alt = ''; });
+  var upload = document.getElementById('uploadZone');
+  var input = document.getElementById('fileInput');
+  if (upload && input) {
+    upload.setAttribute('role', 'button'); upload.tabIndex = 0;
+    var uploadTitle = upload.querySelector('h3');
+    if (uploadTitle) { uploadTitle.id = 'uploadZoneTitle'; upload.setAttribute('aria-labelledby', uploadTitle.id); }
+    upload.setAttribute('aria-describedby', 'uploadRequirements');
+    input.classList.add('sr-only'); input.setAttribute('aria-label', 'Video files');
+    upload.insertAdjacentElement('afterend', input);
+    upload.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+    });
+  }
+  var requirement = upload && upload.querySelector('p[style]');
+  if (requirement) requirement.id = 'uploadRequirements';
+
+  var quality = document.getElementById('longClipsRow');
+  if (quality) {
+    quality.setAttribute('role', 'radiogroup'); quality.setAttribute('aria-label', 'Video quality and clip length');
+    quality.querySelectorAll('input[type="radio"]').forEach(function (radio) {
+      radio.classList.add('sr-only');
+      radio.addEventListener('change', function () {
+        quality.querySelectorAll('.q-opt').forEach(function (label) { label.classList.toggle('selected', !!label.querySelector('input:checked')); });
+        announce((radio.value === 'hd' ? '1080p HD' : '720p longer clips') + ' selected');
+      });
+    });
+  }
+
+  [['uploadCard','uploadHeading','Upload your videos'],['progressCard','progressHeading','Processing videos'],['activationSection','activationHeading','Activate on WhatsApp'],['successSection','successHeading','Posting instructions']].forEach(function (item) {
+    var box=document.getElementById(item[0]); if(!box)return;
+    var title=box.querySelector('.card-title, .success-title'); if(!title)return;
+    title.id=item[1]; title.setAttribute('role','heading'); title.setAttribute('aria-level','2'); title.tabIndex=-1;
+  });
+  document.querySelectorAll('.activation-steps, .upload-instructions').forEach(function (list) {
+    list.setAttribute('role','list'); list.querySelectorAll('.step-item').forEach(function (x) { x.setAttribute('role','listitem'); });
+  });
+
+  var progress=document.getElementById('mainProgressFill');
+  if(progress){progress.setAttribute('role','progressbar');progress.setAttribute('aria-label','Overall video processing progress');progress.setAttribute('aria-valuemin','0');progress.setAttribute('aria-valuemax','100');progress.setAttribute('aria-valuenow','0');}
+  var status=document.getElementById('statusMessage'); if(status){status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.setAttribute('aria-atomic','true');}
+  var expired=document.getElementById('expiredBox'); if(expired) expired.setAttribute('role','alert');
+
+  var tutorialLinks=[].slice.call(document.querySelectorAll('.tutorial-image-link'));
+  function syncTutorialTabs(){var current=document.querySelector('.tutorial-card[aria-current="step"]');tutorialLinks.forEach(function(a){a.tabIndex=a.closest('.tutorial-card')===current?0:-1;});}
+  syncTutorialTabs(); document.getElementById('tutorialTrack')?.addEventListener('scroll', function(){setTimeout(syncTutorialTabs,100);},{passive:true});
+
+  var oldRender=window.renderFiles || renderFiles;
+  renderFiles=function(){
+    var container=document.getElementById('filesContainer'), list=document.getElementById('filesList'), button=document.getElementById('compressBtn');
+    container.replaceChildren();
+    if(!files.length){list.classList.remove('visible');button.disabled=true;resetEditor();showEditorToggle(false);var q=document.getElementById('longClipsRow');if(q)q.style.display='none';announce('No videos selected');return;}
+    list.classList.add('visible');button.disabled=false;showEditorToggle(true);var row=document.getElementById('longClipsRow');if(row)row.style.display='flex';
+    files.forEach(function(file,index){var item=document.createElement('div');item.className='file-item';var icon=document.createElement('span');icon.className='file-icon';icon.textContent='🎬';icon.setAttribute('aria-hidden','true');var info=document.createElement('div');info.className='file-info';var name=document.createElement('div');name.className='file-name';name.textContent=file.name;var size=document.createElement('div');size.className='file-size';size.textContent=formatSize(file.size);var remove=document.createElement('button');remove.type='button';remove.className='file-remove';remove.textContent='✕';remove.setAttribute('aria-label','Remove '+file.name);remove.addEventListener('click',function(){removeFile(index);});info.append(name,size);item.append(icon,info,remove);container.appendChild(item);});
+    document.getElementById('totalSize').textContent=formatSize(files.reduce(function(s,f){return s+f.size;},0));announce(files.length+' video'+(files.length===1?'':'s')+' selected');
+  };
+
+  var oldProgress=updateProgressBar; updateProgressBar=function(pct){oldProgress(pct);if(progress)progress.setAttribute('aria-valuenow',String(Math.round(Math.min(100,pct))));};
+  var oldStart=startCompression; startCompression=async function(){var result=oldStart();setTimeout(function(){document.getElementById('progressHeading')?.focus();},120);return result;};
+  var oldActivation=showActivation; showActivation=function(){oldActivation();setTimeout(function(){document.getElementById('activationHeading')?.focus();announce('Videos ready. Activation code available.');},150);};
+  var oldSuccess=showSuccess; showSuccess=function(){oldSuccess();setTimeout(function(){document.getElementById('successHeading')?.focus();announce('WhatsApp opened. Follow the posting instructions.');},150);};
+
+  copyCode=async function(){var btn=document.querySelector('.code-copy');try{await navigator.clipboard.writeText(activationCode);btn.textContent='✅ Copied!';announce('Activation code copied');setTimeout(function(){btn.textContent='📋 Copy Code';},2000);}catch(e){announce('Could not copy the code. Select and copy it manually.');}};
+  window.extendActivationTime=async function(){var btn=document.getElementById('extendTimeBtn');btn.disabled=true;try{var r=await fetch(BACKEND_URL+'/api/session/'+encodeURIComponent(activationCode)+'/extend',{method:'POST'});if(!r.ok)throw new Error();startCountdown(300);announce('Activation time extended by 5 minutes');}catch(e){announce('Could not extend the activation time. Please activate now or process again.');}finally{btn.disabled=false;}};
+})();
 </script>
 </body>
 </html>

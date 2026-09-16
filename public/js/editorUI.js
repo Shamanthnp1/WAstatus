@@ -129,20 +129,27 @@
     injectStyles();
     var Editor = E();
     var instances = [], videos = [], objectUrls = [];
+    var previousFocus = document.activeElement;
 
     var modal = el('div', 'sdui-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'sdui-dialog-title');
+    var dialogTitle = el('h2', 'sdui-visually-hidden', 'Edit videos');
+    dialogTitle.id = 'sdui-dialog-title';
     var shell = el('div', 'sdui-shell');
+    shell.appendChild(dialogTitle);
 
     var top = el('div', 'sdui-top');
     var tabs = el('div', 'sdui-tabs');
-    var x = el('button', 'sdui-x'); x.title = 'Close (keeps edits)';
+    var x = el('button', 'sdui-x'); x.title = 'Close (keeps edits)'; x.setAttribute('aria-label', 'Close editor and keep edits');
     x.appendChild(el('i', 'bi bi-x-lg'));
     x.addEventListener('click', save);
     top.appendChild(tabs);
     // Local-only "Test render" button: renders the real output via the dev
     // harness (POST /api/dev-render). Hidden on the production site.
     if (isDevHost()) {
-      var testBtn = el('button', 'sdui-x sdui-testbtn'); testBtn.title = 'Test render (local)';
+      var testBtn = el('button', 'sdui-x sdui-testbtn'); testBtn.title = 'Test render (local)'; testBtn.setAttribute('aria-label', 'Test render locally');
       testBtn.appendChild(el('i', 'bi bi-film'));
       testBtn.addEventListener('click', testRender);
       top.appendChild(testBtn);
@@ -153,13 +160,14 @@
     var frame = el('div', 'sdui-frame');
     var layer = el('div', 'sdui-layer');
     var playBtn = el('button', 'sdui-play');
+    playBtn.type = 'button'; playBtn.setAttribute('aria-label', 'Play video preview');
     playBtn.appendChild(el('i', 'bi bi-play-fill'));
     var trimBar = el('div', 'sdui-trim');
     var musicAudio = el('audio'); musicAudio.preload = 'auto'; musicAudio.style.display = 'none';
     frame.appendChild(layer); frame.appendChild(playBtn); frame.appendChild(trimBar); frame.appendChild(musicAudio);
 
     var dock = el('div', 'sdui-dock');
-    var discard = el('button', 'sdui-act discard'); discard.title = 'Discard edits';
+    var discard = el('button', 'sdui-act discard'); discard.title = 'Discard edits'; discard.setAttribute('aria-label', 'Discard all edits');
     discard.appendChild(el('i', 'bi bi-x-lg'));
     discard.addEventListener('click', discardAll);
     var pill = el('div', 'sdui-pill');
@@ -178,7 +186,7 @@
       b.addEventListener('click', function () { toggleTool(t.id); });
       pill.appendChild(b);
     });
-    var saveBtn = el('button', 'sdui-act save'); saveBtn.title = 'Save';
+    var saveBtn = el('button', 'sdui-act save'); saveBtn.title = 'Save'; saveBtn.setAttribute('aria-label', 'Save edits and close editor');
     saveBtn.appendChild(el('i', 'bi bi-check-lg'));
     saveBtn.addEventListener('click', save);
     dock.appendChild(discard); dock.appendChild(pill); dock.appendChild(saveBtn);
@@ -189,6 +197,12 @@
     shell.appendChild(top); shell.appendChild(stage);
     modal.appendChild(shell);
     document.body.appendChild(modal);
+    var inerted = [];
+    Array.prototype.forEach.call(document.body.children, function (child) {
+      if (child === modal || child.tagName === 'SCRIPT') return;
+      inerted.push({ element: child, wasInert: !!child.inert });
+      child.inert = true;
+    });
     document.body.style.overflow = 'hidden';
 
     var srcFiles = (files || []).slice(0, Editor.MAX_VIDEOS || 3);
@@ -226,14 +240,24 @@
       instances: instances, videos: videos, objectUrls: objectUrls, active: 0, files: srcFiles,
       modal: modal, shell: shell, frame: frame, layer: layer, tray: tray, tabs: tabs,
       playBtn: playBtn, trimBar: trimBar, dock: dock, musicAudio: musicAudio, musicUrls: {}, trackDuration: {}, wavePeaks: {},
-      selectedId: null, openTool: null, trim: null, trimPrev: null
+      selectedId: null, openTool: null, trim: null, trimPrev: null,
+      previousFocus: previousFocus, inerted: inerted
     };
     bindController(instances);
     renderOverlays();
+    setTimeout(function () { try { x.focus(); } catch (_) {} }, 0);
 
-    // Tap the dark backdrop (outside the frame) or press Esc to finish a tool.
+    // Escape closes the active tool/editor. Tab is contained inside the modal.
     stage.addEventListener('pointerdown', function (e) { if (ui && ui.openTool && e.target === stage) closeTray(); });
-    ui.onKey = function (e) { if (e.key === 'Escape') { if (ui.openTool) closeTray(); else save(); } };
+    ui.onKey = function (e) {
+      if (e.key === 'Escape') { if (ui.openTool) closeTray(); else save(); return; }
+      if (e.key !== 'Tab' || !ui || !ui.modal) return;
+      var focusable = Array.prototype.slice.call(ui.modal.querySelectorAll('button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter(function (el) { var style = getComputedStyle(el); return el.offsetParent !== null && style.visibility !== 'hidden' && style.display !== 'none'; });
+      if (!focusable.length) return;
+      var first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
     document.addEventListener('keydown', ui.onKey);
   }
 
@@ -272,6 +296,8 @@
 
   function teardown() {
     if (!ui) return;
+    var restoreFocus = ui.previousFocus;
+    var restoreInert = (ui.inerted || []).slice();
     stopTrimPlayback();
     destroyLottiesIn(ui.layer); destroyLottiesIn(ui.tray);
     if (ui.musicAudio) { try { ui.musicAudio.pause(); } catch (e) {} }
@@ -281,8 +307,12 @@
       (ui.objectUrls || []).forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
     }
     if (ui.modal && ui.modal.parentNode) ui.modal.parentNode.removeChild(ui.modal);
+    restoreInert.forEach(function (entry) { entry.element.inert = entry.wasInert; });
     document.body.style.overflow = '';
     ui = null;
+    if (restoreFocus && typeof restoreFocus.focus === 'function') {
+      setTimeout(function () { try { restoreFocus.focus(); } catch (_) {} }, 0);
+    }
   }
 
   function save() {
@@ -523,6 +553,7 @@
   function buildTextEl(o, dims) {
     var n = el('div', 'sdui-ov sdui-ov-text');
     n.dataset.id = o.id; n.dataset.kind = 'text';
+    n.tabIndex = 0; n.setAttribute('role', 'button'); n.setAttribute('aria-label', 'Text overlay: ' + o.text + '. Use arrow keys to move; Enter to edit.');
     applyTextStyles(n, o, dims);
     attachDrag(n, o.id);
     return n;
@@ -555,6 +586,7 @@
   function buildStickerEl(s, dims) {
     var n = el('div', 'sdui-ov sdui-ov-sticker');
     n.dataset.id = s.id; n.dataset.kind = 'sticker';
+    n.tabIndex = 0; n.setAttribute('role', 'button'); n.setAttribute('aria-label', 'Sticker overlay. Use arrow keys to move; Enter to select.');
     var ref = s.assetRef || '';
     n._assetRef = ref;
     // Animated .tgs are shown as their static poster in the editor (the final
@@ -587,6 +619,16 @@
     function end() { dragging = false; n.style.cursor = 'grab'; }
     n.addEventListener('pointerup', end);
     n.addEventListener('pointercancel', end);
+    n.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(id); return; }
+      var dx = 0, dy = 0, step = e.shiftKey ? 0.05 : 0.01;
+      if (e.key === 'ArrowLeft') dx = -step; else if (e.key === 'ArrowRight') dx = step;
+      else if (e.key === 'ArrowUp') dy = -step; else if (e.key === 'ArrowDown') dy = step; else return;
+      e.preventDefault(); select(id);
+      var found = activeInst()._findEntry(id); if (!found) return;
+      activeInst().applyDragToRelative(id, { x: found.entry.pos.x + dx, y: found.entry.pos.y + dy });
+      renderOverlays();
+    });
   }
 
   function select(id) {
@@ -605,18 +647,19 @@
     var inst = activeInst();
     var found = typeof inst._findEntry === 'function' ? inst._findEntry(id) : null;
     var bar = el('div', 'sdui-selbar'); bar.id = 'sdui-selbar';
-    function mk(iconClass, cls, fn) {
+    function mk(iconClass, label, cls, fn) {
       var b = el('button', cls || null);
+      b.type = 'button'; b.setAttribute('aria-label', label);
       b.appendChild(el('i', 'bi ' + iconClass));
       b.addEventListener('click', function (e) { e.stopPropagation(); fn(); });
       bar.appendChild(b);
     }
-    mk('bi-dash-lg', null, function () { inst.applyPinch(id, 0.85, 0); renderOverlays(); });
-    mk('bi-plus-lg', null, function () { inst.applyPinch(id, 1.18, 0); renderOverlays(); });
-    mk('bi-arrow-counterclockwise', null, function () { inst.applyPinch(id, 1, -15); renderOverlays(); });
-    mk('bi-arrow-clockwise', null, function () { inst.applyPinch(id, 1, 15); renderOverlays(); });
-    if (found && found.kind === 'text') mk('bi-pencil', null, function () { toggleTool('text', id); });
-    mk('bi-trash', 'del', function () { inst.removeEntry(id); ui.selectedId = null; recomputeDirty(inst); renderOverlays(); });
+    mk('bi-dash-lg', 'Make smaller', null, function () { inst.applyPinch(id, 0.85, 0); renderOverlays(); });
+    mk('bi-plus-lg', 'Make larger', null, function () { inst.applyPinch(id, 1.18, 0); renderOverlays(); });
+    mk('bi-arrow-counterclockwise', 'Rotate left 15 degrees', null, function () { inst.applyPinch(id, 1, -15); renderOverlays(); });
+    mk('bi-arrow-clockwise', 'Rotate right 15 degrees', null, function () { inst.applyPinch(id, 1, 15); renderOverlays(); });
+    if (found && found.kind === 'text') mk('bi-pencil', 'Edit text', null, function () { toggleTool('text', id); });
+    mk('bi-trash', 'Delete selected item', 'del', function () { inst.removeEntry(id); ui.selectedId = null; recomputeDirty(inst); renderOverlays(); });
     // Place the toolbar in-flow just below the video frame so it never covers it.
     if (ui.dock && ui.dock.parentNode) ui.dock.parentNode.insertBefore(bar, ui.dock);
     else ui.frame.appendChild(bar);
@@ -649,7 +692,7 @@
       hideTrimBar();
       var head = el('div', 'sdui-tray-head');
       head.appendChild(el('span', null, { text: 'Text', music: 'Music', sticker: 'Stickers' }[tool] || tool));
-      var c = el('button', 'sdui-trayclose'); c.appendChild(el('i', 'bi bi-x-lg')); c.addEventListener('click', closeTray); head.appendChild(c);
+      var c = el('button', 'sdui-trayclose'); c.setAttribute('aria-label', 'Close ' + ({ text: 'text', music: 'music', sticker: 'stickers' }[tool] || tool) + ' tool'); c.appendChild(el('i', 'bi bi-x-lg')); c.addEventListener('click', closeTray); head.appendChild(c);
       tray.appendChild(head);
       if (tool === 'text') buildTextSheet(tray, arg);
       else if (tool === 'sticker') buildStickerSheet(tray);
@@ -691,6 +734,7 @@
     } : null;
 
     var input = el('textarea', 'sdui-input'); input.rows = 2; input.maxLength = 200;
+    input.id = 'sdui-text-input'; input.setAttribute('aria-label', 'Overlay text');
     input.placeholder = 'Your text\u2026'; input.value = cur ? cur.text : '';
     tray.appendChild(input);
 
@@ -698,10 +742,11 @@
     var sw = el('div', 'sdui-swatches');
     TEXT_COLORS.forEach(function (col) {
       var s = el('button', 'sdui-sw' + (col === selColor ? ' sel' : '')); s.style.background = col;
+      s.setAttribute('aria-label', 'Use ' + col + ' text color'); s.setAttribute('aria-pressed', col === selColor ? 'true' : 'false');
       s.addEventListener('click', function () {
         selColor = col;
-        Array.prototype.forEach.call(sw.children, function (q) { q.classList.remove('sel'); });
-        s.classList.add('sel'); applyLive();
+        Array.prototype.forEach.call(sw.children, function (q) { q.classList.remove('sel'); q.setAttribute('aria-pressed', 'false'); });
+        s.classList.add('sel'); s.setAttribute('aria-pressed', 'true'); applyLive();
       });
       sw.appendChild(s);
     });
@@ -739,10 +784,11 @@
     var bsw = el('div', 'sdui-swatches');
     BOX_COLORS.forEach(function (col) {
       var s = el('button', 'sdui-sw' + (col === selBg ? ' sel' : '')); s.style.background = col;
+      s.setAttribute('aria-label', 'Use ' + col + ' background color'); s.setAttribute('aria-pressed', col === selBg ? 'true' : 'false');
       s.addEventListener('click', function () {
         selBg = col;
-        Array.prototype.forEach.call(bsw.children, function (q) { q.classList.remove('sel'); });
-        s.classList.add('sel'); applyLive();
+        Array.prototype.forEach.call(bsw.children, function (q) { q.classList.remove('sel'); q.setAttribute('aria-pressed', 'false'); });
+        s.classList.add('sel'); s.setAttribute('aria-pressed', 'true'); applyLive();
       });
       bsw.appendChild(s);
     });
@@ -752,11 +798,14 @@
 
     // Size slider.
     var size = el('input', 'sdui-range'); size.type = 'range'; size.min = '8'; size.max = '200'; size.value = cur ? cur.fontSize : 64;
+    size.setAttribute('aria-label', 'Text size');
     size.addEventListener('input', applyLive);
     var rs = el('div', 'sdui-row'); rs.appendChild(el('label', null, 'Size')); rs.appendChild(size); tray.appendChild(rs);
 
     var err = el('div', 'sdui-err');
-    input.addEventListener('input', applyLive);
+    err.id = 'sdui-text-error'; err.setAttribute('role', 'alert'); err.setAttribute('aria-live', 'assertive');
+    input.setAttribute('aria-describedby', err.id);
+    input.addEventListener('input', function () { input.removeAttribute('aria-invalid'); applyLive(); });
 
     function curBg() { return boxShape === 'none' ? '#00000000' : selBg; }
 
@@ -778,7 +827,7 @@
 
     var btn = btnWith('sdui-btn', 'bi-check-lg', cur ? 'Update' : 'Save');
     btn.addEventListener('click', function () {
-      if (!isValidText(input.value)) { err.textContent = 'Text must be 1\u2013200 characters.'; return; }
+      if (!isValidText(input.value)) { input.setAttribute('aria-invalid', 'true'); err.textContent = 'Text must be 1\u2013200 characters.'; input.focus(); return; }
       applyLive(); ui.selectedId = liveId; closeTray();
     });
     var cancel = btnWith('sdui-btn ghost', 'bi-x-lg', 'Cancel');
@@ -1138,6 +1187,10 @@
     var maskR = el('div', 'sdui-trim-mask');
     var sel = el('div', 'sdui-trim-sel');
     var lh = el('div', 'sdui-trim-h l'); var rh = el('div', 'sdui-trim-h r');
+    [[lh, 'Trim start'], [rh, 'Trim end']].forEach(function (pair) {
+      pair[0].tabIndex = 0; pair[0].setAttribute('role', 'slider'); pair[0].setAttribute('aria-label', pair[1]);
+      pair[0].setAttribute('aria-valuemin', '0');
+    });
     track.appendChild(maskL); track.appendChild(maskR); track.appendChild(sel);
     track.appendChild(lh); track.appendChild(rh);
     container.appendChild(track);
@@ -1154,6 +1207,13 @@
     var e = ui._trimEls;
     e.sel.style.left = sp + '%'; e.sel.style.width = (ep - sp) + '%';
     e.lh.style.left = sp + '%'; e.rh.style.left = ep + '%';
+    e.lh.setAttribute('aria-valuemax', String(Math.max(0, ui.trim.end - 0.1)));
+    e.lh.setAttribute('aria-valuenow', String(Math.round(ui.trim.start * 10) / 10));
+    e.lh.setAttribute('aria-valuetext', fmtTime(ui.trim.start));
+    e.rh.setAttribute('aria-valuemax', String(ui.trim.dur));
+    e.rh.setAttribute('aria-valuemin', String(Math.min(ui.trim.dur, ui.trim.start + 0.1)));
+    e.rh.setAttribute('aria-valuenow', String(Math.round(ui.trim.end * 10) / 10));
+    e.rh.setAttribute('aria-valuetext', fmtTime(ui.trim.end));
     if (e.maskL) e.maskL.style.width = sp + '%';
     if (e.maskR) { e.maskR.style.left = ep + '%'; e.maskR.style.width = (100 - ep) + '%'; }
     var tt = document.getElementById('sdui-trim-times');
@@ -1200,6 +1260,16 @@
       rafId = 0; flushSeek(); // final precise seek
     }
     h.addEventListener('pointerup', end); h.addEventListener('pointercancel', end);
+    h.addEventListener('keydown', function (e) {
+      if (!ui.trim) return;
+      var step = e.shiftKey ? 1 : 0.1;
+      if (e.key === 'Home') { if (which === 'start') ui.trim.start = 0; else ui.trim.end = ui.trim.start + 0.1; }
+      else if (e.key === 'End') { if (which === 'start') ui.trim.start = ui.trim.end - 0.1; else ui.trim.end = ui.trim.dur; }
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { if (which === 'start') ui.trim.start = Math.max(0, ui.trim.start-step); else ui.trim.end = Math.max(ui.trim.start+0.1, ui.trim.end-step); }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { if (which === 'start') ui.trim.start = Math.min(ui.trim.end-0.1, ui.trim.start+step); else ui.trim.end = Math.min(ui.trim.dur, ui.trim.end+step); }
+      else return;
+      e.preventDefault(); activeInst().attemptTrim(ui.trim.start, ui.trim.end); layoutTrim();
+    });
   }
   // Playhead drag removed — handles now seek the video directly.
   function attachPlayheadDrag() {}
@@ -1284,6 +1354,7 @@
     var css = [
       tokenBlock,
       '.sdui-modal{position:fixed;inset:0;z-index:99999;background:var(--sdui-bg);display:flex;justify-content:center;color:var(--sdui-fg);font-family:Inter,ui-sans-serif,system-ui,sans-serif;-webkit-tap-highlight-color:transparent;font-size:14px;line-height:1.5}',
+      '.sdui-visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}',
       '.sdui-shell{width:100%;max-width:440px;height:100%;display:flex;flex-direction:column}',
       '.sdui-top{display:flex;align-items:center;gap:8px;padding:12px 16px 8px;flex:0 0 auto}',
       '.sdui-tabs{display:flex;gap:5px;overflow-x:auto;flex:1;justify-content:center;scrollbar-width:none}',
@@ -1355,8 +1426,8 @@
       '.sdui-act{border:none;border-radius:50%;width:46px;height:46px;font-size:18px;cursor:pointer;color:var(--sdui-fg);display:flex;align-items:center;justify-content:center;transition:transform var(--sdui-fast),filter var(--sdui-fast);box-shadow:var(--sdui-sh-sm)}',
       '.sdui-act:active{transform:scale(0.9)}',
       '.sdui-act:focus-visible{outline:2px solid var(--sdui-fg);outline-offset:2px}',
-      '.sdui-act.discard{background:rgba(255, 4, 4, 0.97);border:1.5px solid rgba(239,68,68,0.3);color:#fca5a5}',
-      '.sdui-act.save{background:rgba(0, 255, 94, 0.84);border:1.5px solid rgba(34,197,94,0.3);color:#86efac}',
+      '.sdui-act.discard{background:#991b1b;border:1.5px solid #fca5a5;color:#fff}',
+      '.sdui-act.save{background:#166534;border:1.5px solid #86efac;color:#fff}',
       '.sdui-dock.tool-open .sdui-act{display:none}',
       '.sdui-tray{display:none;width:100%;max-width:416px;background:var(--sdui-surface);border:1px solid var(--sdui-border-hi);border-radius:var(--sdui-rx);padding:14px 16px;max-height:32vh;overflow-y:auto;flex:0 0 auto;box-shadow:var(--sdui-sh-md);animation:sduiRise var(--sdui-spring);scrollbar-width:none;-ms-overflow-style:none}',
       '.sdui-tray::-webkit-scrollbar{display:none}',
@@ -1366,7 +1437,7 @@
       '@keyframes sduiRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}',
       '.sdui-tray.bare{background:transparent;border:none;box-shadow:none;padding:0;max-height:none;overflow:visible}',
       '.sdui-dock.hidden-dock{display:none}',
-      '.sdui-trayclose{background:var(--sdui-surface3);border:1px solid var(--sdui-border);color:var(--sdui-muted);width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;transition:background var(--sdui-fast),color var(--sdui-fast)}',
+      '.sdui-trayclose{background:var(--sdui-surface3);border:1px solid var(--sdui-border-hi);color:var(--sdui-fg);width:44px;height:44px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;transition:background var(--sdui-fast),color var(--sdui-fast)}',
       '.sdui-trayclose:hover{background:var(--sdui-surface2);color:var(--sdui-fg)}',
       '.sdui-row{display:flex;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap}',
       '.sdui-row label{font-size:12px;color:var(--sdui-muted);min-width:64px;font-weight:500}',

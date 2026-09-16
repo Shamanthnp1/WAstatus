@@ -36,11 +36,11 @@
       --black: #FFEAD1;
       --dark: #FFFFFF;
       --dark2: #FFF6EA;
-      --green: #FD4F2F;
-      --orange-deep: #C4381A;
+      --green: #A52F19;
+      --orange-deep: #8F2A17;
       --dark-green: #515739;
       --white: #515739;
-      --grey: #888888;
+      --grey: #4F5637;
     }
 
     body {
@@ -174,12 +174,21 @@
     /* CONTACT */
     .contact-link {
       color: var(--orange-deep);
-      text-decoration: none;
+      text-decoration: underline;
+      text-underline-offset: 3px;
     }
 
     .contact-link:hover {
-      text-decoration: underline;
+      text-decoration-thickness: 2px;
     }
+
+    :where(a, button):focus-visible { outline: 3px solid var(--orange-deep); outline-offset: 3px; }
+    .skip-link { position:fixed;left:12px;top:12px;z-index:1000;padding:12px 16px;background:var(--dark-green);color:#fff;border-radius:8px;transform:translateY(-180%);font-weight:700; }
+    .skip-link:focus { transform:translateY(0); }
+    footer p { color: var(--grey); }
+    .footer-links a { text-decoration: underline; text-underline-offset: 3px; }
+
+    @media (prefers-reduced-motion: reduce) { *,*::before,*::after { transition-duration:.01ms !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; } }
 
     /* FOOTER */
     footer {
@@ -189,7 +198,7 @@
     }
 
     footer p {
-      color: #E4D9C4;
+      color: var(--grey);
       font-size: 13px;
       margin-bottom: 12px;
     }
@@ -216,9 +225,10 @@
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#privacyMain">Skip to privacy policy</a>
 
   <!-- HEADER -->
-  <div class="header">
+  <header class="header">
     <a href="/" class="logo">
       <div class="logo-icon">
         <img src="/logo.png" alt="StatusDrop"/>
@@ -229,9 +239,9 @@
     </a>
     <h1>Privacy Policy</h1>
     <p>Last updated: September 4, 2026</p>
-  </div>
+  </header>
 
-  <div class="container">
+  <main class="container" id="privacyMain" tabindex="-1">
 
     <!-- INTRO -->
     <div class="section">
@@ -556,7 +566,7 @@
       </div>
     </div>
 
-  </div>
+  </main>
 
   <!-- FOOTER -->
   <footer>
