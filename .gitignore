@@ -51,6 +51,8 @@ super stickers/
 .kiro/
 
 # ---- Local-only scratch / reference material (never commit) ----
+# Private guides, audit evidence, and tailored resumes
+/docs/
 # Decompiled third-party app (competitor APK) — proprietary, do not commit
 decompiled/
 # Chat screenshots / notes shared for reference
