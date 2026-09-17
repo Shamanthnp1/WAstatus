@@ -2680,8 +2680,9 @@
             await uploadToWorkerWithProgress(uploadUrl, file, (pct) => {
               progressPerFile[i] = pct;
               const overall = progressPerFile.reduce((a, b) => a + b, 0) / totalFiles;
+              const videoLabel = totalFiles === 1 ? 'video' : 'videos';
               updateProgressBar(overall * 0.5);
-              setStatus('📤', `Uploading ${totalFiles} videos... ${Math.round(overall)}%`);
+              setStatus('📤', `Uploading ${totalFiles} ${videoLabel}... ${Math.round(overall)}%`);
             });
 
             console.log(`✅ Uploaded ${file.name}`);
@@ -3150,6 +3151,7 @@
   [['uploadCard','uploadHeading','Upload your videos'],['progressCard','progressHeading','Processing videos'],['activationSection','activationHeading','Activate on WhatsApp'],['successSection','successHeading','Posting instructions']].forEach(function (item) {
     var box=document.getElementById(item[0]); if(!box)return;
     var title=box.querySelector('.card-title, .success-title'); if(!title)return;
+    var badge=title.querySelector('.step-badge'); if(badge)badge.setAttribute('aria-hidden','true');
     title.id=item[1]; title.setAttribute('role','heading'); title.setAttribute('aria-level','2'); title.tabIndex=-1;
   });
   document.querySelectorAll('.activation-steps, .upload-instructions').forEach(function (list) {
@@ -3158,7 +3160,7 @@
 
   var progress=document.getElementById('mainProgressFill');
   if(progress){progress.setAttribute('role','progressbar');progress.setAttribute('aria-label','Overall video processing progress');progress.setAttribute('aria-valuemin','0');progress.setAttribute('aria-valuemax','100');progress.setAttribute('aria-valuenow','0');}
-  var status=document.getElementById('statusMessage'); if(status){status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.setAttribute('aria-atomic','true');}
+  var status=document.getElementById('statusMessage'); if(status){status.removeAttribute('role');status.setAttribute('aria-live','off');status.setAttribute('aria-atomic','true');}
   var expired=document.getElementById('expiredBox'); if(expired) expired.setAttribute('role','alert');
 
   var tutorialLinks=[].slice.call(document.querySelectorAll('.tutorial-image-link'));
@@ -3176,6 +3178,15 @@
   };
 
   var oldProgress=updateProgressBar; updateProgressBar=function(pct){oldProgress(pct);if(progress)progress.setAttribute('aria-valuenow',String(Math.round(Math.min(100,pct))));};
+  var lastAnnouncedPhase='';
+  var oldSetStatus=setStatus;
+  setStatus=function(icon,text){
+    oldSetStatus(icon,text);
+    var message=String(text||'').replace(/\s+/g,' ').trim();
+    if(!message||/%/.test(message)||message===lastAnnouncedPhase)return;
+    lastAnnouncedPhase=message;
+    announce(message);
+  };
   var oldStart=startCompression; startCompression=async function(){var result=oldStart();setTimeout(function(){document.getElementById('progressHeading')?.focus();},120);return result;};
   var oldActivation=showActivation; showActivation=function(){oldActivation();setTimeout(function(){document.getElementById('activationHeading')?.focus();announce('Videos ready. Activation code available.');},150);};
   var oldSuccess=showSuccess; showSuccess=function(){oldSuccess();setTimeout(function(){document.getElementById('successHeading')?.focus();announce('WhatsApp opened. Follow the posting instructions.');},150);};
