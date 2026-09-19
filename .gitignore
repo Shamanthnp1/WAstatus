@@ -59,3 +59,9 @@ decompiled/
 some images/
 # Temp diagnostic scripts
 _*.ps1
+
+# ---- Private Android beta (do not publish in this repository) ----
+mobile/statusdrop_app/
+
+# Agent-generated review artifacts
+semantic-review/

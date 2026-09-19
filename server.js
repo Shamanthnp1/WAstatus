@@ -13,6 +13,7 @@ const ipKeyGenerator = rateLimit.ipKeyGenerator;
 const { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const compression = require('compression');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const {
@@ -37,7 +38,7 @@ const musicRoutes = require('./src/server/musicRoutes');
 const { validateRecipe } = require('./src/server/recipeValidator');
 const { planRender, planChunk, chunkCount } = require('./src/server/renderEngine');
 const { RequestContext, cleanupRequest, makeR2Deps, startupSweep, makeSweepDeps } = require('./src/server/cleanup');
-const { defaultEncodeSemaphore } = require('./src/server/encodeSemaphore');
+const { EncodeSemaphore, defaultEncodeSemaphore } = require('./src/server/encodeSemaphore');
 const {
   runGatedEncode,
   buildRecipeCommand,
@@ -49,6 +50,7 @@ const {
   MAX_ENCODE_ATTEMPTS,
 } = require('./src/server/encodeExec');
 const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
+const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
 require('dotenv').config();
 
 // ========================
@@ -79,7 +81,7 @@ app.use(cors({
     'https://wastatus-sigma.vercel.app',
     'http://localhost:3000'
   ],
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'PUT'],
   credentials: true
 }));
 // Keep the exact bytes of the body so the Meta webhook can verify its
@@ -183,28 +185,55 @@ function collectAssetR2Keys(recipe) {
 // ========================
 const sessions = new Map();
 const recentlySentCodes = new Set();
-// A send normally finishes in seconds; if a code has been "processing" for
-// longer than this, the attempt is considered wedged and a new webhook may
-// re-attempt delivery (kept above the per-send timeouts to avoid double-sends).
-const PROCESSING_STALE_MS = 300000;
+// A valid code can be claimed for five minutes. Once claimed, one delivery
+// owner gets a bounded 30-minute attempt; duplicate messages never run a second
+// sender against the same R2 objects.
+const DELIVERY_ACTIVATION_TTL_MS = 5 * 60 * 1000;
+const DELIVERY_WATCHDOG_MS = 30 * 60 * 1000;
+
+async function expireDeliverySession(code, reason = 'expired', includeProcessing = false) {
+  const session = sessions.get(code);
+  if (!session || (!includeProcessing && session.status === 'processing')) return false;
+
+  // Remove ownership synchronously before awaiting R2 so a redemption cannot
+  // race an expiry callback that has already started deleting files.
+  sessions.delete(code);
+  if (session.expiryTimer) clearTimeout(session.expiryTimer);
+  if (session.deliveryWatchdog) clearTimeout(session.deliveryWatchdog);
+  for (const file of (session.files || [])) {
+    try {
+      await deleteFromR2(file.fileName);
+      console.log(`R2 cleanup: ${file.fileName} deleted`);
+    } catch (err) {
+      console.error('R2 cleanup error:', err.message);
+    }
+  }
+  for (const key of (session.assetKeys || [])) {
+    try { await deleteFromR2(key); } catch (err) { console.error('R2 asset cleanup error:', err.message); }
+  }
+  console.log(`Session ${reason} & R2 cleaned: ${code}`);
+  return true;
+}
+
+function scheduleDeliveryExpiry(code, session, ttlMs = DELIVERY_ACTIVATION_TTL_MS) {
+  if (session.expiryTimer) clearTimeout(session.expiryTimer);
+  session.expiryTimer = setTimeout(() => {
+    expireDeliverySession(code, 'expired').catch((error) => {
+      console.error(`Session expiry failed for ${code}:`, error.message);
+    });
+  }, ttlMs);
+  session.expiryTimer.unref?.();
+  return session.expiryTimer;
+}
 
 setInterval(async () => {
   const now = Date.now();
   for (const [code, session] of sessions.entries()) {
-    if (now - session.createdAt > 300000) {
-      for (const file of session.files) {
-        try {
-          await deleteFromR2(file.fileName);
-          console.log(`R2 cleanup: ${file.fileName} deleted`);
-        } catch (err) {
-          console.error('R2 cleanup error:', err.message);
-        }
-      }
-      sessions.delete(code);
-      console.log(`Session expired & R2 cleaned: ${code}`);
+    if (session.status !== 'processing' && now - session.createdAt > DELIVERY_ACTIVATION_TTL_MS) {
+      await expireDeliverySession(code, 'sweep-expired');
     }
   }
-}, 60000);
+}, 60000).unref?.();
 
 // =======================
 // RATE LIMITING
@@ -243,17 +272,16 @@ const limiter = rateLimit({
 // ========================
 function generateCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let code = '';
-  for (let i = 0; i < 9; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const buffer = [];
+    for (let i = 0; i < 9; i++) buffer.push(chars[crypto.randomInt(chars.length)]);
+    if (!buffer.some((char) => /[0-9]/.test(char))) {
+      buffer[crypto.randomInt(buffer.length)] = String(crypto.randomInt(10));
+    }
+    const code = buffer.join('');
+    if (!sessions.has(code) && !recentlySentCodes.has(code)) return code;
   }
-  // Guarantee at least one digit. This lets the inbound parser pick the code out
-  // of a natural sentence without ever matching a plain 9-letter English word.
-  if (!/[0-9]/.test(code)) {
-    const pos = Math.floor(Math.random() * 9);
-    code = code.slice(0, pos) + Math.floor(Math.random() * 10) + code.slice(pos + 1);
-  }
-  return code;
+  throw new Error('Could not allocate a unique activation code.');
 }
 
 function getVideoDuration(filePath) {
@@ -284,6 +312,52 @@ function getVideoDimensions(filePath) {
       resolve({ width: v?.width || 1080, height: v?.height || 1920, hasAudio });
     });
   });
+}
+
+const mobileProbeSemaphore = new EncodeSemaphore(2);
+const MAX_QUEUED_MOBILE_PROBES = 20;
+
+async function probeMobileClip(filePath) {
+  if (mobileProbeSemaphore.queued >= MAX_QUEUED_MOBILE_PROBES) {
+    throw new Error('Mobile verification is busy. Please retry shortly.');
+  }
+  const release = await mobileProbeSemaphore.acquire();
+  try {
+    return await new Promise((resolve, reject) => {
+      execFile(
+        ffprobePath,
+        [
+          '-v', 'error',
+          '-print_format', 'json',
+          '-show_format',
+          '-show_streams',
+          filePath,
+        ],
+        {
+          timeout: 30_000,
+          killSignal: 'SIGKILL',
+          maxBuffer: 1024 * 1024,
+          windowsHide: true,
+        },
+        (error, stdout) => {
+          if (error) {
+            return reject(new Error(
+              error.killed
+                ? 'Mobile clip ffprobe timeout after 30s'
+                : `Mobile clip ffprobe failed: ${error.message}`,
+            ));
+          }
+          try {
+            resolve(JSON.parse(stdout));
+          } catch (_) {
+            reject(new Error('Mobile clip ffprobe returned invalid metadata.'));
+          }
+        },
+      );
+    });
+  } finally {
+    release();
+  }
 }
 
 function sha256File(filePath) {
@@ -540,7 +614,7 @@ async function deleteFromR2(fileName) {
 // session. Permanent assets (library/, stickers/) are never listed, so they are
 // never at risk.
 const R2_ORPHAN_AGE_MS = 30 * 60 * 1000; // 30 min — far beyond the 5-min delivery window
-const R2_EPHEMERAL_PREFIXES = ['compressed_', 'chunk_', 'uploads/', 'music/'];
+const R2_EPHEMERAL_PREFIXES = ['compressed_', 'chunk_', 'uploads/', 'music/', 'mobile-sealed/'];
 
 async function listR2ObjectsByPrefix(prefix) {
   const objects = [];
@@ -899,6 +973,42 @@ const INBOUND_CODE_TEMPLATES = [
 ];
 function buildInboundText(code) { return pick(INBOUND_CODE_TEMPLATES)(code); }
 
+function createDeliverySession(files, caption = '', preferredCode = null, assetKeys = []) {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error('Cannot create an empty delivery session.');
+  }
+  const activationCode = preferredCode && !sessions.has(preferredCode)
+    ? preferredCode
+    : generateCode();
+  const createdAt = Date.now();
+  const session = {
+    files: files.map((file) => ({ fileName: file.fileName, url: file.url })),
+    assetKeys: Array.isArray(assetKeys) ? [...assetKeys] : [],
+    createdAt,
+    status: 'pending',
+    expiryTimer: null,
+    deliveryWatchdog: null,
+    deliveryTimedOut: false,
+    caption: String(caption || '').trim(),
+  };
+  sessions.set(activationCode, session);
+  scheduleDeliveryExpiry(activationCode, session);
+
+  const cleanNumber = String(process.env.WHATSAPP_BUSINESS_NUMBER || '').replace(/\D/g, '');
+  if (!cleanNumber) {
+    sessions.delete(activationCode);
+    if (session.expiryTimer) clearTimeout(session.expiryTimer);
+    throw new Error('WhatsApp delivery number is not configured.');
+  }
+  const waText = buildInboundText(activationCode);
+  return {
+    activationCode,
+    waLink: `https://wa.me/${cleanNumber}?text=${encodeURIComponent(waText)}`,
+    fileCount: session.files.length,
+    expiresAt: new Date(createdAt + DELIVERY_ACTIVATION_TTL_MS).toISOString(),
+  };
+}
+
 // The posting instructions are important, so they stay constant; only the
 // surrounding phrasing rotates.
 // Posting instructions.
@@ -1094,17 +1204,11 @@ async function handleIncomingMessage(from, text) {
     return;
   }
   if (session.status === 'processing') {
-    // Normally a duplicate webhook (WhatsApp re-delivers the same message a few
-    // times); ignore it while a send is genuinely in progress. But if the
-    // attempt has been "in progress" longer than any real send could take, treat
-    // it as wedged and allow this webhook to re-attempt delivery (self-healing
-    // so a stuck send can never permanently block the code).
-    const since = session.processingSince || 0;
-    if (Date.now() - since < PROCESSING_STALE_MS) {
-      console.log(`Duplicate webhook for code: ${code} while processing - ignoring!`);
-      return;
-    }
-    console.log(`Stale processing for code: ${code} (${Math.round((Date.now() - since) / 1000)}s) — re-attempting delivery`);
+    // The current attempt exclusively owns this session. Every network phase is
+    // bounded and the watchdog asks that owner to stop, so a duplicate message
+    // must never start a concurrent sender for the same R2 objects.
+    console.log(`Duplicate webhook for code: ${code} while processing - ignoring!`);
+    return;
   }
   if (session.status === 'failed') {
     try {
@@ -1117,6 +1221,24 @@ async function handleIncomingMessage(from, text) {
     }
     return;
   }
+
+  // A code only has five minutes to be claimed. Once a valid message claims it,
+  // cancel that deadline so a long ordered send cannot lose its R2 files midway.
+  if (session.expiryTimer) {
+    clearTimeout(session.expiryTimer);
+    session.expiryTimer = null;
+  }
+  if (session.deliveryWatchdog) clearTimeout(session.deliveryWatchdog);
+  session.deliveryTimedOut = false;
+  session.deliveryWatchdog = setTimeout(() => {
+    if (sessions.get(code) === session && session.status === 'processing') {
+      // Do not delete R2 under the active sender. Its bounded network operation
+      // will return to this owner, which observes the flag and performs cleanup.
+      session.deliveryTimedOut = true;
+      console.warn(`Delivery watchdog requested cancellation for: ${code}`);
+    }
+  }, DELIVERY_WATCHDOG_MS);
+  session.deliveryWatchdog.unref?.();
 
   session.status = 'processing';
   session.processingSince = Date.now();
@@ -1131,6 +1253,7 @@ async function handleIncomingMessage(from, text) {
   const waStartTime = Date.now();
   try {
     for (let i = 0; i < session.files.length; i++) {
+      if (session.deliveryTimedOut) throw new Error('Delivery watchdog elapsed.');
       const file = session.files[i];
       const isMultiple = session.files.length > 1;
       const videoSendStart = Date.now();
@@ -1144,6 +1267,7 @@ async function handleIncomingMessage(from, text) {
       // All other parts (i > 0) — no caption at all (empty string)
 
       await sendWhatsAppVideo(from, file.url, videoCaption);
+      if (session.deliveryTimedOut) throw new Error('Delivery watchdog elapsed.');
 
       console.log(`✓ Video ${i + 1}/${session.files.length} sent (${((Date.now() - videoSendStart) / 1000).toFixed(2)}s)`);
       // Spacing between parts is handled by humanPause() before each send.
@@ -1151,12 +1275,28 @@ async function handleIncomingMessage(from, text) {
     console.log(`✓ All sends completed (${((Date.now() - waStartTime) / 1000).toFixed(2)}s)`);
     session.status = 'sent';
   } catch (err) {
+    if (session.deliveryTimedOut) {
+      console.error(`Delivery watchdog stopped ${code}:`, err.message);
+      await expireDeliverySession(code, 'delivery-watchdog', true);
+      return;
+    }
+    if (sessions.get(code) !== session) {
+      console.warn(`Delivery owner for ${code} changed; stale failure will not restore it.`);
+      return;
+    }
     // Delivery stalled/failed — but the video was ALREADY processed and is
     // sitting in R2. Do NOT discard it or brick the code: reset to a retryable
     // state and keep the R2 files so the user can simply resend the same code.
     // The session's existing expiry timer still bounds how long the files live.
     session.status = 'pending';
     session.processingSince = 0;
+    session.deliveryTimedOut = false;
+    if (session.deliveryWatchdog) {
+      clearTimeout(session.deliveryWatchdog);
+      session.deliveryWatchdog = null;
+    }
+    session.createdAt = Date.now();
+    scheduleDeliveryExpiry(code, session);
     sessions.set(code, session);
     console.error('Video send failed:', err.message);
     try {
@@ -1172,6 +1312,10 @@ async function handleIncomingMessage(from, text) {
   // SUCCESS only — purge the delivered files and any uploaded music/sticker R2
   // assets (Req 14.2), then schedule session cleanup. (On failure we returned
   // above WITHOUT deleting, so a resend can still find the files.)
+  if (session.deliveryWatchdog) {
+    clearTimeout(session.deliveryWatchdog);
+    session.deliveryWatchdog = null;
+  }
   for (const file of session.files) {
     try {
       await deleteFromR2(file.fileName);
@@ -1702,36 +1846,26 @@ app.post('/api/process', limiter, async (req, res) => {
       }
       console.log(`🎉 All ${r2Files.length} file(s) ready!`);
 
-      const expiryTimer = setTimeout(async () => {
-        const session = sessions.get(activationCode);
-        if (session) {
-          for (const file of session.files) {
-            try { await deleteFromR2(file.fileName); } catch (err) { console.error('R2 cleanup:', err.message); }
-          }
-          sessions.delete(activationCode);
-          console.log(`⏰ Session expired: ${activationCode}`);
-        }
-      }, 300000);
-
-      // Get user caption (optional)
+      // Get user caption (optional) and hand the finished files to the shared
+      // five-minute activation/Baileys flow. Mobile finalization uses the same
+      // helper, while this website response remains byte-for-byte compatible.
       const userCaption = req.body.caption?.trim() || '';
-
-      sessions.set(activationCode, {
-        files: r2Files,
-        assetKeys: assetR2Keys,  // music/sticker R2 assets for delivery-time cleanup (Req 14.2)
-        createdAt: Date.now(),
-        status: 'pending',
-        expiryTimer: expiryTimer,
-        caption: userCaption,  // 🆕 store user's caption
-      });
+      const delivery = createDeliverySession(
+        r2Files,
+        userCaption,
+        activationCode,
+        assetR2Keys,
+      );
       // Outputs are now owned by the session for delivery; the request `finally`
       // must NOT purge the R2 output clips (Req 14.2).
       deliveryHandedOff = true;
 
-      const cleanNumber = process.env.WHATSAPP_BUSINESS_NUMBER.replace('+', '');
-      const waText = buildInboundText(activationCode);
-      const waLink = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(waText)}`;
-      reply.json({ success: true, activationCode, waLink, fileCount: r2Files.length });
+      reply.json({
+        success: true,
+        activationCode: delivery.activationCode,
+        waLink: delivery.waLink,
+        fileCount: delivery.fileCount,
+      });
 
     } catch (processingError) {
       // A recipe that failed validation rejects the request with HTTP 400,
@@ -1797,6 +1931,23 @@ app.post('/api/process', limiter, async (req, res) => {
     reply.status(500).json({ error: error.message });
   }
 });
+
+// Mobile clips are already compressed on-device. Each upload is streamed through
+// an exact byte/SHA-256 gate, ffprobed, and sealed under a server-generated R2
+// key before the shared activation/Baileys session receives ownership.
+const mobileUploadStore = registerMobileUploadRoutes(app, {
+  limiter,
+  uploadDir: path.join(process.cwd(), 'uploads'),
+  uploadToR2,
+  deleteFromR2,
+  probeClip: probeMobileClip,
+  createDeliverySession,
+  logger: console,
+});
+
+// Keep a live reference for operational diagnostics and future graceful-shutdown
+// cleanup without exposing bearer capabilities through an HTTP route.
+void mobileUploadStore;
 
 // ========================
 // ERROR HANDLER

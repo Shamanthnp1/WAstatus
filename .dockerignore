@@ -8,3 +8,7 @@ compressed
 .wrangler
 *.md
 .gitignore
+
+# Private/local development trees are not part of the production backend image.
+mobile/
+semantic-review/
