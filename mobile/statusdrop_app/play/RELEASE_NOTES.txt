@@ -1,0 +1,7 @@
+StatusDrop 1.0.0
+
+• Prepare 1080p or longer 720p Status clips on your phone
+• Automatic local compression, splitting, verification, and delivery handoff
+• No login, ads, analytics SDK, or broad storage permission
+• Accessible light/dark interface and 9-step HD posting guide
+• Open-source Android client with FFmpeg/x264 notices

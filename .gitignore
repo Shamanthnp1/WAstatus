@@ -60,8 +60,12 @@ some images/
 # Temp diagnostic scripts
 _*.ps1
 
-# ---- Private Android beta (do not publish in this repository) ----
-mobile/statusdrop_app/
+# ---- Android client source is public for GPL compliance ----
+# Build outputs, SDK paths, signing properties, and keystores remain excluded by
+# mobile/statusdrop_app/.gitignore and mobile/statusdrop_app/android/.gitignore.
 
 # Agent-generated review artifacts
 semantic-review/
+
+# Private Android tutorial source artwork
+WhatsApp-Status-Guide-9-Images/

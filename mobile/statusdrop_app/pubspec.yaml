@@ -1,0 +1,22 @@
+name: statusdrop
+description: "StatusDrop Android beta: private on-device WhatsApp Status video compression."
+publish_to: 'none'
+version: 1.0.0+7
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/statusdrop_logo.png
+    - assets/tutorial/

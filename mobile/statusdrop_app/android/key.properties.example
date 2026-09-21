@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties. Never commit the real file.
+# The example path stores the private upload key at android/upload-keystore.jks.
+storePassword=REPLACE_WITH_A_STRONG_UNIQUE_PASSWORD
+keyPassword=REPLACE_WITH_A_STRONG_UNIQUE_PASSWORD
+keyAlias=statusdrop-upload
+storeFile=../upload-keystore.jks

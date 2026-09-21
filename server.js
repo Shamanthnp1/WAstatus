@@ -377,9 +377,11 @@ function toJid(numberOrJid) {
   return `${numberOrJid.replace(/^\+/, '').replace(/\D/g, '')}@s.whatsapp.net`;
 }
 
-// Extract phone number from JID
-function jidToNumber(jid) {
-  return jid.split('@')[0];
+// Pseudonymous identifier for operational logs. Never log the sender's full
+// WhatsApp JID/phone number or activation-message text.
+function senderLogId(jid) {
+  if (!jid) return 'unknown';
+  return crypto.createHash('sha256').update(String(jid)).digest('hex').slice(0, 10);
 }
 
 
@@ -858,7 +860,7 @@ async function startBaileys() {
         // answered again.
         const staleness = isStaleMessage(msg.messageTimestamp);
         if (staleness.stale) {
-          console.log(`Ignoring stale message from ${jidToNumber(from)} (${staleness.ageSeconds}s old)`);
+          console.log(`Ignoring stale message from sender ${senderLogId(from)} (${staleness.ageSeconds}s old)`);
           continue;
         }
 
@@ -1145,7 +1147,7 @@ async function sendWhatsAppVideo(to, videoUrl, caption) {
 // (your old webhook logic, transport-swapped)
 // ========================
 async function handleIncomingMessage(from, text) {
-  console.log(`Message from ${jidToNumber(from)}: ${text}`);
+  console.log(`Message received from sender ${senderLogId(from)}`);
 
   // Extract the 9-char code. Order matters:
   //  1) "code (is/:) XXXXXXXXX" — the natural-sentence prefill (case-insensitive).
@@ -1165,7 +1167,7 @@ async function handleIncomingMessage(from, text) {
     // which reads as spam and is exactly the behaviour that gets a number
     // reported. Silence is the right response to a repeat non-code message.
     if (!welcomeThrottle.shouldSend(from)) {
-      console.log(`Welcome already sent to ${jidToNumber(from)} recently — staying quiet`);
+      console.log(`Welcome already sent to sender ${senderLogId(from)} recently — staying quiet`);
       return;
     }
     welcomeThrottle.markSent(from);

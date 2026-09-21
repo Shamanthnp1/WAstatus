@@ -12,3 +12,5 @@ compressed
 # Private/local development trees are not part of the production backend image.
 mobile/
 semantic-review/
+
+WhatsApp-Status-Guide-9-Images/
