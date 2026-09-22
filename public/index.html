@@ -257,6 +257,93 @@
 
     .logo-text span { color: var(--orange-deep); }
 
+    .android-beta {
+      background: var(--surface);
+      border-top: 1px solid var(--border-strong);
+      border-bottom: 1px solid var(--border-strong);
+      padding: 34px 20px;
+    }
+
+    .android-beta-inner {
+      width: min(920px, 100%);
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .android-beta-eyebrow {
+      color: var(--orange-deep);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .android-beta h2 {
+      margin: 8px 0 8px;
+      color: var(--olive);
+      font-size: clamp(26px, 5vw, 36px);
+      line-height: 1.15;
+    }
+
+    .android-beta-copy {
+      color: var(--olive-soft);
+      margin: 0 auto 20px;
+      max-width: 680px;
+    }
+
+    .android-beta-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .android-beta-action {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 64px;
+      padding: 12px 16px;
+      border: 2px solid var(--orange-deep);
+      border-radius: 16px;
+      color: var(--orange-deep);
+      background: var(--surface-soft);
+      text-decoration: none;
+      text-align: left;
+      font-weight: 800;
+    }
+
+    .android-beta-action:hover,
+    .android-beta-action:focus-visible {
+      color: var(--on-accent);
+      background: var(--orange-deep);
+      outline: 3px solid var(--olive);
+      outline-offset: 2px;
+    }
+
+    .android-beta-number {
+      display: grid;
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--sage);
+      color: var(--olive);
+    }
+
+    .android-beta-note {
+      margin: 14px 0 0;
+      color: var(--olive-soft);
+      font-size: 13px;
+    }
+
+    @media (max-width: 640px) {
+      .android-beta-actions { grid-template-columns: 1fr; }
+    }
+
     .hero h1 {
       font-size: 48px;
       font-weight: 800;
@@ -1241,6 +1328,39 @@
       <span class="badge">🌍 Works Worldwide</span>
     </div>
   </div>
+
+  <section class="android-beta" aria-labelledby="androidBetaTitle">
+    <div class="android-beta-inner">
+      <div class="android-beta-eyebrow">Android closed beta</div>
+      <h2 id="androidBetaTitle">Help test StatusDrop on Google Play</h2>
+      <p class="android-beta-copy">
+        Join with the same Google account in both steps. Google manages tester
+        eligibility and installation; StatusDrop does not collect your email.
+      </p>
+      <ol class="android-beta-actions" aria-label="Join the StatusDrop Android beta">
+        <li>
+          <a class="android-beta-action"
+             href="https://groups.google.com/g/statusdrop-android-testers"
+             target="_blank" rel="noopener">
+            <span class="android-beta-number" aria-hidden="true">1</span>
+            <span>Join the tester group</span>
+          </a>
+        </li>
+        <li>
+          <a class="android-beta-action"
+             href="https://play.google.com/apps/testing/com.wastatusvideo.statusdrop"
+             target="_blank" rel="noopener">
+            <span class="android-beta-number" aria-hidden="true">2</span>
+            <span>Become a tester &amp; install</span>
+          </a>
+        </li>
+      </ol>
+      <p class="android-beta-note">
+        The Play install link becomes available after Google approves the closed-test release.
+        Testers must remain opted in for the required testing period.
+      </p>
+    </div>
+  </section>
 
   <!-- VISUAL TUTORIAL — manual horizontal scroll; no autoplay so users can
        read each step at their own pace. Posters open full-size for zooming. -->
