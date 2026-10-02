@@ -51,6 +51,7 @@ const {
 } = require('./src/server/encodeExec');
 const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
 const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
+const { registerWebRetirement } = require('./src/server/webRetirement');
 require('dotenv').config();
 
 // ========================
@@ -97,6 +98,13 @@ app.use('/vendor/fonts', express.static(path.join(__dirname, 'node_modules/@font
 // Serve pako (gunzip .tgs) + lottie-web (render animated stickers) for the editor.
 app.use('/vendor/pako', express.static(path.join(__dirname, 'node_modules/pako/dist')));
 app.use('/vendor/lottie', express.static(path.join(__dirname, 'node_modules/lottie-web/build/player')));
+
+// The website compressor is retired; the Android app compresses on-device.
+// Answer the web-only routes (upload-url, process, job, library, music) with
+// 410 Gone before they can start an upload or encode. Must stay registered
+// ahead of musicRoutes and the /api/upload-url, /api/process and /api/job
+// handlers below. See src/server/webRetirement.js.
+registerWebRetirement(app);
 
 // Mount the music / asset endpoints: GET /api/library (curated royalty-free
 // library) and POST /api/music/upload-url + POST /api/music/validate (user
@@ -1055,9 +1063,9 @@ function buildVerifiedMessage(count) {
 }
 
 const WELCOME_MESSAGES = [
-  '👋 Welcome to StatusDrop! Visit our website to compress and receive your HD videos! 🌐 https://wastatusvideo.com',
-  'Hey there! 👋 To get HD videos for your status, head to https://wastatusvideo.com and compress your clip first.',
-  'Hi! 👋 StatusDrop makes HD WhatsApp statuses — start at https://wastatusvideo.com 🌐',
+  '👋 Welcome to StatusDrop! HD Status videos are now made with the StatusDrop Android app. Get it here: 🌐 https://wastatusvideo.com',
+  'Hey there! 👋 To get HD videos for your status, install the StatusDrop Android app from https://wastatusvideo.com and compress your clip there.',
+  'Hi! 👋 StatusDrop makes HD WhatsApp statuses with its Android app — get it at https://wastatusvideo.com 🌐',
 ];
 
 async function sendWhatsAppMessage(to, message) {
