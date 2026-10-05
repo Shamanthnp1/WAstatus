@@ -53,7 +53,7 @@ const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
 const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
 const { registerWebRetirement } = require('./src/server/webRetirement');
 const { downloadToFile } = require('./src/server/mediaDownload');
-const { parseLineConfigs, pickDeliveryLine } = require('./src/server/whatsappLines');
+const { parseLineConfigs, pickDeliveryLine, isUnfinishedPairing, clearAuthDir } = require('./src/server/whatsappLines');
 require('dotenv').config();
 
 // ========================
@@ -797,7 +797,17 @@ async function startBaileys(line) {
   const tag = lineTag(line);
 
   try {
-    const { state, saveCreds } = await useMultiFileAuthState(line.authDir);
+    let { state, saveCreds } = await useMultiFileAuthState(line.authDir);
+    // A pairing code that expired (or was never entered) leaves half-made creds
+    // behind. Logging in with them gets a 401 and makes the next pairing code
+    // useless, so start this attempt from fresh creds instead. Never matches a
+    // linked session (those are `registered`). The device footprint is kept so
+    // the device type stays the same across retries.
+    if (isUnfinishedPairing(state.creds)) {
+      const removed = clearAuthDir(line.authDir, { keep: ['device-footprint.json'] });
+      console.log(`${tag} Cleared an unfinished pairing attempt (${removed} file(s)); a fresh pairing code will be issued.`);
+      ({ state, saveCreds } = await useMultiFileAuthState(line.authDir));
+    }
     const waVersion = await resolveWaVersion();
 
     const rawSock = makeWASocket({
@@ -831,7 +841,12 @@ async function startBaileys(line) {
       if (connection === 'close') {
         line.connected = false;
         const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-        const shouldReconnect = code !== DisconnectReason.loggedOut;
+        // While the number isn't linked yet, a 401 is WhatsApp rejecting an
+        // unfinished pairing attempt, not a real logout, so keep offering fresh
+        // pairing codes. A LINKED number that gets 401 was logged out from the
+        // phone and stays stopped until it is re-linked (as before).
+        const linked = !!rawSock?.authState?.creds?.registered;
+        const shouldReconnect = !linked || code !== DisconnectReason.loggedOut;
         console.log(`${tag} Baileys closed (code ${code}). Reconnect: ${shouldReconnect}`);
         line.reconnecting = false;
         if (shouldReconnect) {

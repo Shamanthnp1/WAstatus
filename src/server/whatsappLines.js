@@ -56,6 +56,39 @@ function parseLineConfigs(env = process.env, logger = console) {
 }
 
 /**
+ * True when saved credentials are left over from a pairing-code attempt that
+ * never completed: requestPairingCode() stores `me` and `pairingCode`, but
+ * `registered` only turns true once the phone accepts the code. Baileys then
+ * tries to LOG IN with that half-made identity on the next connect, WhatsApp
+ * rejects it (401), and any pairing code shown on that connection is dead on
+ * arrival. A linked session is `registered`, so it never matches.
+ *
+ * @param {{registered?: boolean, pairingCode?: string}|null|undefined} creds
+ */
+function isUnfinishedPairing(creds) {
+  return !!creds && !creds.registered && !!creds.pairingCode;
+}
+
+/**
+ * Delete the CONTENTS of an auth dir (not the folder itself: on a mounted
+ * volume, removing the mount point fails with EBUSY).
+ *
+ * @param {string} dir
+ * @param {{ keep?: string[], fsImpl?: typeof import('fs') }} [options] entries to keep
+ * @returns {number} entries removed
+ */
+function clearAuthDir(dir, { keep = [], fsImpl = require('fs') } = {}) {
+  let removed = 0;
+  if (!fsImpl.existsSync(dir)) return removed;
+  for (const entry of fsImpl.readdirSync(dir)) {
+    if (keep.includes(entry)) continue;
+    fsImpl.rmSync(path.join(dir, entry), { recursive: true, force: true });
+    removed++;
+  }
+  return removed;
+}
+
+/**
  * Choose the line a new activation code should point at: a connected line
  * with the fewest open deliveries. Ties go to the line assigned least
  * recently (`lastAssignedAt`, a counter), so an idle pair alternates.
@@ -81,4 +114,6 @@ function pickDeliveryLine(lines, activeCountFor) {
 module.exports = {
   parseLineConfigs,
   pickDeliveryLine,
+  isUnfinishedPairing,
+  clearAuthDir,
 };
