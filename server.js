@@ -52,6 +52,8 @@ const {
 const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
 const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
 const { registerWebRetirement } = require('./src/server/webRetirement');
+const { downloadToFile } = require('./src/server/mediaDownload');
+const { parseLineConfigs, pickDeliveryLine } = require('./src/server/whatsappLines');
 require('dotenv').config();
 
 // ========================
@@ -262,9 +264,14 @@ function clientIpKey(req) {
   return ipKeyGenerator ? ipKeyGenerator(ip) : ip;
 }
 
+// Only the Android app's /api/mobile/* session + finalize routes use this now
+// (the web routes answer 410 before reaching it). Each app delivery spends 2
+// requests, and mobile carriers put many phones behind one IP — the library
+// also groups IPv6 users by /56 subnet — so 200/day keeps people on the same
+// network from locking each other out (100 deliveries per shared address).
 const limiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000,
-  max: 50,
+  max: 200,
   message: { error: 'Daily limit reached! Try again tomorrow.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -680,14 +687,46 @@ async function sweepOrphanR2Objects() {
 // ========================
 // BAILEYS WHATSAPP TRANSPORT
 // ========================
-let sock = null;
-let baileysConnected = false;
-let reconnecting = false;
-let reconnectAttempts = 0; // drives exponential backoff so a 403 loop doesn't hammer WhatsApp
-// Where the Baileys session is stored. Configurable so it can point at a mounted
-// persistent volume on any host (Railway volume, Azure Files, etc.). Default keeps
-// the current relative folder so existing deployments are unaffected.
-const BAILEYS_AUTH_DIR = process.env.BAILEYS_AUTH_DIR || 'baileys_auth';
+// One entry per linked WhatsApp number ("line"). Each line has its own Baileys
+// socket, auth folder, connection state and reconnect backoff. Line 1 uses the
+// original WHATSAPP_BUSINESS_NUMBER / BAILEYS_AUTH_DIR, so a deployment without
+// WHATSAPP_BUSINESS_NUMBER_2 runs exactly one line, as before. Auth folders are
+// configurable so they can point at a persistent volume (Azure /home, etc.).
+// See src/server/whatsappLines.js.
+const WA_LINES = parseLineConfigs(process.env).map((config) => ({
+  ...config,
+  sock: null,
+  connected: false,
+  reconnecting: false,
+  reconnectAttempts: 0, // drives exponential backoff so a 403 loop doesn't hammer WhatsApp
+  lastAssignedAt: 0,    // order of the last activation code pointed at this line
+}));
+let lineAssignSeq = 0;
+
+function lineTag(line) { return `[WA ${line.id}]`; }
+
+// Public status for /api/health. Never includes the phone number.
+function lineStatus(line) {
+  if (line.connected && line.sock) return 'connected';
+  return line.sock?.authState?.creds?.registered === false ? 'not_linked' : 'disconnected';
+}
+
+// True while at least one line can deliver. The mobile routes refuse new
+// uploads with 503 otherwise.
+function isWhatsAppDeliveryAvailable() {
+  return WA_LINES.some((line) => line.connected && line.sock);
+}
+
+// Open (not yet delivered) activation codes pointed at this line.
+function activeDeliveriesOn(line) {
+  let count = 0;
+  for (const session of sessions.values()) {
+    if (session.lineId === line.id && (session.status === 'pending' || session.status === 'processing')) {
+      count++;
+    }
+  }
+  return count;
+}
 
 // Device footprint = the client type WhatsApp shows for the linked device. We
 // persist a randomly chosen footprint alongside the auth so it stays consistent
@@ -752,12 +791,13 @@ async function resolveWaVersion() {
   return undefined; // let makeWASocket use its bundled default
 }
 
-async function startBaileys() {
-  if (reconnecting) return;
-  reconnecting = true;
+async function startBaileys(line) {
+  if (line.reconnecting) return;
+  line.reconnecting = true;
+  const tag = lineTag(line);
 
   try {
-    const { state, saveCreds } = await useMultiFileAuthState(BAILEYS_AUTH_DIR);
+    const { state, saveCreds } = await useMultiFileAuthState(line.authDir);
     const waVersion = await resolveWaVersion();
 
     const rawSock = makeWASocket({
@@ -769,7 +809,7 @@ async function startBaileys() {
       // Random-but-persisted device footprint: consistent across reconnects of
       // this session, but a fresh RESET_BAILEYS re-link picks a new one so the
       // new device doesn't look like the previously flagged one.
-      browser: getOrCreateDeviceFootprint(BAILEYS_AUTH_DIR),
+      browser: getOrCreateDeviceFootprint(line.authDir),
       syncFullHistory: false,
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: false,
@@ -781,24 +821,21 @@ async function startBaileys() {
     // which took down all delivery. So we do NOT wrap the socket. Delivery uses
     // the raw socket directly; anti-ban behavior is handled natively below
     // (typing/recording presence, paced outbound sends, reconnect backoff).
-    sock = rawSock;
+    line.sock = rawSock;
 
-    // Low-level protocol (events, auth, pairing) is bound to the RAW socket —
-    // the antiban wrapper only needs to intercept outbound sends, and may not
-    // proxy these internals. Outbound sends use the wrapped `sock`.
     rawSock.ev.on('creds.update', saveCreds);
 
     rawSock.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect } = update;
       // QR intentionally not printed — we link via pairing code only (below).
       if (connection === 'close') {
-        baileysConnected = false;
+        line.connected = false;
         const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
         const shouldReconnect = code !== DisconnectReason.loggedOut;
-        console.log(`Baileys closed (code ${code}). Reconnect: ${shouldReconnect}`);
-        reconnecting = false;
+        console.log(`${tag} Baileys closed (code ${code}). Reconnect: ${shouldReconnect}`);
+        line.reconnecting = false;
         if (shouldReconnect) {
-          reconnectAttempts += 1;
+          line.reconnectAttempts += 1;
           // If we're not linked yet, reconnecting fast spits out a brand-new
           // pairing code every few seconds — the user can never type one before
           // it changes. So while UNREGISTERED, wait a full minute between tries
@@ -807,31 +844,31 @@ async function startBaileys() {
           let delay;
           if (!isRegistered) {
             delay = 60000 + randBetween(0, 3000);
-            console.log('Not linked yet — showing one pairing code per minute. Enter the MOST RECENT code above and ignore the older ones.');
+            console.log(`${tag} Not linked yet — showing one pairing code per minute. Enter the MOST RECENT code above and ignore the older ones.`);
           } else {
             // Fast recovery for transient drops; mild backoff only if it keeps
             // failing, capped low (15s) so the bot never stays offline long.
-            delay = Math.min(15000, 3000 * reconnectAttempts) + randBetween(0, 1500);
+            delay = Math.min(15000, 3000 * line.reconnectAttempts) + randBetween(0, 1500);
           }
-          console.log(`Reconnecting in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts})`);
-          setTimeout(() => startBaileys().catch(e => console.error('Reconnect failed:', e)), delay);
+          console.log(`${tag} Reconnecting in ${Math.round(delay / 1000)}s (attempt ${line.reconnectAttempts})`);
+          setTimeout(() => startBaileys(line).catch(e => console.error(`${tag} Reconnect failed:`, e)), delay);
         } else {
-          console.error('!!! Baileys logged out — set RESET_BAILEYS=true and redeploy to re-link.');
+          console.error(`!!! ${tag} Baileys logged out — set ${line.resetEnv}=true and redeploy to re-link.`);
         }
       } else if (connection === 'open') {
-        baileysConnected = true;
-        reconnecting = false;
-        reconnectAttempts = 0; // healthy connection — reset backoff
-        console.log('✓ Baileys connected to WhatsApp');
+        line.connected = true;
+        line.reconnecting = false;
+        line.reconnectAttempts = 0; // healthy connection — reset backoff
+        console.log(`${tag} ✓ Baileys connected to WhatsApp`);
       }
     });
 
     // Pairing-code linking (no QR). Retries a few times since requestPairingCode
     // can fail if called before the socket is fully ready.
     if (!rawSock.authState.creds.registered) {
-      const phoneNumber = (process.env.WHATSAPP_BUSINESS_NUMBER || '').replace(/\D/g, '');
+      const phoneNumber = line.number;
       if (!phoneNumber) {
-        console.error('!!! Cannot request pairing code: WHATSAPP_BUSINESS_NUMBER is not set (use full international number, e.g. +9198XXXXXXXX).');
+        console.error(`!!! ${tag} Cannot request pairing code: ${line.numberEnv} is not set (use full international number, e.g. +9198XXXXXXXX).`);
       } else {
         let attempts = 0;
         const requestPair = async () => {
@@ -840,16 +877,16 @@ async function startBaileys() {
             const code = await rawSock.requestPairingCode(phoneNumber);
             const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
             console.log('\n=========================================');
-            console.log(`  PAIRING CODE: ${formatted}`);
+            console.log(`  PAIRING CODE (${line.id}): ${formatted}`);
             console.log(`  For number: +${phoneNumber}`);
             console.log('  In WhatsApp on that phone:');
             console.log('  Settings → Linked Devices → Link a Device');
             console.log('  → "Link with phone number instead" → enter this code');
             console.log('=========================================\n');
           } catch (err) {
-            console.error(`Pairing code attempt ${attempts} failed:`, err.message);
+            console.error(`${tag} Pairing code attempt ${attempts} failed:`, err.message);
             if (attempts < 4) setTimeout(requestPair, 5000);
-            else console.error('!!! Could not obtain a pairing code after several tries. Verify WHATSAPP_BUSINESS_NUMBER and redeploy.');
+            else console.error(`!!! ${tag} Could not obtain a pairing code after several tries. Verify ${line.numberEnv} and redeploy.`);
           }
         };
         setTimeout(requestPair, 3000);
@@ -868,15 +905,17 @@ async function startBaileys() {
         // answered again.
         const staleness = isStaleMessage(msg.messageTimestamp);
         if (staleness.stale) {
-          console.log(`Ignoring stale message from sender ${senderLogId(from)} (${staleness.ageSeconds}s old)`);
+          console.log(`${tag} Ignoring stale message from sender ${senderLogId(from)} (${staleness.ageSeconds}s old)`);
           continue;
         }
 
         // GUARD 2 — exact-duplicate suppression. WhatsApp can deliver the same
         // message id more than once; two upsert events for one message would
-        // otherwise produce two replies.
-        if (messageDeduper.isDuplicate(msg.key.id)) {
-          console.log(`Duplicate message id ${msg.key.id} — ignored`);
+        // otherwise produce two replies. Ids are scoped per line; a missing id
+        // stays missing so the deduper skips it, as before.
+        const dedupeId = msg.key.id ? `${line.id}:${msg.key.id}` : msg.key.id;
+        if (messageDeduper.isDuplicate(dedupeId)) {
+          console.log(`${tag} Duplicate message id ${msg.key.id} — ignored`);
           continue;
         }
 
@@ -886,16 +925,16 @@ async function startBaileys() {
           || msg.message.videoMessage?.caption
           || '';
         try {
-          await handleIncomingMessage(from, text.trim());
+          await handleIncomingMessage(line, from, text.trim());
         } catch (err) {
-          console.error('Message handler error:', err.message);
+          console.error(`${tag} Message handler error:`, err.message);
         }
       }
     });
   } catch (err) {
-    reconnecting = false;
-    console.error('Baileys startup error:', err);
-    setTimeout(() => startBaileys().catch(e => console.error('Restart failed:', e)), 5000);
+    line.reconnecting = false;
+    console.error(`${tag} Baileys startup error:`, err);
+    setTimeout(() => startBaileys(line).catch(e => console.error(`${tag} Restart failed:`, e)), 5000);
   }
 }
 
@@ -917,7 +956,7 @@ function withTimeout(promise, ms, label) {
 // Per-send wall-clock limits for WhatsApp delivery (prevents a stuck send from
 // stranding a session in `processing`).
 const WA_MESSAGE_TIMEOUT_MS = 30000;   // text message send
-const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> buffer download
+const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> temp file download
 const WA_VIDEO_SEND_TIMEOUT_MS = 180000; // Baileys video upload+send
 
 // Jitter + human-pacing helpers.
@@ -943,16 +982,16 @@ function gaussianDelay(mean, stddev, min, max) {
 
 const HUMANIZE_SENDS = process.env.HUMANIZE_SENDS !== 'false'; // on by default
 
-async function humanPause(jid, kind = 'text') {
+async function humanPause(line, jid, kind = 'text') {
   if (!HUMANIZE_SENDS) return;
   const presence = kind === 'video' ? 'recording' : 'composing';
   try {
-    await sock.sendPresenceUpdate('available', jid);
-    await sock.sendPresenceUpdate(presence, jid);
+    await line.sock.sendPresenceUpdate('available', jid);
+    await line.sock.sendPresenceUpdate(presence, jid);
   } catch (e) { /* presence is best-effort — never block the actual send */ }
   // Cluster around ~6s: most pauses land ~4–8s, hard-capped to 2.5–11s.
   await new Promise(r => setTimeout(r, gaussianDelay(6000, 1500, 2500, 11000)));
-  try { await sock.sendPresenceUpdate('paused', jid); } catch (e) { /* ignore */ }
+  try { await line.sock.sendPresenceUpdate('paused', jid); } catch (e) { /* ignore */ }
 }
 
 // ========================
@@ -987,6 +1026,14 @@ function createDeliverySession(files, caption = '', preferredCode = null, assetK
   if (!Array.isArray(files) || files.length === 0) {
     throw new Error('Cannot create an empty delivery session.');
   }
+  // Point the new code at a connected line with the fewest open deliveries. If
+  // none is connected, fall back to the first configured number (the old
+  // single-number behaviour); the mobile routes check
+  // isWhatsAppDeliveryAvailable() first and answer 503 instead.
+  const line = pickDeliveryLine(WA_LINES, activeDeliveriesOn) || WA_LINES.find((candidate) => candidate.number);
+  if (!line) {
+    throw new Error('WhatsApp delivery number is not configured.');
+  }
   const activationCode = preferredCode && !sessions.has(preferredCode)
     ? preferredCode
     : generateCode();
@@ -1000,20 +1047,19 @@ function createDeliverySession(files, caption = '', preferredCode = null, assetK
     deliveryWatchdog: null,
     deliveryTimedOut: false,
     caption: String(caption || '').trim(),
+    // The line whose number the code's WhatsApp link opens. Delivery itself is
+    // done by whichever line receives the code, so a code sent to the other
+    // number still works.
+    lineId: line.id,
   };
   sessions.set(activationCode, session);
   scheduleDeliveryExpiry(activationCode, session);
+  line.lastAssignedAt = ++lineAssignSeq;
 
-  const cleanNumber = String(process.env.WHATSAPP_BUSINESS_NUMBER || '').replace(/\D/g, '');
-  if (!cleanNumber) {
-    sessions.delete(activationCode);
-    if (session.expiryTimer) clearTimeout(session.expiryTimer);
-    throw new Error('WhatsApp delivery number is not configured.');
-  }
   const waText = buildInboundText(activationCode);
   return {
     activationCode,
-    waLink: `https://wa.me/${cleanNumber}?text=${encodeURIComponent(waText)}`,
+    waLink: `https://wa.me/${line.number}?text=${encodeURIComponent(waText)}`,
     fileCount: session.files.length,
     expiresAt: new Date(createdAt + DELIVERY_ACTIVATION_TTL_MS).toISOString(),
   };
@@ -1068,30 +1114,26 @@ const WELCOME_MESSAGES = [
   'Hi! 👋 StatusDrop makes HD WhatsApp statuses with its Android app — get it at https://wastatusvideo.com 🌐',
 ];
 
-async function sendWhatsAppMessage(to, message) {
-  if (!sock || !baileysConnected) throw new Error('Baileys not connected');
+async function sendWhatsAppMessage(line, to, message) {
+  if (!line.sock || !line.connected) throw new Error(`Baileys ${line.id} not connected`);
   const jid = toJid(to);
-  await humanPause(jid, 'text');
-  await withTimeout(sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
+  await humanPause(line, jid, 'text');
+  await withTimeout(line.sock.sendMessage(jid, { text: message }), WA_MESSAGE_TIMEOUT_MS, 'WhatsApp message send');
 }
 
 /**
- * Probe a video buffer for the metadata WhatsApp expects on a videoMessage.
+ * Probe a downloaded video file for the metadata WhatsApp expects on a
+ * videoMessage. Failures are non-fatal: we return {} and the send proceeds
+ * without metadata rather than dropping the user's video.
  *
- * ffprobe needs a real path, so the buffer is written to a short-lived temp file
- * and removed immediately. Failures are non-fatal: we return {} and the send
- * proceeds without metadata rather than dropping the user's video.
- *
- * @param {Buffer} buffer encoded mp4 bytes
+ * @param {string} filePath encoded mp4 on disk
  * @returns {Promise<{width?: number, height?: number, seconds?: number}>}
  */
-async function probeVideoMeta(buffer) {
-  const tmp = path.join('compressed', `meta_${uuidv4()}.mp4`);
+async function probeVideoMeta(filePath) {
   try {
-    await fs.promises.writeFile(tmp, buffer);
     const [dims, duration] = await Promise.all([
-      getVideoDimensions(tmp),
-      getVideoDuration(tmp),
+      getVideoDimensions(filePath),
+      getVideoDuration(filePath),
     ]);
     const meta = {};
     if (Number.isFinite(dims?.width) && Number.isFinite(dims?.height)) {
@@ -1105,57 +1147,63 @@ async function probeVideoMeta(buffer) {
   } catch (err) {
     console.warn('Video metadata probe failed (sending without it):', err.message);
     return {};
-  } finally {
-    await fs.promises.unlink(tmp).catch(() => { });
   }
 }
 
-async function sendWhatsAppVideo(to, videoUrl, caption) {
-  if (!sock || !baileysConnected) throw new Error('Baileys not connected');
+async function sendWhatsAppVideo(line, to, videoUrl, caption) {
+  if (!line.sock || !line.connected) throw new Error(`Baileys ${line.id} not connected`);
   const jid = toJid(to);
 
   // Human pacing: show "recording" presence and hold a Gaussian pause before
-  // sending (the R2 download below also runs during this window).
-  await humanPause(jid, 'video');
+  // sending.
+  await humanPause(line, jid, 'video');
 
-  // Download from R2 into a buffer (bounded by a timeout so a stalled fetch
-  // can't hang the whole delivery).
-  const r2Response = await axios.get(videoUrl, {
-    responseType: 'arraybuffer',
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
-    timeout: WA_DOWNLOAD_TIMEOUT_MS,
-  });
-  const videoBuffer = Buffer.from(r2Response.data);
+  // Stream the clip from R2 to a short-lived file instead of holding it in RAM
+  // (bounded by a timeout so a stalled fetch can't hang the whole delivery).
+  // Baileys reads it from disk ({ url: path }) and writes its own encrypted copy
+  // to disk too, so a send no longer keeps the whole video in memory. The
+  // startup sweep removes any copy left behind by a crash.
+  const tmpPath = path.resolve('compressed', `wa_send_${uuidv4()}.mp4`);
+  await fs.promises.mkdir(path.dirname(tmpPath), { recursive: true });
+  try {
+    await downloadToFile(videoUrl, tmpPath, {
+      timeoutMs: WA_DOWNLOAD_TIMEOUT_MS,
+      label: 'R2 clip download',
+    });
 
-  // Baileys does NOT populate video metadata: its message builder computes
-  // `seconds` only for audio (mediaType === 'audio'), and backfills width/height
-  // from the 32x32 thumbnail probe. So videos ship with no duration and wrong or
-  // missing dimensions — unlike a real WhatsApp client, which always sends them.
-  // The receiving app then has to DECODE the file to derive them, and once it is
-  // decoding it re-encodes, which is what destroys quality when forwarding to
-  // Status. Probe the real values and pass them explicitly.
-  const meta = await probeVideoMeta(videoBuffer);
+    // Baileys does NOT populate video metadata: its message builder computes
+    // `seconds` only for audio (mediaType === 'audio'), and backfills width/height
+    // from the 32x32 thumbnail probe. So videos ship with no duration and wrong or
+    // missing dimensions — unlike a real WhatsApp client, which always sends them.
+    // The receiving app then has to DECODE the file to derive them, and once it is
+    // decoding it re-encodes, which is what destroys quality when forwarding to
+    // Status. Probe the real values and pass them explicitly.
+    const meta = await probeVideoMeta(tmpPath);
 
-  await withTimeout(
-    sock.sendMessage(jid, {
-      video: videoBuffer,
-      caption: caption,
-      mimetype: 'video/mp4',
-      ...meta, // width, height, seconds — omitted entirely if the probe failed
-    }),
-    WA_VIDEO_SEND_TIMEOUT_MS,
-    'WhatsApp video send'
-  );
-  console.log(`Video sent via Baileys! ✓ ${meta.width ? `(${meta.width}x${meta.height}, ${meta.seconds}s)` : '(metadata unavailable)'}`);
+    await withTimeout(
+      line.sock.sendMessage(jid, {
+        video: { url: tmpPath },
+        caption: caption,
+        mimetype: 'video/mp4',
+        ...meta, // width, height, seconds — omitted entirely if the probe failed
+      }),
+      WA_VIDEO_SEND_TIMEOUT_MS,
+      'WhatsApp video send'
+    );
+    console.log(`${lineTag(line)} Video sent via Baileys! ✓ ${meta.width ? `(${meta.width}x${meta.height}, ${meta.seconds}s)` : '(metadata unavailable)'}`);
+  } finally {
+    await fs.promises.unlink(tmpPath).catch(() => { });
+  }
 }
 
 // ========================
 // INCOMING MESSAGE HANDLER
 // (your old webhook logic, transport-swapped)
 // ========================
-async function handleIncomingMessage(from, text) {
-  console.log(`Message received from sender ${senderLogId(from)}`);
+// `line` is the WhatsApp line that received the message; every reply and the
+// video delivery go out through that same line.
+async function handleIncomingMessage(line, from, text) {
+  console.log(`${lineTag(line)} Message received from sender ${senderLogId(from)}`);
 
   // Extract the 9-char code. Order matters:
   //  1) "code (is/:) XXXXXXXXX" — the natural-sentence prefill (case-insensitive).
@@ -1174,16 +1222,18 @@ async function handleIncomingMessage(from, text) {
     // "hi", "hello", "?" in quick succession used to get a reply to every one,
     // which reads as spam and is exactly the behaviour that gets a number
     // reported. Silence is the right response to a repeat non-code message.
-    if (!welcomeThrottle.shouldSend(from)) {
-      console.log(`Welcome already sent to sender ${senderLogId(from)} recently — staying quiet`);
+    // Throttled per line: each number is its own chat for the user.
+    const welcomeKey = `${line.id}|${from}`;
+    if (!welcomeThrottle.shouldSend(welcomeKey)) {
+      console.log(`${lineTag(line)} Welcome already sent to sender ${senderLogId(from)} recently — staying quiet`);
       return;
     }
-    welcomeThrottle.markSent(from);
+    welcomeThrottle.markSent(welcomeKey);
     try {
-      await sendWhatsAppMessage(from, pick(WELCOME_MESSAGES));
+      await sendWhatsAppMessage(line, from, pick(WELCOME_MESSAGES));
     } catch (err) {
       console.error('Failed welcome message:', err.message);
-      welcomeThrottle.clear(from); // send failed — allow a retry next time
+      welcomeThrottle.clear(welcomeKey); // send failed — allow a retry next time
     }
     return;
   }
@@ -1199,9 +1249,9 @@ async function handleIncomingMessage(from, text) {
 
   if (!session) {
     try {
-      await sendWhatsAppMessage(from,
-        '✗ Invalid or expired code!' +
-        'Please compress your video again at our website.'
+      await sendWhatsAppMessage(line, from,
+        '✗ Invalid or expired code! ' +
+        'Please compress your video again in the StatusDrop app.'
       );
     } catch (err) {
       console.error('Failed to send expired message:', err.message);
@@ -1222,9 +1272,9 @@ async function handleIncomingMessage(from, text) {
   }
   if (session.status === 'failed') {
     try {
-      await sendWhatsAppMessage(from,
-        'Failed to send your video.' +
-        'Please compress your video again and try with a new code.'
+      await sendWhatsAppMessage(line, from,
+        'Failed to send your video. ' +
+        'Please compress your video again in the StatusDrop app and try with a new code.'
       );
     } catch (err) {
       console.error('Failed retry message:', err.message);
@@ -1255,7 +1305,7 @@ async function handleIncomingMessage(from, text) {
   sessions.set(code, session);
 
   try {
-    await sendWhatsAppMessage(from, buildVerifiedMessage(session.files.length));
+    await sendWhatsAppMessage(line, from, buildVerifiedMessage(session.files.length));
   } catch (err) {
     console.error('Failed code verified message:', err.message);
   }
@@ -1276,7 +1326,7 @@ async function handleIncomingMessage(from, text) {
       }
       // All other parts (i > 0) — no caption at all (empty string)
 
-      await sendWhatsAppVideo(from, file.url, videoCaption);
+      await sendWhatsAppVideo(line, from, file.url, videoCaption);
       if (session.deliveryTimedOut) throw new Error('Delivery watchdog elapsed.');
 
       console.log(`✓ Video ${i + 1}/${session.files.length} sent (${((Date.now() - videoSendStart) / 1000).toFixed(2)}s)`);
@@ -1310,7 +1360,7 @@ async function handleIncomingMessage(from, text) {
     sessions.set(code, session);
     console.error('Video send failed:', err.message);
     try {
-      await sendWhatsAppMessage(from,
+      await sendWhatsAppMessage(line, from,
         'Hit a temporary hiccup sending your video. Please send your code again in a moment to retry. 🎬'
       );
     } catch (messageErr) {
@@ -1380,9 +1430,13 @@ app.get('/api/health', (req, res) => {
   // width/height/duration. Without it, outgoing videoMessages carry no
   // metadata and WhatsApp re-encodes them when forwarded to Status instead of
   // passing them through. Surfaced here so it can be verified, not assumed.
+  // `baileys` stays the single summary field existing checks rely on: it reads
+  // "connected" while ANY line can deliver. `whatsappLines` shows each line
+  // (connected / disconnected / not_linked) without exposing phone numbers.
   res.json({
     status: '✓ Server Running!',
-    baileys: baileysConnected ? 'connected' : 'disconnected',
+    baileys: isWhatsAppDeliveryAvailable() ? 'connected' : 'disconnected',
+    whatsappLines: WA_LINES.map((line) => ({ line: line.id, status: lineStatus(line) })),
     ffmpegOnPath: ffmpegOnPath(),
     fpsCap: FPS_CAP,
   });
@@ -1952,6 +2006,7 @@ const mobileUploadStore = registerMobileUploadRoutes(app, {
   deleteFromR2,
   probeClip: probeMobileClip,
   createDeliverySession,
+  isDeliveryAvailable: isWhatsAppDeliveryAvailable,
   logger: console,
 });
 
@@ -1983,16 +2038,18 @@ const server = app.listen(PORT, () => {
 Local: http://localhost:${PORT}
 ================================
   `);
-  // One-time WhatsApp re-link: when RESET_BAILEYS=true, wipe the saved session
-  // on boot so Baileys starts fresh and prints a new pairing code / QR for the
-  // number in WHATSAPP_BUSINESS_NUMBER. Do this ONCE at process start (never on
-  // reconnect, which would break an in-progress link). Set RESET_BAILEYS back to
-  // false after linking, or every restart will unlink the bot.
-  if (process.env.RESET_BAILEYS === 'true') {
+  // One-time WhatsApp re-link, per line: when RESET_BAILEYS=true (line 1) or
+  // RESET_BAILEYS_2=true (line 2), wipe that line's saved session on boot so
+  // Baileys starts fresh and prints a new pairing code for its number. Do this
+  // ONCE at process start (never on reconnect, which would break an in-progress
+  // link). Set the flag back to false after linking, or every restart will
+  // unlink that number.
+  for (const line of WA_LINES) {
+    if (!line.reset) continue;
     try {
       // Delete the CONTENTS of the auth dir, not the folder itself: on a mounted
       // volume, removing the mount point fails with EBUSY.
-      const dir = BAILEYS_AUTH_DIR;
+      const dir = line.authDir;
       let removed = 0;
       if (fs.existsSync(dir)) {
         for (const entry of fs.readdirSync(dir)) {
@@ -2000,9 +2057,9 @@ Local: http://localhost:${PORT}
           removed++;
         }
       }
-      console.log(`🔑 RESET_BAILEYS=true → cleared ${removed} saved session file(s). A new pairing code / QR will appear below. Set RESET_BAILEYS=false after linking.`);
+      console.log(`🔑 ${lineTag(line)} ${line.resetEnv}=true → cleared ${removed} saved session file(s). A new pairing code will appear below. Set ${line.resetEnv}=false after linking.`);
     } catch (e) {
-      console.error('Failed to clear baileys_auth:', e.message);
+      console.error(`${lineTag(line)} Failed to clear ${line.authDir}:`, e.message);
     }
   }
 
@@ -2016,8 +2073,15 @@ Local: http://localhost:${PORT}
     console.warn('!!! ffmpeg is NOT on PATH. Baileys cannot build video thumbnails, so sent videos will lack metadata and WhatsApp will re-encode them on Status. Check the Dockerfile symlink.');
   }
 
-  // Start Baileys after Express is up so QR shows in logs
-  startBaileys().catch(err => console.error('Baileys startup failed:', err));
+  // Start each WhatsApp line after Express is up so pairing codes show in logs.
+  // One after another, so the WA Web version is fetched once and both lines
+  // don't hit WhatsApp at the same instant.
+  console.log(`WhatsApp lines configured: ${WA_LINES.map((line) => line.id).join(', ')}`);
+  (async () => {
+    for (const line of WA_LINES) {
+      await startBaileys(line).catch(err => console.error(`${lineTag(line)} Baileys startup failed:`, err));
+    }
+  })();
 
   // Startup_Sweep: reclaim disk by deleting orphan temp files in uploads/,
   // compressed/, and assets/ that are not tied to an active in-progress request

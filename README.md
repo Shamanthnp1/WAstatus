@@ -178,6 +178,9 @@ Create a local `.env` or configure these values in the deployment platform. Neve
 | `DEV_PORT` | Local harness port; defaults to `8080` |
 | `BAILEYS_AUTH_DIR` | Persisted Baileys auth directory; defaults to `baileys_auth` |
 | `RESET_BAILEYS` | Set to `true` for one boot to clear/relink, then return it to `false` |
+| `WHATSAPP_BUSINESS_NUMBER_2` | Optional second linked WhatsApp number. New activation codes are spread across connected numbers |
+| `BAILEYS_AUTH_DIR_2` | Auth directory for the second number; defaults to `<BAILEYS_AUTH_DIR>_2`. Must also be persisted |
+| `RESET_BAILEYS_2` | Same as `RESET_BAILEYS`, for the second number only |
 | `MAX_CONCURRENT_ENCODES` | Maximum simultaneous ffmpeg encodes |
 | `HUMANIZE_SENDS` | Set to `false` to disable delivery pacing/presence behavior |
 | `FPS_CAP` | Defaults to `29.97`; use `off` to remove the frame-rate cap |
@@ -206,6 +209,8 @@ On the first full-server boot, the logs print a pairing code for `WHATSAPP_BUSIN
 5. Persist `BAILEYS_AUTH_DIR` across restarts and deployments.
 
 If `RESET_BAILEYS=true` was used, set it back to `false` after a successful link or every restart will erase the session again.
+
+With `WHATSAPP_BUSINESS_NUMBER_2` set, the logs print a separate pairing code labelled `line2`; link it the same way on the second phone. `GET /api/health` reports `baileys: "connected"` while any number is connected, and `whatsappLines` shows each number's status (`connected`, `disconnected` or `not_linked`). The mobile upload routes answer `503` while no number is connected.
 
 ## Project structure
 

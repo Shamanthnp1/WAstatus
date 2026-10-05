@@ -233,12 +233,31 @@ class MobileUploadStore {
   }
 }
 
+// Shown in the app when no WhatsApp line is connected. The app keeps the
+// finished clips, so the user only needs to tap upload again later.
+const DELIVERY_UNAVAILABLE_MESSAGE =
+  'WhatsApp delivery is temporarily unavailable. Your clips are still on this phone. Please try again in a few minutes.';
+
 function mobileErrorResponse(res, error, logger = console) {
-  const status = error instanceof MobileUploadError ? error.status : 500;
-  if (status >= 500) logger.error('Mobile upload error:', error);
+  // MobileUploadError messages are written for the user, so they are returned
+  // as-is (including the deliberate 503 below). Anything else is unexpected:
+  // log it in full and return a generic message.
+  const expected = error instanceof MobileUploadError;
+  const status = expected ? error.status : 500;
+  if (!expected) logger.error('Mobile upload error:', error);
+  else if (status >= 500) logger.warn(`Mobile upload refused (${status}): ${error.message}`);
   return res.status(status).json({
-    error: status >= 500 ? 'Mobile upload failed. Please try again.' : error.message,
+    error: expected ? error.message : 'Mobile upload failed. Please try again.',
   });
+}
+
+// Refuse new work while no WhatsApp line can deliver it. Without this the app
+// would upload, receive an activation code, and the user's message would go
+// unanswered (the bot ignores messages older than 90s once it reconnects).
+function requireDeliveryAvailable(isDeliveryAvailable) {
+  if (!isDeliveryAvailable()) {
+    throw new MobileUploadError(503, DELIVERY_UNAVAILABLE_MESSAGE);
+  }
 }
 
 function requireAuthorizedSession(store, req) {
@@ -262,6 +281,9 @@ function registerMobileUploadRoutes(app, {
   deleteFromR2,
   probeClip,
   createDeliverySession,
+  // () => boolean: true while at least one WhatsApp line is connected.
+  // Defaults to always-available so callers that don't pass it keep working.
+  isDeliveryAvailable = () => true,
   logger = console,
 }) {
   const store = new MobileUploadStore({ deleteFromR2, logger });
@@ -269,6 +291,7 @@ function registerMobileUploadRoutes(app, {
   app.post('/api/mobile/sessions', limiter, (req, res) => {
     try {
       const manifest = validateMobileManifest(req.body);
+      requireDeliveryAvailable(isDeliveryAvailable);
       const { session, token } = store.create(manifest);
       const origin = `${req.protocol}://${req.get('host')}`;
       return res.status(201).json({
@@ -418,6 +441,9 @@ function registerMobileUploadRoutes(app, {
       if (session.slots.some((slot) => slot.status !== 'uploaded' || !slot.key || !slot.url)) {
         throw new MobileUploadError(409, 'Upload every clip before finalizing.');
       }
+      // Checked again here: WhatsApp may have dropped while the clips uploaded.
+      // The session stays 'uploading', so the app can finalize again later.
+      requireDeliveryAvailable(isDeliveryAvailable);
 
       session.state = 'finalizing';
       session.inFlight += 1;
@@ -445,6 +471,7 @@ function registerMobileUploadRoutes(app, {
 }
 
 module.exports = {
+  DELIVERY_UNAVAILABLE_MESSAGE,
   MAX_MOBILE_CLIPS,
   MAX_CLIP_BYTES,
   MAX_TOTAL_BYTES,
