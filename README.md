@@ -181,6 +181,7 @@ Create a local `.env` or configure these values in the deployment platform. Neve
 | `WHATSAPP_BUSINESS_NUMBER_2` | Optional second linked WhatsApp number. New activation codes are spread across connected numbers |
 | `BAILEYS_AUTH_DIR_2` | Auth directory for the second number; defaults to `<BAILEYS_AUTH_DIR>_2`. Must also be persisted |
 | `RESET_BAILEYS_2` | Same as `RESET_BAILEYS`, for the second number only |
+| `WHATSAPP_ENABLED` | Set to `false` to keep this server from connecting any WhatsApp number (for example while moving to a new server, so two servers never use the same login at once). Mobile uploads answer `503` meanwhile |
 | `MAX_CONCURRENT_ENCODES` | Maximum simultaneous ffmpeg encodes |
 | `HUMANIZE_SENDS` | Set to `false` to disable delivery pacing/presence behavior |
 | `FPS_CAP` | Defaults to `29.97`; use `off` to remove the frame-rate cap |

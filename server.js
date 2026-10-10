@@ -703,10 +703,19 @@ const WA_LINES = parseLineConfigs(process.env).map((config) => ({
 }));
 let lineAssignSeq = 0;
 
+// Kill switch for moving the server: WHATSAPP_ENABLED=false keeps this process
+// from connecting (or wiping) any WhatsApp line, while the HTTP server keeps
+// running. Two servers using the same saved WhatsApp login must never be
+// connected at once — they knock each other off and risk a logout — so the old
+// server is switched off with this before its login files are copied over.
+// Unset or anything else means enabled (unchanged behaviour).
+const WHATSAPP_ENABLED = process.env.WHATSAPP_ENABLED !== 'false';
+
 function lineTag(line) { return `[WA ${line.id}]`; }
 
 // Public status for /api/health. Never includes the phone number.
 function lineStatus(line) {
+  if (!WHATSAPP_ENABLED) return 'disabled';
   if (line.connected && line.sock) return 'connected';
   return line.sock?.authState?.creds?.registered === false ? 'not_linked' : 'disconnected';
 }
@@ -2058,9 +2067,9 @@ Local: http://localhost:${PORT}
   // Baileys starts fresh and prints a new pairing code for its number. Do this
   // ONCE at process start (never on reconnect, which would break an in-progress
   // link). Set the flag back to false after linking, or every restart will
-  // unlink that number.
+  // unlink that number. Skipped while WhatsApp is switched off.
   for (const line of WA_LINES) {
-    if (!line.reset) continue;
+    if (!line.reset || !WHATSAPP_ENABLED) continue;
     try {
       // Delete the CONTENTS of the auth dir, not the folder itself: on a mounted
       // volume, removing the mount point fails with EBUSY.
@@ -2092,11 +2101,15 @@ Local: http://localhost:${PORT}
   // One after another, so the WA Web version is fetched once and both lines
   // don't hit WhatsApp at the same instant.
   console.log(`WhatsApp lines configured: ${WA_LINES.map((line) => line.id).join(', ')}`);
-  (async () => {
-    for (const line of WA_LINES) {
-      await startBaileys(line).catch(err => console.error(`${lineTag(line)} Baileys startup failed:`, err));
-    }
-  })();
+  if (!WHATSAPP_ENABLED) {
+    console.warn('!!! WHATSAPP_ENABLED=false — not connecting any WhatsApp line. Mobile uploads answer 503 until it is re-enabled.');
+  } else {
+    (async () => {
+      for (const line of WA_LINES) {
+        await startBaileys(line).catch(err => console.error(`${lineTag(line)} Baileys startup failed:`, err));
+      }
+    })();
+  }
 
   // Startup_Sweep: reclaim disk by deleting orphan temp files in uploads/,
   // compressed/, and assets/ that are not tied to an active in-progress request
