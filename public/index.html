@@ -582,10 +582,27 @@
       .mark__word span { font-size: clamp(2.5rem, 10.4vw, 4rem); }
     }
 
-    /* ---------- Maintenance dialog (hidden unless MAINTENANCE_MODE is on) ---------- */
-    .maint { display: none; position: fixed; inset: 0; z-index: 100000; align-items: center; justify-content: center; padding: 20px; background: rgba(5, 16, 11, 0.9); }
-    .maint__box { width: 100%; max-width: 430px; padding: 32px 28px; border-radius: var(--radius); background: var(--ground); color: var(--ink); text-align: center; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45); /* taste-skill-ignore: a dialog floats */ }
-    .maint__box h2 { font-size: var(--step-lead); letter-spacing: -0.02em; line-height: 1.2; margin-bottom: 12px; }
+    /* ---------- Maintenance popup (shown only when MAINTENANCE_MODE is true) ---------- */
+    .maint {
+      width: min(100% - 32px, 480px); max-height: calc(100svh - 32px); margin: auto;
+      overflow: auto; overscroll-behavior: contain;
+      padding: clamp(28px, 4vw, 40px); border: 0; border-radius: var(--radius);
+      background: var(--ground); color: var(--ink);
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45); /* taste-skill-ignore: a dialog floats */
+    }
+    .maint::backdrop { background: rgba(5, 16, 11, 0.86); }
+    .maint__bars { display: flex; gap: 6px; margin-bottom: 28px; }
+    .maint__bars span { flex: 1; height: 8px; border-radius: 999px; background: var(--accent); }
+    .maint__bars span:last-child { background: var(--pale); }
+    .maint h2 { font-size: clamp(1.75rem, 1.3rem + 1.6vw, 2.25rem); letter-spacing: -0.03em; line-height: 1.05; }
+    .maint p { margin-top: 16px; }
+    .maint__actions { margin-top: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; }
+    @media (prefers-reduced-motion: no-preference) {
+      .maint[open] { animation: maint-in 240ms var(--ease-out); }
+      .maint[open]::backdrop { animation: maint-fade 240ms ease; }
+      @keyframes maint-in { from { opacity: 0; transform: scale(0.97) translateY(8px); } }
+      @keyframes maint-fade { from { opacity: 0; } }
+    }
 
     /* ---------- Motion ---------- */
     @media (prefers-reduced-motion: no-preference) {
@@ -654,29 +671,36 @@
     })();
   </script>
 
-  <!-- Maintenance notice: set MAINTENANCE_MODE=true (below) to show it -->
-  <div id="sdMaintOverlay" class="maint" role="dialog" aria-modal="true" aria-labelledby="sdMaintTitle">
-    <div class="maint__box">
-      <h2 id="sdMaintTitle">Out of service</h2>
-      <p>StatusDrop is temporarily out of service while we fix things. Please check back a little later. Sorry for the inconvenience, and thanks for your patience.</p>
+  <!-- Maintenance popup: set MAINTENANCE_MODE (below) to false to hide it -->
+  <dialog id="sdMaintOverlay" class="maint" aria-labelledby="sdMaintTitle" aria-describedby="sdMaintText">
+    <div class="maint__bars" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <h2 id="sdMaintTitle">StatusDrop is under maintenance</h2>
+    <div id="sdMaintText">
+      <p>The app is getting more requests than we can handle right now, so we have paused it while we fix things.</p>
+      <p>We will announce more information here soon. Thanks for your patience.</p>
     </div>
-  </div>
+    <div class="maint__actions">
+      <button class="btn" id="sdMaintClose" type="button" autofocus>OK, got it</button>
+      <a class="link" href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener">Questions? DM me on Instagram</a>
+    </div>
+  </dialog>
   <script>
     (function () {
-      var MAINTENANCE_MODE = false; // set to true to show the out-of-service screen
+      var MAINTENANCE_MODE = true; // set to false to hide the maintenance popup
       if (!MAINTENANCE_MODE) return;
-      window.__sdMaintenancePending = true; // hold the donation popup until dismissed
-      function close() {
-        var o = document.getElementById('sdMaintOverlay');
-        if (o) o.style.display = 'none';
-        window.__sdMaintenancePending = false;
-        if (typeof window.__sdShowDonate === 'function') setTimeout(window.__sdShowDonate, 400);
-      }
+      // Closing it hides it for this tab session; it shows again on the next visit.
+      var KEY = 'sdMaintDismissed';
+      try { if (sessionStorage.getItem(KEY) === '1') return; } catch (e) {}
       function wire() {
-        var o = document.getElementById('sdMaintOverlay');
-        var b = document.getElementById('sdMaintClose');
-        if (b) b.addEventListener('click', close);
-        if (o) o.style.display = 'flex';
+        var d = document.getElementById('sdMaintOverlay');
+        if (!d) return;
+        var remember = function () { try { sessionStorage.setItem(KEY, '1'); } catch (e) {} };
+        d.addEventListener('close', remember); // also fires when Escape closes it
+        document.getElementById('sdMaintClose').addEventListener('click', function () {
+          if (typeof d.close === 'function') d.close();
+          else { d.removeAttribute('open'); remember(); }
+        });
+        if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
       }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
     })();
