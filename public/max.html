@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StatusDrop MAX - send Status videos from your own WhatsApp</title>
+  <meta name="description" content="StatusDrop MAX is the free Android version of StatusDrop that sends your finished clips from your own WhatsApp number: Message yourself, or a second number as your bot." />
+  <link rel="canonical" href="https://www.wastatusvideo.com/max" />
+  <link rel="icon" type="image/png" href="/logo.png" />
+  <link rel="apple-touch-icon" href="/logo.png" />
+  <meta name="theme-color" content="#137A3E" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="StatusDrop" />
+  <meta property="og:title" content="StatusDrop MAX" />
+  <meta property="og:description" content="Send your Status-ready clips from your own WhatsApp number. Free Android download." />
+  <meta property="og:image" content="https://www.wastatusvideo.com/logo.png" />
+  <meta property="og:url" content="https://www.wastatusvideo.com/max" />
+  <link rel="preload" href="/vendor/fonts/switzer/files/switzer-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/vendor/fonts/switzer/files/switzer-600.woff2" as="font" type="font/woff2" crossorigin />
+  <style>
+    /* Switzer by Indian Type Foundry (Fontshare, ITF Free Font License), self-hosted. */
+    @font-face { font-family: 'Switzer'; src: url('/vendor/fonts/switzer/files/switzer-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+    @font-face { font-family: 'Switzer'; src: url('/vendor/fonts/switzer/files/switzer-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+    :root {
+      /* Same palette as the homepage: logo green, app night ground, mint button. */
+      --ground: #F3F6F2;
+      --ink: #0C1A12;
+      --ink-2: #3A4A40;
+      --accent: #137A3E;
+      --accent-strong: #0D6332;
+      --mint: #6AEFA9;
+      --night: #05100B;
+      --pale: #DCE9DF;
+      --warn: #FFF4D6;
+      --warn-ink: #4A3800;
+      --white: #FFFFFF;
+      --margin: clamp(16px, 2.2vw, 32px);
+      --step-small: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
+      --step-body: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+      --step-lead: clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem);
+      --step-head: clamp(1.75rem, 1.2rem + 2.4vw, 3rem);
+      --step-display: clamp(2.5rem, 1.2rem + 5.6vw, 5.5rem);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    * { margin: 0; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      background: var(--ground); color: var(--ink);
+      font-family: 'Switzer', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      font-size: var(--step-body); line-height: 1.5; -webkit-font-smoothing: antialiased;
+    }
+    img { display: block; max-width: 100%; height: auto; }
+    a { color: inherit; }
+    h1, h2, h3 { font-weight: 600; letter-spacing: -0.035em; line-height: 1; text-wrap: balance; }
+    p { text-wrap: pretty; }
+    ul, ol { padding: 0; list-style: none; }
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .on-dark :focus-visible { outline-color: var(--mint); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .skip-link { position: absolute; left: var(--margin); top: -80px; padding: 12px 20px; border-radius: 999px; background: var(--ink); color: var(--white); text-decoration: none; font-weight: 600; }
+    .skip-link:focus { top: 12px; }
+    .link { text-decoration: underline; text-decoration-thickness: 0.07em; text-underline-offset: 0.22em; }
+    .wrap { width: min(1080px, 100% - 2 * var(--margin)); margin-inline: auto; }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      min-height: 56px; padding: 0 30px; border-radius: 999px;
+      background: var(--accent); color: var(--white);
+      font-weight: 600; text-decoration: none;
+      transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn--mint { background: var(--mint); color: var(--night); }
+    .btn--ghost { background: transparent; color: inherit; box-shadow: inset 0 0 0 2px currentColor; }
+    @media (hover: hover) and (pointer: fine) {
+      .btn:hover { background: var(--accent-strong); }
+      .btn--mint:hover { background: var(--white); }
+      .btn--ghost:hover { background: rgba(255, 255, 255, 0.12); }
+      .link:hover { color: var(--accent); }
+      .on-dark .link:hover { color: var(--mint); }
+    }
+
+    .nav { display: flex; align-items: center; justify-content: space-between; padding-block: 18px; }
+    .wordmark { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; font-size: 1.25rem; text-decoration: none; letter-spacing: -0.02em; }
+    .wordmark img { border-radius: 10px; }
+
+    .hero { background: var(--night); color: var(--white); padding-block: clamp(48px, 8vw, 104px); }
+    .hero__tag { display: inline-block; padding: 6px 14px; border-radius: 999px; background: var(--mint); color: var(--night); font-size: var(--step-small); font-weight: 600; letter-spacing: 0.02em; }
+    .hero h1 { margin-top: 20px; font-size: var(--step-display); }
+    .hero__lead { margin-top: 22px; max-width: 40ch; font-size: var(--step-lead); color: #CFE3D6; line-height: 1.35; }
+    .hero__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+    .hero__note { margin-top: 16px; font-size: var(--step-small); color: #A9C2B3; }
+
+    section { padding-block: clamp(48px, 7vw, 88px); }
+    section h2 { font-size: var(--step-head); }
+    .lead { margin-top: 14px; max-width: 60ch; color: var(--ink-2); }
+
+    .methods { display: grid; gap: 16px; margin-top: 32px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .card { padding: 26px; border-radius: 24px; background: var(--white); box-shadow: inset 0 0 0 1px var(--pale); }
+    .card h3 { font-size: 1.375rem; }
+    .card p { margin-top: 10px; color: var(--ink-2); }
+    .card__badge { display: inline-block; margin-bottom: 14px; padding: 4px 12px; border-radius: 999px; background: var(--pale); font-size: var(--step-small); font-weight: 600; }
+
+    .compare { width: 100%; margin-top: 28px; border-collapse: separate; border-spacing: 0; background: var(--white); border-radius: 20px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--pale); }
+    .compare th, .compare td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--pale); vertical-align: top; }
+    .compare thead th { background: var(--pale); font-size: var(--step-small); text-transform: uppercase; letter-spacing: 0.06em; }
+    .compare tbody tr:last-child th, .compare tbody tr:last-child td { border-bottom: 0; }
+    .compare tbody th { font-weight: 600; }
+
+    .steps { counter-reset: step; display: grid; gap: 14px; margin-top: 28px; }
+    .steps li { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
+    .steps li::before { content: counter(step); display: grid; place-items: center; width: 44px; height: 44px; border-radius: 999px; background: var(--accent); color: var(--white); font-weight: 600; }
+    .steps strong { display: block; }
+    .steps span { color: var(--ink-2); }
+
+    .warning { margin-top: 28px; padding: 22px 24px; border-radius: 20px; background: var(--warn); color: var(--warn-ink); }
+    .warning h3 { font-size: 1.25rem; }
+    .warning p { margin-top: 8px; }
+
+    .community { background: var(--accent); color: var(--white); }
+    .community .lead { color: #E3F5EA; }
+    .community__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+
+    .details { margin-top: 18px; font-size: var(--step-small); color: var(--ink-2); }
+    .details code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
+
+    .footer { background: var(--night); color: #CFE3D6; padding-block: 40px; font-size: var(--step-small); }
+    .footer ul { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+    .footer p { margin-top: 18px; max-width: 70ch; }
+
+    @media (max-width: 560px) {
+      .compare th, .compare td { padding: 12px; }
+      .btn { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">Skip to content</a>
+  <header class="wrap nav">
+    <a class="wordmark" href="/" aria-label="StatusDrop home" translate="no">
+      <img src="/logo.png" width="40" height="40" alt="" />
+      StatusDrop
+    </a>
+    <a class="link" href="/">Home</a>
+  </header>
+
+  <main id="mainContent" tabindex="-1">
+    <div class="hero on-dark">
+      <div class="wrap">
+        <span class="hero__tag">Free · Android</span>
+        <h1>StatusDrop MAX</h1>
+        <p class="hero__lead">Everything in StatusDrop, plus delivery from your own WhatsApp number. Nothing uploads to StatusDrop.</p>
+        <div class="hero__actions">
+          <!-- The release workflow attaches the APK under this exact name. -->
+          <a class="btn btn--mint" href="https://github.com/Shamanthnp1/WAstatus/releases/latest/download/StatusDrop-MAX.apk">Download MAX (APK)</a>
+          <a class="btn btn--ghost" href="#install">How to install</a>
+        </div>
+        <p class="hero__note">Android 10 or newer, 64-bit (ARM64) phones. About 110 MB. Installs next to the Google Play version.</p>
+      </div>
+    </div>
+
+    <section aria-labelledby="addsTitle">
+      <div class="wrap">
+        <h2 id="addsTitle">What MAX adds</h2>
+        <p class="lead">The Google Play version sends your finished clips from a StatusDrop WhatsApp number. MAX adds two ways to send them from a number you own, straight from your phone.</p>
+        <ul class="methods">
+          <li class="card">
+            <span class="card__badge">Method 1</span>
+            <h3>Message yourself</h3>
+            <p>Link your own WhatsApp once with a code. Your phone sends the clips to your "Message yourself" chat. Save them, then post to Status.</p>
+          </li>
+          <li class="card">
+            <span class="card__badge">Method 2</span>
+            <h3>Your second number as a bot</h3>
+            <p>Link a second WhatsApp number you own. Send it the code from your main WhatsApp and it replies with your clips, just like the StatusDrop number.</p>
+          </li>
+          <li class="card">
+            <span class="card__badge">Both editions</span>
+            <h3>The same compression</h3>
+            <p>1080p HD in 29-second parts, 1080p with no splitting up to 90 seconds, 720p longer parts, and photos as 5-second clips.</p>
+          </li>
+        </ul>
+
+        <table class="compare">
+          <caption class="sr-only">Google Play version compared with MAX</caption>
+          <thead>
+            <tr><th scope="col">Feature</th><th scope="col">Google Play</th><th scope="col">MAX</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">On-phone compression</th><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row">StatusDrop number delivery</th><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row">Message yourself delivery</th><td>No</td><td>Yes</td></tr>
+            <tr><th scope="row">Second number as your bot</th><td>No</td><td>Yes</td></tr>
+            <tr><th scope="row">Updates</th><td>Automatic through Google Play</td><td>Download new versions here</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="install" aria-labelledby="installTitle" style="background: var(--white);">
+      <div class="wrap">
+        <h2 id="installTitle">How to install</h2>
+        <ol class="steps">
+          <li><div><strong>Download the APK on your phone.</strong> <span>Tap "Download MAX (APK)" above in Chrome or your phone's browser.</span></div></li>
+          <li><div><strong>Open the downloaded file.</strong> <span>If Android asks, allow your browser to install unknown apps. You can turn this off again afterwards.</span></div></li>
+          <li><div><strong>Tap Install.</strong> <span>Google Play Protect may offer to scan the app first. That is normal for apps from outside Google Play.</span></div></li>
+          <li><div><strong>Open StatusDrop MAX and pick a delivery method.</strong> <span>Tap the 3-dot menu, then Delivery method. The app's guide shows every step with pictures.</span></div></li>
+        </ol>
+        <div class="warning" role="note">
+          <h3>Your number, your responsibility</h3>
+          <p>The Message yourself and bot methods use an unofficial WhatsApp connection. WhatsApp may log out or restrict numbers that behave like bots, and brand-new numbers are the most at risk. Your WhatsApp login stays only on your phone. StatusDrop is not affiliated with WhatsApp or Meta.</p>
+        </div>
+        <p class="details">MAX does not update itself. When a new version is out, download it here again and install it over the old one. Source code and release notes: <a class="link" href="https://github.com/Shamanthnp1/WAstatus/releases" target="_blank" rel="noopener">GitHub releases</a>.</p>
+      </div>
+    </section>
+
+    <section class="community on-dark" aria-labelledby="communityTitle">
+      <div class="wrap">
+        <h2 id="communityTitle">Questions or problems?</h2>
+        <p class="lead">Get help, report a bug, or hear about new versions first.</p>
+        <div class="community__actions">
+          <a class="btn btn--mint" href="https://discord.gg/aT4TNMQEK8" target="_blank" rel="noopener">Join our Discord</a>
+          <a class="btn btn--ghost" href="https://github.com/Shamanthnp1/WAstatus/releases" target="_blank" rel="noopener">All MAX versions on GitHub</a>
+          <a class="btn btn--ghost" href="https://play.google.com/store/apps/details?id=com.wastatusvideo.statusdrop" target="_blank" rel="noopener">Google Play version</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer on-dark">
+    <div class="wrap">
+      <ul>
+        <li><a class="link" href="/">Home</a></li>
+        <li><a class="link" href="/privacy.html">Privacy policy</a></li>
+        <li><a class="link" href="https://github.com/Shamanthnp1/WAstatus" target="_blank" rel="noopener">Source on GitHub</a></li>
+        <li><a class="link" href="https://discord.gg/aT4TNMQEK8" target="_blank" rel="noopener">Discord</a></li>
+        <li><a class="link" href="mailto:shamanthnadumane@gmail.com">Contact</a></li>
+      </ul>
+      <p>StatusDrop is an independent app and is not affiliated with, endorsed by, or sponsored by WhatsApp LLC or Meta Platforms, Inc. WhatsApp is a trademark of WhatsApp LLC.</p>
+    </div>
+  </footer>
+</body>
+</html>

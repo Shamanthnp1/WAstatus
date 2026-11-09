@@ -1,4 +1,7 @@
 {
+  "rewrites": [
+    { "source": "/max", "destination": "/max.html" }
+  ],
   "redirects": [
     { "source": "/hi", "destination": "/", "permanent": true },
     { "source": "/hi/", "destination": "/", "permanent": true },

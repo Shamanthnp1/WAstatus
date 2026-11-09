@@ -791,6 +791,7 @@
           <legend>Quality</legend>
           <div class="choice">
             <label><input type="radio" name="calcProfile" value="hd29" checked/>1080p HD <small>29-second parts</small></label>
+            <label><input type="radio" name="calcProfile" value="hd90"/>1080p, no splitting <small>One clip up to 90 seconds</small></label>
             <label><input type="radio" name="calcProfile" value="long59"/>720p longer clips <small>Up to 59 seconds</small></label>
           </div>
         </fieldset>
@@ -877,7 +878,7 @@
           <div class="qcard__body">
             <h3><button class="qcard__btn" type="button" id="faqQ2" aria-expanded="false" aria-controls="faqA2">How do I upload a long video to WhatsApp Status?</button></h3>
             <div class="qcard__panel" id="faqA2" role="region" aria-labelledby="faqQ2"><div>
-              <p>StatusDrop splits a long video into 29-second parts, or 59-second parts in 720p, and sends them all to your WhatsApp for free. Post them in order and they play one after another.</p>
+              <p>StatusDrop splits a long video into 29-second parts, or 59-second parts in 720p, and sends them all to your WhatsApp for free. Post them in order and they play one after another. For videos up to 90 seconds, choose 1080p with no splitting to get a single clip (it needs fast internet).</p>
             </div></div>
           </div>
         </div>
@@ -895,7 +896,7 @@
           <div class="qcard__body">
             <h3><button class="qcard__btn" type="button" id="faqQ4" aria-expanded="false" aria-controls="faqA4">What video formats are supported?</button></h3>
             <div class="qcard__panel" id="faqA4" role="region" aria-labelledby="faqQ4"><div>
-              <p>MP4, MOV, AVI, MKV, 3GP and WMV, up to 300&nbsp;MB in total.</p>
+              <p>MP4, MOV, AVI, MKV, 3GP and WMV, up to 300&nbsp;MB in total. You can also pick up to 10 photos (JPEG, PNG, WebP or HEIC): each one becomes a 5-second HD video clip.</p>
             </div></div>
           </div>
         </div>
@@ -949,6 +950,7 @@
     <div class="footer__grid">
       <ul class="footer__col">
         <li><a class="link" href="https://play.google.com/store/apps/details?id=com.wastatusvideo.statusdrop" target="_blank" rel="noopener">Google Play</a></li>
+        <li><a class="link" href="/max">StatusDrop MAX</a></li>
         <li><a class="link" href="#how-it-works">How it works</a></li>
         <li><a class="link" href="#posting-guide">Posting guide</a></li>
         <li><a class="link" href="#faq">FAQ</a></li>
@@ -958,6 +960,7 @@
         <li><a class="link" href="https://ko-fi.com/wastatus" target="_blank" rel="noopener">Support on Ko-fi</a></li>
       </ul>
       <ul class="footer__col">
+        <li><a class="link" href="https://discord.gg/aT4TNMQEK8" target="_blank" rel="noopener">Discord</a></li>
         <li><a class="link" href="https://ig.me/m/xd.sapphire" target="_blank" rel="noopener">Instagram</a></li>
         <li><a class="link" href="mailto:shamanthnadumane@gmail.com">Contact</a></li>
       </ul>
@@ -1005,8 +1008,13 @@
       var render = function (announce) {
         var total = Number(range.value);
         var picked = document.querySelector('input[name="calcProfile"]:checked');
-        var partSeconds = picked && picked.value === 'long59' ? 59 : 29;
+        var profile = picked ? picked.value : 'hd29';
+        // Must match the app's QualityProfile clip lengths.
+        var partSeconds = profile === 'long59' ? 59 : profile === 'hd90' ? 89 : 29;
         var parts = Math.ceil(total / partSeconds);
+        var sizeNote = profile === 'hd90'
+          ? 'Each clip can be up to about 45\u00a0MB, so use Wi-Fi or fast mobile data'
+          : 'Each part stays under 16\u00a0MB';
 
         lengthOut.textContent = short(total);
         range.setAttribute('aria-valuetext', spoken(total));
@@ -1014,7 +1022,9 @@
         unitOut.textContent = parts === 1 ? 'part' : 'parts';
         howOut.textContent = parts > MAX_PARTS
           ? 'That is more than the 20 parts one delivery can hold. Trim the video, or choose 720p for 59-second parts.'
-          : "Your video’s length divided by " + partSeconds + ' seconds, rounded up. Each part stays under 16\u00a0MB, and one delivery holds up to 20 parts.';
+          : profile === 'hd90' && parts === 1
+            ? 'One clip, no splitting. ' + sizeNote + '.'
+            : "Your video’s length divided by " + partSeconds + ' seconds, rounded up. ' + sizeNote + ', and one delivery holds up to 20 parts.';
 
         var list = document.createDocumentFragment();
         for (var i = 0; i < parts; i++) {

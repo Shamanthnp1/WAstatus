@@ -238,7 +238,7 @@
       </div>
     </a>
     <h1>Privacy Policy</h1>
-    <p>Last updated: September 19, 2026</p>
+    <p>Last updated: November 9, 2026</p>
   </header>
 
   <main class="container" id="privacyMain" tabindex="-1">
@@ -247,16 +247,17 @@
     <div class="section">
       <h2>👋 Introduction</h2>
       <p>
-        This Privacy Policy covers the StatusDrop Android app and the
-        wastatusvideo.com website. The two products use different processing
-        paths, which are described separately below.
+        This Privacy Policy covers the StatusDrop Android app (the Google Play
+        version and StatusDrop MAX, downloaded from this website) and the
+        wastatusvideo.com website.
       </p>
       <div class="highlight">
         <p>
           🔒 <strong>Short version:</strong> In the Android app, selected
-          originals are compressed locally and are not uploaded. Only finished
-          clips are sent to our service when processing completes. The website
-          uploads selected originals for server-side compression. We do not sell
+          videos and photos are compressed locally and are not uploaded. With
+          the StatusDrop number, only finished clips are sent to our service.
+          With StatusDrop MAX's self-host methods, nothing is sent to our
+          service. The website no longer compresses videos. We do not sell
           personal information or require an account.
         </p>
       </div>
@@ -268,9 +269,10 @@
       <p>We process only the data needed to provide and protect the service:</p>
       <ul>
         <li>
-          <strong>Android app originals:</strong> videos selected through the
-          system picker are copied into private app cache and processed on your
-          device. Original app videos are not uploaded to StatusDrop.
+          <strong>Android app originals:</strong> videos or photos selected
+          through the system picker are copied into private app cache and
+          processed on your device. Each photo becomes a short video clip on the
+          phone. Originals are not uploaded to StatusDrop.
         </li>
         <li>
           <strong>Finished Android clips:</strong> the app uploads generated MP4
@@ -278,8 +280,13 @@
           a SHA-256 integrity hash for verification and delivery.
         </li>
         <li>
-          <strong>Website uploads:</strong> videos selected on the website are
-          uploaded for server-side compression and splitting.
+          <strong>Website:</strong> the website's online compressor was retired
+          in October 2026. The website no longer accepts video uploads.
+        </li>
+        <li>
+          <strong>StatusDrop MAX self-host delivery:</strong> if you link your
+          own WhatsApp number in MAX, see the StatusDrop MAX section below.
+          That data stays on your phone and is not sent to StatusDrop.
         </li>
         <li>
           <strong>Network and security data:</strong> IP address and ordinary
@@ -298,7 +305,8 @@
         </li>
         <li>
           <strong>Support messages:</strong> information you voluntarily send by
-          email or Instagram is used only to respond to your request.
+          email, Instagram or on our Discord server is used only to respond to
+          your request.
         </li>
       </ul>
     </div>
@@ -324,8 +332,7 @@
     <div class="section">
       <h2>⚙️ How We Use Data</h2>
       <ul>
-        <li>Compressing and splitting videos locally in the Android app</li>
-        <li>Compressing and splitting website uploads on the server</li>
+        <li>Compressing and splitting videos, and turning photos into clips, locally in the Android app</li>
         <li>Verifying the size, hash, codec, dimensions, and duration of finished app clips</li>
         <li>Temporarily storing finished clips for activation and WhatsApp delivery</li>
         <li>Matching an activation message to the correct temporary delivery session</li>
@@ -357,10 +364,7 @@
           retained for the active send for up to 30 minutes. A temporary send
           failure can create a fresh five-minute retry window.
         </li>
-        <li>
-          <strong>Website processing:</strong> website uploads and generated clips
-          are retained only for processing, activation, delivery, and bounded retry.
-        </li>
+
         <li>
           Successful delivery or expiry triggers automatic deletion. Periodic stale
           object sweeps provide a cleanup backstop if a process restarts or an
@@ -391,7 +395,7 @@
       <ul>
         <li>WhatsApp (Meta) processes the chat, sender identifier, and delivered media under its own privacy policy</li>
         <li>StatusDrop temporarily processes the sender identifier and activation code to match the correct delivery session</li>
-        <li>The Android app does not ask you to type or store a phone number</li>
+        <li>With the StatusDrop number, the Android app does not ask you to type or store a phone number</li>
         <li>The service does not access your address book or unrelated WhatsApp conversations</li>
         <li>Operational server logs use a short one-way pseudonymous sender identifier rather than the full phone number or activation-message text</li>
         <li>Delivery currently uses an unofficial multi-device client and is not endorsed by WhatsApp LLC or Meta Platforms, Inc.</li>
@@ -403,6 +407,28 @@
           sponsored by WhatsApp LLC or Meta Platforms, Inc.
         </p>
       </div>
+    </div>
+
+    <!-- MAX SELF-HOST -->
+    <div class="section">
+      <h2>📲 StatusDrop MAX Self-Host Delivery</h2>
+      <p>
+        StatusDrop MAX, downloaded from wastatusvideo.com/max, can send your
+        finished clips from a WhatsApp number you own instead of a StatusDrop
+        number. This runs entirely on your phone:
+      </p>
+      <ul>
+        <li>You enter the number you want to link. MAX uses it only to request a WhatsApp linking code</li>
+        <li>The WhatsApp login (linked-device session) and that number are stored only in the app's private storage on your phone. They are not sent to StatusDrop</li>
+        <li>Finished clips go from your phone straight to WhatsApp. Nothing uploads to StatusDrop servers</li>
+        <li>While linked, WhatsApp delivers messages for that number to the app like any linked device. The app ignores them, except in the bot method while it waits for your code, when it checks incoming messages only for that code. Message contents are not stored or logged</li>
+        <li>A visible notification stays on while it sends. Android's notification permission is requested for it</li>
+        <li>"Disconnect this number" in Delivery method logs the device out of WhatsApp (when WhatsApp can be reached) and deletes the saved login from your phone. Uninstalling the app deletes it too</li>
+        <li>The connection is unofficial. WhatsApp may log out or restrict numbers that behave like bots</li>
+      </ul>
+      <p>
+        The Google Play version does not include self-host delivery.
+      </p>
     </div>
 
     <!-- THIRD PARTIES -->
@@ -417,7 +443,8 @@
         <li><strong>Vercel</strong> — public website hosting</li>
         <li><strong>Google Analytics</strong> — website audience and usage measurement only; it is not included in the Android app</li>
         <li><strong>Google AdSense</strong> — website advertising when enabled; it is not included in the Android app</li>
-        <li><strong>GitHub</strong> — public hosting of the GPL Android client source and build instructions</li>
+        <li><strong>GitHub</strong> — public hosting of the GPL Android client source, build instructions and StatusDrop MAX downloads</li>
+        <li><strong>Discord</strong> — our community and support server, only if you choose to join it</li>
       </ul>
       <p>
         These providers process data under their own privacy terms and only for
