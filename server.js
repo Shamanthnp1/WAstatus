@@ -19,7 +19,6 @@ const qrcode = require('qrcode-terminal');
 const {
   default: makeWASocket,
   useMultiFileAuthState,
-  DisconnectReason,
   Browsers,
   fetchLatestBaileysVersion,
   fetchLatestWaWebVersion,
@@ -53,7 +52,7 @@ const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
 const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
 const { registerWebRetirement } = require('./src/server/webRetirement');
 const { downloadToFile } = require('./src/server/mediaDownload');
-const { parseLineConfigs, pickDeliveryLine, isUnfinishedPairing, clearAuthDir } = require('./src/server/whatsappLines');
+const { parseLineConfigs, pickDeliveryLine, isUnfinishedPairing, clearAuthDir, reconnectPlan } = require('./src/server/whatsappLines');
 require('dotenv').config();
 
 // ========================
@@ -698,9 +697,15 @@ const WA_LINES = parseLineConfigs(process.env).map((config) => ({
   sock: null,
   connected: false,
   reconnecting: false,
-  reconnectAttempts: 0, // drives exponential backoff so a 403 loop doesn't hammer WhatsApp
+  reconnectAttempts: 0, // consecutive failed reconnects; drives the backoff
+  stopped: null,        // why the line gave up for good (see reconnectPlan), or null
+  openedAt: 0,          // when the current connection opened (0 while down)
   lastAssignedAt: 0,    // order of the last activation code pointed at this line
 }));
+// Set on SIGTERM: Azure starts the new container before it stops the old one.
+// The old one must hang up and stay down, or the two fight over the same
+// WhatsApp login (code 440), which is what put both numbers into 403.
+let shuttingDown = false;
 let lineAssignSeq = 0;
 
 // Kill switch for moving the server: WHATSAPP_ENABLED=false keeps this process
@@ -717,6 +722,7 @@ function lineTag(line) { return `[WA ${line.id}]`; }
 function lineStatus(line) {
   if (!WHATSAPP_ENABLED) return 'disabled';
   if (line.connected && line.sock) return 'connected';
+  if (line.stopped) return 'stopped';
   return line.sock?.authState?.creds?.registered === false ? 'not_linked' : 'disconnected';
 }
 
@@ -801,7 +807,7 @@ async function resolveWaVersion() {
 }
 
 async function startBaileys(line) {
-  if (line.reconnecting) return;
+  if (line.reconnecting || line.stopped || shuttingDown) return;
   line.reconnecting = true;
   const tag = lineTag(line);
 
@@ -848,41 +854,52 @@ async function startBaileys(line) {
       const { connection, lastDisconnect } = update;
       // QR intentionally not printed — we link via pairing code only (below).
       if (connection === 'close') {
+        // A socket that was already replaced by a newer one: ignore it, or it
+        // would mark the newer connection as down.
+        if (line.sock !== rawSock) return;
         line.connected = false;
+        line.reconnecting = false;
         const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
         // While the number isn't linked yet, a 401 is WhatsApp rejecting an
         // unfinished pairing attempt, not a real logout, so keep offering fresh
         // pairing codes. A LINKED number that gets 401 was logged out from the
-        // phone and stays stopped until it is re-linked (as before).
+        // phone and stays stopped until it is re-linked.
         const linked = !!rawSock?.authState?.creds?.registered;
-        const shouldReconnect = !linked || code !== DisconnectReason.loggedOut;
-        console.log(`${tag} Baileys closed (code ${code}). Reconnect: ${shouldReconnect}`);
-        line.reconnecting = false;
-        if (shouldReconnect) {
+        // Only a connection that stayed up resets the backoff. One that opens
+        // and drops at once (as line 1 did before its 403s) keeps backing off.
+        if (line.openedAt && Date.now() - line.openedAt >= 60_000) line.reconnectAttempts = 0;
+        line.openedAt = 0;
+        // Linked lines reconnect only after transient drops, with growing
+        // gaps; a refusal from WhatsApp (403, 440, 401...) stops the line for
+        // good, because knocking again is what gets numbers banned. See
+        // reconnectPlan in src/server/whatsappLines.js.
+        const plan = reconnectPlan({
+          code,
+          linked,
+          attempt: line.reconnectAttempts + 1,
+          shuttingDown,
+        });
+        console.log(`${tag} Baileys closed (code ${code}). Reconnect: ${plan.reconnect}`);
+        if (plan.reconnect) {
           line.reconnectAttempts += 1;
-          // If we're not linked yet, reconnecting fast spits out a brand-new
-          // pairing code every few seconds — the user can never type one before
-          // it changes. So while UNREGISTERED, wait a full minute between tries
-          // so ONE code stays on screen long enough to actually enter.
-          const isRegistered = rawSock?.authState?.creds?.registered;
-          let delay;
-          if (!isRegistered) {
-            delay = 60000 + randBetween(0, 3000);
+          // Not linked yet: reconnecting fast spits out a brand-new pairing
+          // code every few seconds, so one code per minute (plan.delayMs).
+          if (!linked) {
             console.log(`${tag} Not linked yet — showing one pairing code per minute. Enter the MOST RECENT code above and ignore the older ones.`);
-          } else {
-            // Fast recovery for transient drops; mild backoff only if it keeps
-            // failing, capped low (15s) so the bot never stays offline long.
-            delay = Math.min(15000, 3000 * line.reconnectAttempts) + randBetween(0, 1500);
           }
+          const delay = plan.delayMs + randBetween(0, 1500);
           console.log(`${tag} Reconnecting in ${Math.round(delay / 1000)}s (attempt ${line.reconnectAttempts})`);
           setTimeout(() => startBaileys(line).catch(e => console.error(`${tag} Reconnect failed:`, e)), delay);
         } else {
-          console.error(`!!! ${tag} Baileys logged out — set ${line.resetEnv}=true and redeploy to re-link.`);
+          line.stopped = plan.reason;
+          if (!shuttingDown) {
+            console.error(`!!! ${tag} Stopped and will NOT reconnect: ${plan.reason}. Fix the cause (or re-link the number), then restart the server.`);
+          }
         }
       } else if (connection === 'open') {
         line.connected = true;
         line.reconnecting = false;
-        line.reconnectAttempts = 0; // healthy connection — reset backoff
+        line.openedAt = Date.now(); // backoff resets once it has stayed up a minute
         console.log(`${tag} ✓ Baileys connected to WhatsApp`);
       }
     });
@@ -2105,11 +2122,21 @@ Local: http://localhost:${PORT}
   if (!WHATSAPP_ENABLED) {
     console.warn('!!! WHATSAPP_ENABLED=false — not connecting any WhatsApp line. Mobile uploads answer 503 until it is re-enabled.');
   } else {
-    (async () => {
+    // During a restart or deploy, Azure keeps the old container running until
+    // this one passes its warm-up probe, then gives the old one SIGTERM and a
+    // 5-second grace period. On 9 Nov 2026 that came 46 s after this log line.
+    // Wait before logging in so the old container has hung up; two connections
+    // with one login get both kicked (440) and then refused (403). Mobile
+    // uploads answer 503 meanwhile.
+    const startDelayMs = Math.max(0, Number(process.env.WA_START_DELAY_MS ?? 90000) || 0);
+    if (startDelayMs) {
+      console.log(`Connecting WhatsApp lines in ${Math.round(startDelayMs / 1000)}s (WA_START_DELAY_MS), so a previous container can hang up first.`);
+    }
+    setTimeout(async () => {
       for (const line of WA_LINES) {
         await startBaileys(line).catch(err => console.error(`${lineTag(line)} Baileys startup failed:`, err));
       }
-    })();
+    }, startDelayMs);
   }
 
   // Startup_Sweep: reclaim disk by deleting orphan temp files in uploads/,
@@ -2136,3 +2163,23 @@ Local: http://localhost:${PORT}
 server.requestTimeout = 0;
 server.headersTimeout = 620000;
 server.keepAliveTimeout = 610000;
+
+// Azure (and Docker) send SIGTERM to the old container during a restart. Node
+// runs as PID 1 here, which ignores SIGTERM unless handled, so without this
+// the old container stayed connected to WhatsApp next to the new one.
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received: closing WhatsApp lines so another container can take over cleanly.`);
+  for (const line of WA_LINES) {
+    line.stopped = line.stopped || 'the server is shutting down';
+    try {
+      line.sock?.end?.(undefined);
+    } catch (e) { /* already closed */ }
+  }
+  server.close();
+  // Give the sockets a moment to close, then exit even if uploads are open.
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));

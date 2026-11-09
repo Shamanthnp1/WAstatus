@@ -70,6 +70,53 @@ function isUnfinishedPairing(creds) {
 }
 
 /**
+ * Disconnect codes after which a LINKED line must stay offline until someone
+ * acts. Retrying cannot fix them, and a client that keeps knocking after
+ * WhatsApp said no is what anti-abuse systems look for.
+ */
+const STOP_CODES = Object.freeze({
+  401: 'WhatsApp logged this device out (removed from Linked devices on the phone)',
+  403: 'WhatsApp refused this number (restricted, banned or under review)',
+  411: 'the saved session no longer matches the account',
+  // Two connections with one login: usually the old and new server
+  // containers overlapping during a restart. Fighting back gets numbers banned.
+  440: 'another connection is using this login',
+  500: 'the saved session is broken',
+});
+
+/** Transient drops (timeouts, WhatsApp restarts) give up after this many tries in a row. */
+const MAX_RECONNECT_ATTEMPTS = 12;
+const FIRST_RECONNECT_DELAY_MS = 3000;
+const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000;
+/** While a number is not linked, one pairing code per minute (see server.js). */
+const PAIRING_RETRY_DELAY_MS = 60 * 1000;
+
+/**
+ * What to do after a line's connection closed.
+ *
+ * Linked lines reconnect only after transient drops (for example 408
+ * timeouts, which WhatsApp sends to idle connections), backing off 3 s, 6 s,
+ * 12 s ... up to 5 minutes, and stop after MAX_RECONNECT_ATTEMPTS failures in
+ * a row. A refusal (STOP_CODES) stops at once. Jitter is added by the caller.
+ *
+ * @param {{code?: number, linked: boolean, attempt: number, shuttingDown?: boolean}} input
+ *   attempt: 1 for the first reconnect after a healthy connection
+ * @returns {{reconnect: true, delayMs: number} | {reconnect: false, reason: string}}
+ */
+function reconnectPlan({ code, linked, attempt, shuttingDown = false }) {
+  if (shuttingDown) return { reconnect: false, reason: 'the server is shutting down' };
+  if (!linked) return { reconnect: true, delayMs: PAIRING_RETRY_DELAY_MS };
+  if (Object.prototype.hasOwnProperty.call(STOP_CODES, code)) {
+    return { reconnect: false, reason: STOP_CODES[code] };
+  }
+  if (attempt > MAX_RECONNECT_ATTEMPTS) {
+    return { reconnect: false, reason: `it failed to reconnect ${MAX_RECONNECT_ATTEMPTS} times in a row` };
+  }
+  const delayMs = Math.min(MAX_RECONNECT_DELAY_MS, FIRST_RECONNECT_DELAY_MS * 2 ** (Math.max(1, attempt) - 1));
+  return { reconnect: true, delayMs };
+}
+
+/**
  * Delete the CONTENTS of an auth dir (not the folder itself: on a mounted
  * volume, removing the mount point fails with EBUSY).
  *
@@ -112,6 +159,9 @@ function pickDeliveryLine(lines, activeCountFor) {
 }
 
 module.exports = {
+  STOP_CODES,
+  MAX_RECONNECT_ATTEMPTS,
+  reconnectPlan,
   parseLineConfigs,
   pickDeliveryLine,
   isUnfinishedPairing,
