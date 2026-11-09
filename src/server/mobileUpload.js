@@ -7,6 +7,7 @@ const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 
 const MAX_MOBILE_CLIPS = 20;
+// Default per-clip cap: WhatsApp's long-standing 16 MB passthrough limit.
 const MAX_CLIP_BYTES = 15_800_000;
 const MAX_TOTAL_BYTES = 300 * 1024 * 1024;
 const UPLOAD_IDLE_TTL_MS = 10 * 60 * 1000;
@@ -14,10 +15,26 @@ const UPLOAD_ABSOLUTE_TTL_MS = 60 * 60 * 1000;
 const CLIP_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000;
 const FINALIZED_TOMBSTONE_MS = 10 * 60 * 1000;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
+// Must match the app's QualityProfile (Dart) and EncodingProfile (Kotlin).
 const PROFILES = Object.freeze({
-  hd29: Object.freeze({ width: 1080, height: 1920, maxDuration: 29 }),
-  long59: Object.freeze({ width: 720, height: 1280, maxDuration: 59 }),
+  hd29: Object.freeze({ width: 1080, height: 1920, maxDuration: 29, maxClipBytes: MAX_CLIP_BYTES }),
+  long59: Object.freeze({ width: 720, height: 1280, maxDuration: 59, maxClipBytes: MAX_CLIP_BYTES }),
+  // One 1080p clip up to WhatsApp's 90-second Status limit, at the hd29
+  // bitrate. About 44 MB at most, so a bigger cap and a longer upload window.
+  hd90: Object.freeze({
+    width: 1080,
+    height: 1920,
+    maxDuration: 89,
+    maxClipBytes: 60_000_000,
+    uploadTimeoutMs: 20 * 60 * 1000,
+  }),
+  // A photo turned into a 5-second 1080p video on the phone.
+  photo5: Object.freeze({ width: 1080, height: 1920, maxDuration: 5, maxClipBytes: MAX_CLIP_BYTES }),
 });
+
+function formatMegabytes(bytes) {
+  return `${(bytes / 1_000_000).toFixed(1).replace(/\.0$/, '')} MB`;
+}
 
 class MobileUploadError extends Error {
   constructor(status, message) {
@@ -52,8 +69,11 @@ function validateMobileManifest(body) {
         path.basename(raw.name) !== raw.name || !/^[A-Za-z0-9._ -]+\.mp4$/i.test(raw.name)) {
       throw new MobileUploadError(400, `Clip ${expectedOrder} has an invalid MP4 filename.`);
     }
-    if (!Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 1 || raw.sizeBytes > MAX_CLIP_BYTES) {
-      throw new MobileUploadError(413, `Clip ${expectedOrder} must be between 1 byte and 15.8 MB.`);
+    if (!Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 1 || raw.sizeBytes > profile.maxClipBytes) {
+      throw new MobileUploadError(
+        413,
+        `Clip ${expectedOrder} must be between 1 byte and ${formatMegabytes(profile.maxClipBytes)}.`,
+      );
     }
     totalBytes += raw.sizeBytes;
     if (totalBytes > MAX_TOTAL_BYTES) {
@@ -357,7 +377,7 @@ function registerMobileUploadRoutes(app, {
       const meter = new Transform({
         transform(chunk, encoding, callback) {
           received += chunk.length;
-          if (received > slot.manifest.sizeBytes || received > MAX_CLIP_BYTES) {
+          if (received > slot.manifest.sizeBytes || received > session.manifest.profile.maxClipBytes) {
             return callback(new MobileUploadError(413, 'Uploaded clip exceeds its declared size.'));
           }
           hash.update(chunk);
@@ -365,7 +385,10 @@ function registerMobileUploadRoutes(app, {
         },
       });
       const abortController = new AbortController();
-      const uploadTimer = setTimeout(() => abortController.abort(), CLIP_UPLOAD_TIMEOUT_MS);
+      const uploadTimer = setTimeout(
+        () => abortController.abort(),
+        session.manifest.profile.uploadTimeoutMs || CLIP_UPLOAD_TIMEOUT_MS,
+      );
       uploadTimer.unref?.();
       try {
         await pipeline(

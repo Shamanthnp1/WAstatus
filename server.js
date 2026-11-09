@@ -980,8 +980,9 @@ function withTimeout(promise, ms, label) {
 // Per-send wall-clock limits for WhatsApp delivery (prevents a stuck send from
 // stranding a session in `processing`).
 const WA_MESSAGE_TIMEOUT_MS = 30000;   // text message send
-const WA_DOWNLOAD_TIMEOUT_MS = 120000; // R2 -> temp file download
-const WA_VIDEO_SEND_TIMEOUT_MS = 180000; // Baileys video upload+send
+// Sized for the app's 90-second 1080p clips (about 44 MB at most).
+const WA_DOWNLOAD_TIMEOUT_MS = 180000; // R2 -> temp file download
+const WA_VIDEO_SEND_TIMEOUT_MS = 300000; // Baileys video upload+send
 
 // Jitter + human-pacing helpers.
 //
