@@ -29,15 +29,25 @@ flutter test --no-pub
 
 ## 4. Build the release bundle
 
+Google Play gets the `global` flavor only. Never upload a `max` build to Play.
+
 ```powershell
-flutter build appbundle --release
+flutter build appbundle --release --flavor global
 ```
 
 Expected output:
 
 ```text
-build/app/outputs/bundle/release/app-release.aab
+build/app/outputs/bundle/globalRelease/app-global-release.aab
 ```
+
+StatusDrop MAX is an APK attached to the GitHub release as `StatusDrop-MAX.apk` (the name wastatusvideo.com/max links to):
+
+```powershell
+flutter build apk --release --flavor max --target-platform android-arm64
+```
+
+Output: `build/app/outputs/flutter-apk/app-max-release.apk`.
 
 The Gradle configuration refuses a release task when `android/key.properties` is missing; it never falls back to the debug key.
 

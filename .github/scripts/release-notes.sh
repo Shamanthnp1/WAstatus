@@ -33,6 +33,10 @@ play_url="https://play.google.com/store/apps/details?id=com.wastatusvideo.status
   # Drop the "StatusDrop x.y.z" title line and turn "•" bullets into Markdown.
   sed -e '1{/^StatusDrop /d;}' -e 's/^•[[:space:]]*/- /' "$app_dir/play/RELEASE_NOTES.txt" | sed -e '/./,$!d'
   echo
+  echo "## StatusDrop MAX"
+  echo
+  echo "\`StatusDrop-MAX.apk\` below is StatusDrop MAX: the same app plus delivery from your own WhatsApp number (Message yourself, or a second number as your bot). It installs next to the Google Play version. Install steps and the risks of the self-host methods: https://wastatusvideo.com/max"
+  echo
   echo "## Source code"
   echo
   echo "The source archives below match this release. The Android app is GPL-3.0 (it bundles FFmpegKit with x264); the backend is AGPL-3.0-or-later. Build steps: [$app_dir/README.md](https://github.com/${GITHUB_REPOSITORY:-Shamanthnp1/WAstatus}/blob/$tag/$app_dir/README.md)."

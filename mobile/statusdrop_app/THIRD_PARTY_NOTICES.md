@@ -42,6 +42,31 @@ This is the full GPL build and enables GPL components, including x264. StatusDro
 - Project: Smart Exception
 - Source: https://github.com/tanersener/smart-exception
 
+## Node.js for Mobile Apps (self-host delivery)
+
+- Project: nodejs-mobile core library v18.20.4 (`libnode.so`, ARM64), based on Node.js 18.20.4
+- License: MIT (Node.js license, including the licenses of Node.js's bundled dependencies such as V8, libuv and OpenSSL)
+- Source: https://github.com/nodejs-mobile/nodejs-mobile/tree/v18.20.4
+- Download: https://github.com/nodejs-mobile/nodejs-mobile/releases/tag/v18.20.4 (verified by SHA-256 in `android/app/build.gradle.kts`)
+- License text: https://github.com/nodejs-mobile/nodejs-mobile/blob/v18.20.4/LICENSE
+
+## Self-host WhatsApp bot (JavaScript)
+
+This section applies to StatusDrop MAX only; the Google Play build does not include the bot or Node.js. The self-host bot in `selfhost/` is bundled with its npm dependencies into `assets/selfhost/bot.mjs`. The build writes the name, version, license and full license text of every bundled package to `assets/selfhost/THIRD_PARTY_LICENSES.txt`, which ships inside the app. The main ones are:
+
+- Baileys (`@whiskeysockets/baileys` 7.0.0-rc13), MIT: https://github.com/WhiskeySockets/Baileys
+- libsignal-node (`libsignal` 6.0.0), GPL-3.0: https://github.com/WhiskeySockets/libsignal-node
+- whatsapp-rust-bridge 0.5.4, MIT
+- protobufjs, BSD-3-Clause; pino, MIT; ws, MIT; music-metadata, MIT
+
+StatusDrop is not affiliated with WhatsApp or Meta. Self-host delivery uses an unofficial WhatsApp Web client.
+
+## QR code rendering
+
+- Package: `qr_flutter` and `qr` (Dart)
+- License: BSD 3-Clause
+- Source: https://github.com/theyakka/qr.flutter
+
 ## Material icons
 
 - Project: Google Material Symbols / Icons as provided by Flutter

@@ -2,19 +2,29 @@
 
 StatusDrop prepares WhatsApp Status videos on the phone instead of paying for server-side FFmpeg work. It has no account, login, analytics SDK, advertising SDK, or broad storage permission.
 
-It's available on [Google Play](https://play.google.com/store/apps/details?id=com.wastatusvideo.statusdrop). Each published version also has a [GitHub release](https://github.com/Shamanthnp1/WAstatus/releases) with its matching source.
+It's available on [Google Play](https://play.google.com/store/apps/details?id=com.wastatusvideo.statusdrop). Each published version also has a [GitHub release](https://github.com/Shamanthnp1/WAstatus/releases) with its matching source and `StatusDrop-MAX.apk`.
+
+## Editions
+
+The same source builds two apps (Android product flavors, see [SOURCE.md](SOURCE.md)):
+
+- **`global`**, StatusDrop on Google Play: delivery through the StatusDrop WhatsApp numbers only. In Delivery method, the self-host options are shown greyed out with "(only available in MAX version)" and a link to [wastatusvideo.com/max](https://www.wastatusvideo.com/max). It contains no Node runtime, bot, foreground service or self-host code.
+- **`max`**, StatusDrop MAX (`com.wastatusvideo.statusdrop.max`), downloaded from the website: adds self-host delivery from the user's own number, either to their "Message yourself" chat or through a second number acting as a bot. It runs nodejs-mobile and the Baileys bot in `selfhost/` inside a `:selfhost` foreground service.
+
+Community and support: [Discord](https://discord.gg/aT4TNMQEK8), linked from the app's About & support sheet.
 
 ## Implemented flow
 
-1. The Android system picker selects up to 3 videos / 300 MiB total.
+1. The Android system picker selects up to 3 videos / 300 MiB total, or up to 10 photos.
 2. Selected documents are copied to private app cache.
 3. Pinned FFmpegKit/x264 compresses and splits them locally.
 4. After local compression, the app automatically uploads only the finished clips through the StatusDrop mobile API.
 5. The server checks exact bytes, SHA-256, MP4/H.264/AAC streams, dimensions, frame rate, and duration before sealing the clips in R2.
 6. Finalization creates the existing five-minute activation code.
 7. The user opens WhatsApp and sends the prefilled message; the existing Baileys flow returns clips in order.
-8. An accessible in-app 9-step guide shows how to download, resend, and forward the returned clip to Status in full HD.
-9. A three-dot About & support menu provides the published Instagram, email, Privacy Policy, and GPL source/license links without exposing a phone number.
+8. An accessible in-app poster guide shows how to download, resend, and forward the returned clip to Status in full HD (9 steps, or 13 for the MAX self-host methods), after a one-time "Before you start" card for WhatsApp's HD settings.
+9. A three-dot menu provides Delivery method, Rate on Play Store (Play build only), and About & support with the Discord, Instagram, email, Privacy Policy, and GPL source/license links, without exposing a phone number.
+10. The Play build shows one dismissible "Rate StatusDrop on Google Play" prompt when the user returns after their second delivery. It never asks for a star count or offers anything in return.
 
 The app uses the backend's `/api/mobile/*` routes. The old website compressor was retired in October 2026, so the app is now the only way to use StatusDrop.
 
@@ -24,11 +34,13 @@ The app uses the backend's `/api/mobile/*` routes. The old website compressor wa
 |---|---:|
 | Android version | Android 10 / API 29 or newer |
 | CPU architecture | ARM64 (`arm64-v8a`) only |
-| Source selection | 3 videos, 300 MiB total |
+| Source selection | 3 videos, 300 MiB total, or 10 photos |
 | Generated delivery | 20 clips maximum |
-| Accepted clip size | 15,800,000 bytes maximum |
-| 1080p profile | 1080×1920, up to 29 seconds, H.264 CRF 23 |
-| 720p profile | 720×1280, up to 59 seconds, H.264 CRF 24 |
+| Accepted clip size | 15,800,000 bytes (60,000,000 for 1080p no splitting) |
+| 1080p profile (`hd29`) | 1080×1920, up to 29 seconds, H.264 CRF 23 |
+| 1080p no splitting (`hd90`) | 1080×1920, one clip up to 89 seconds, same bitrate; longer sources split into 89-second parts |
+| 720p profile (`long59`) | 720×1280, up to 59 seconds, H.264 CRF 24 |
+| Photo clips (`photo5`) | 1080×1920, 5 seconds per photo, H.264 CRF 18, silent AAC, photo fitted on black |
 | Encode retries | 3 bounded attempts per clip |
 | Activation deadline | 5 minutes after successful finalize |
 
@@ -39,13 +51,21 @@ Videos are contained inside a portrait canvas with aspect ratio preserved; lands
 ```text
 lib/
   models/                    Typed video, clip, profile, and event models
+  edition.dart               Which build this is (global or max), from --flavor
   screens/home_screen.dart   Accessible picker → process → upload → activate UI
+  screens/self_host_screen.dart  Delivery method: StatusDrop number or self-host (MAX)
+  widgets/tutorial_guide.dart    Poster guides and the "Before you start" card
   services/
     native_video_service.dart  Flutter/Kotlin channel
     mobile_api.dart            Streaming mobile API client
+    self_host_bridge.dart      MAX: local socket to the on-phone WhatsApp bot
 android/app/src/main/kotlin/.../
   MainActivity.kt            Picker, cache, URL, and channel boundary
   LocalVideoProcessor.kt     FFmpeg planning, retries, progress, hash, cancellation
+android/app/src/max/         MAX only: SelfHostService, NodeRunner, JNI shim (cpp/)
+android/app/src/global/      Play build: empty stand-in for the self-host channel
+selfhost/                    MAX only: Node.js + Baileys bot, bundled by Gradle
+tool/                        Poster generators and the Discord server setup script
 ../../../src/server/mobileUpload.js
                              Secure mobile create/upload/finalize routes
 ../../../server.js            Shared activation and Baileys delivery handoff
@@ -71,21 +91,23 @@ From `mobile/statusdrop_app` in PowerShell:
 flutter pub get
 flutter analyze
 flutter test --no-pub
-flutter build apk --debug --target-platform android-arm64 --split-per-abi
+flutter build apk --debug --flavor global --target-platform android-arm64 --split-per-abi
 ```
 
 Output:
 
 ```text
-build\app\outputs\flutter-apk\app-arm64-v8a-debug.apk
+build\app\outputs\flutter-apk\app-arm64-v8a-global-debug.apk
 ```
+
+Use `--flavor max` for StatusDrop MAX, which adds self-host delivery. See [SOURCE.md](SOURCE.md) for the two editions.
 
 This local build is signed with Flutter/Android's **debug certificate**. Android may show an unknown-source or Play Protect warning, and it can't install over the Google Play version (the signatures differ); uninstall the Play version first. Release builds for Google Play follow [RELEASE.md](RELEASE.md).
 
 To point a build at another HTTPS backend:
 
 ```powershell
-flutter build apk --debug --target-platform android-arm64 --split-per-abi `
+flutter build apk --debug --flavor global --target-platform android-arm64 --split-per-abi `
   --dart-define=STATUSDROP_API_URL=https://your-api.example.com
 ```
 
@@ -121,8 +143,9 @@ Version 1.0.0 (version code 7) went through a 14-day Google Play closed test on 
 
 To publish a new version:
 
-1. Bump `version:` in `pubspec.yaml` (for example `1.0.1+8`) and update `play/RELEASE_NOTES.txt`.
-2. Build, upload and roll out on Google Play using [RELEASE.md](RELEASE.md).
-3. Tag the commit with the version name and push the tag (`git tag v1.0.1 && git push origin v1.0.1`). The release workflow checks that the tag matches `pubspec.yaml` and publishes the GitHub release.
+1. Bump `version:` in `pubspec.yaml` and `appVersionName` in `lib/edition.dart` (for example `1.1.1+9`), and update `play/RELEASE_NOTES.txt`.
+2. Build the `global` bundle, then upload and roll out on Google Play using [RELEASE.md](RELEASE.md).
+3. Tag the commit with the version name and push the tag (`git tag v1.1.1 && git push origin v1.1.1`). The release workflow checks that the tag matches `pubspec.yaml` and publishes the GitHub release.
+4. Build the `max` APK and attach it to that release as `StatusDrop-MAX.apk` (`gh release upload v1.1.1 StatusDrop-MAX.apk`). The website's download button points at that file name.
 
 Do not commit release keystores, passwords, Baileys credentials, user media, generated clips, or APK binaries.
