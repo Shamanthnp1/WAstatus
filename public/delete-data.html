@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Delete your data - StatusDrop</title>
+  <meta name="description" content="How StatusDrop deletes your data automatically, and how to ask for your data to be deleted." />
+  <link rel="canonical" href="https://www.wastatusvideo.com/delete-data" />
+  <link rel="icon" type="image/png" href="/logo.png" />
+  <meta name="theme-color" content="#137A3E" />
+  <style>
+    @font-face { font-family: 'Switzer'; src: url('/vendor/fonts/switzer/files/switzer-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+    @font-face { font-family: 'Switzer'; src: url('/vendor/fonts/switzer/files/switzer-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+    :root {
+      --ground: #F3F6F2; --ink: #0C1A12; --ink-2: #3A4A40; --accent: #137A3E;
+      --night: #05100B; --pale: #DCE9DF; --white: #FFFFFF;
+      --margin: clamp(16px, 2.2vw, 32px);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    * { margin: 0; }
+    body {
+      background: var(--ground); color: var(--ink);
+      font-family: 'Switzer', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      font-size: 1.0625rem; line-height: 1.55; -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; }
+    h1, h2 { font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; text-wrap: balance; }
+    p, li { text-wrap: pretty; }
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .skip-link { position: absolute; left: var(--margin); top: -80px; padding: 12px 20px; border-radius: 999px; background: var(--ink); color: var(--white); text-decoration: none; font-weight: 600; }
+    .skip-link:focus { top: 12px; }
+    .link { text-decoration: underline; text-decoration-thickness: 0.07em; text-underline-offset: 0.22em; }
+    .wrap { width: min(860px, 100% - 2 * var(--margin)); margin-inline: auto; }
+    .nav { display: flex; align-items: center; justify-content: space-between; padding-block: 18px; }
+    .wordmark { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; font-size: 1.25rem; text-decoration: none; }
+    .wordmark img { border-radius: 10px; }
+    header.hero { background: var(--night); color: var(--white); padding-block: clamp(40px, 7vw, 80px); }
+    .hero h1 { font-size: clamp(2.1rem, 1.3rem + 3.6vw, 3.6rem); }
+    .hero p { margin-top: 16px; max-width: 58ch; color: #CFE3D6; font-size: 1.2rem; }
+    main section { padding-block: clamp(32px, 5vw, 56px); border-bottom: 1px solid var(--pale); }
+    main section:last-child { border-bottom: 0; }
+    h2 { font-size: clamp(1.5rem, 1.2rem + 1.4vw, 2.1rem); margin-bottom: 14px; }
+    .lead { color: var(--ink-2); max-width: 64ch; }
+    table { width: 100%; margin-top: 20px; border-collapse: separate; border-spacing: 0; background: var(--white); border-radius: 18px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--pale); }
+    th, td { padding: 14px 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--pale); }
+    thead th { background: var(--pale); font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+    tbody th { font-weight: 600; width: 34%; }
+    ol, ul { margin-top: 14px; padding-left: 1.3em; display: grid; gap: 8px; }
+    .card { margin-top: 18px; padding: 22px 24px; border-radius: 18px; background: var(--white); box-shadow: inset 0 0 0 1px var(--pale); }
+    .card p + p, .card ul + p, .card .mail + p { margin-top: 12px; }
+    .mail { display: inline-block; margin-top: 6px; padding: 12px 22px; border-radius: 999px; background: var(--accent); color: var(--white); font-weight: 600; text-decoration: none; }
+    .note { margin-top: 14px; font-size: 0.9375rem; color: var(--ink-2); }
+    footer { background: var(--night); color: #CFE3D6; padding-block: 32px; font-size: 0.875rem; }
+    footer ul { display: flex; flex-wrap: wrap; gap: 8px 22px; list-style: none; padding: 0; margin: 0; }
+    footer p { margin-top: 14px; }
+    @media (max-width: 560px) { th, td { padding: 12px; } tbody th { width: auto; } }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">Skip to content</a>
+  <div class="wrap nav">
+    <a class="wordmark" href="/" aria-label="StatusDrop home" translate="no">
+      <img src="/logo.png" width="40" height="40" alt="" />
+      StatusDrop
+    </a>
+    <a class="link" href="/privacy.html">Privacy policy</a>
+  </div>
+
+  <header class="hero">
+    <div class="wrap">
+      <h1>Delete your StatusDrop data</h1>
+      <p>StatusDrop, the Android app by Shamanth N P (Google Play and StatusDrop MAX), has no accounts. Most data deletes itself within minutes. This page explains what is kept, for how long, and how to ask us to delete it.</p>
+    </div>
+  </header>
+
+  <main id="mainContent" tabindex="-1">
+    <section aria-labelledby="autoTitle">
+      <div class="wrap">
+        <h2 id="autoTitle">What we keep, and when it is deleted</h2>
+        <p class="lead">You don't need to ask for any of this to be deleted: it happens automatically.</p>
+        <table>
+          <caption class="sr-only" style="position:absolute;left:-9999px">Data StatusDrop keeps and when it is deleted</caption>
+          <thead>
+            <tr><th scope="col">Data</th><th scope="col">When it is deleted</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Finished clips you send with the StatusDrop number</th>
+              <td>Right after they are delivered to your WhatsApp. An activation code you never send expires after 5 minutes and its clips are deleted. A delivery that is still sending can keep them for up to 30 minutes. A cleanup job also removes any leftover clip older than 30 minutes, every 15 minutes.</td>
+            </tr>
+            <tr>
+              <th scope="row">Uploads you didn't finish</th>
+              <td>After 10 minutes without activity, and after 1 hour at most.</td>
+            </tr>
+            <tr>
+              <th scope="row">Your WhatsApp sender ID and activation code</th>
+              <td>Held in the server's memory while your delivery runs, then dropped. The activation code can also appear in the server logs below.</td>
+            </tr>
+            <tr>
+              <th scope="row">Server logs (IP address, request details, activation codes, and a short one-way code instead of your phone number)</th>
+              <td>Deleted automatically after 3 days. Logs never contain your phone number.</td>
+            </tr>
+            <tr>
+              <th scope="row">Messages you send us by email, Instagram or Discord</th>
+              <td>Kept until you ask us to delete them.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="note">Your original videos and photos never leave your phone. StatusDrop MAX's self-host methods send nothing to StatusDrop at all; see "Delete data on your phone" below.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="askTitle">
+      <div class="wrap">
+        <h2 id="askTitle">Ask us to delete your data</h2>
+        <p class="lead">Because most data is gone within minutes, there is usually nothing left by the time we read a request. If you still want us to check and delete:</p>
+        <div class="card">
+          <p><strong>Email us with the subject "StatusDrop data deletion".</strong></p>
+          <a class="mail" href="mailto:shamanthnadumane@gmail.com?subject=StatusDrop%20data%20deletion">shamanthnadumane@gmail.com</a>
+          <p>So we can find your data, include:</p>
+          <ul>
+            <li>the WhatsApp number you sent the activation code from</li>
+            <li>roughly when you used StatusDrop, and the activation code if you still have it</li>
+            <li>whether you also want your support messages deleted</li>
+          </ul>
+          <p>We delete any clips still stored for your deliveries, the log entries we can match to your number, and, if you ask, your support messages. We reply by email to confirm. We don't need any other information, and we never ask for passwords or WhatsApp linking codes.</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="phoneTitle">
+      <div class="wrap">
+        <h2 id="phoneTitle">Delete data on your phone</h2>
+        <ol>
+          <li><strong>Clear the current job:</strong> in StatusDrop, tap <em>Start over and clear local files</em>, or the clear button at the top of the screen. This deletes the copied originals and finished clips from the app's private storage.</li>
+          <li><strong>Clear everything:</strong> Android Settings &gt; Apps &gt; StatusDrop &gt; Storage &gt; <em>Clear storage</em>. Uninstalling the app also deletes everything it stored.</li>
+          <li><strong>StatusDrop MAX self-host delivery:</strong> open the 3-dot menu &gt; Delivery method &gt; <em>Disconnect this number</em>. This logs StatusDrop out of that WhatsApp number and deletes the saved login from your phone. You can also remove it in WhatsApp under Settings &gt; Linked devices.</li>
+          <li><strong>Clips in WhatsApp:</strong> clips that reached your WhatsApp are your own messages. Delete them in WhatsApp like any other message.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <ul>
+        <li><a class="link" href="/">Home</a></li>
+        <li><a class="link" href="/privacy.html">Privacy policy</a></li>
+        <li><a class="link" href="https://discord.gg/aT4TNMQEK8" target="_blank" rel="noopener">Discord</a></li>
+        <li><a class="link" href="mailto:shamanthnadumane@gmail.com">Contact</a></li>
+      </ul>
+      <p>StatusDrop is an independent app and is not affiliated with, endorsed by, or sponsored by WhatsApp LLC or Meta Platforms, Inc.</p>
+    </div>
+  </footer>
+</body>
+</html>

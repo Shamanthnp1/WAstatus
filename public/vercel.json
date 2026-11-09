@@ -1,6 +1,7 @@
 {
   "rewrites": [
-    { "source": "/max", "destination": "/max.html" }
+    { "source": "/max", "destination": "/max.html" },
+    { "source": "/delete-data", "destination": "/delete-data.html" }
   ],
   "redirects": [
     { "source": "/hi", "destination": "/", "permanent": true },
