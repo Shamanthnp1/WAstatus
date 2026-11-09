@@ -28,8 +28,15 @@ class NativeVideoService {
       )
       .asBroadcastStream();
 
-  Future<List<VideoSource>> pickVideos({int maxFiles = 3}) async {
-    final result = await _methods.invokeListMethod<Object?>('pickVideos', {
+  Future<List<VideoSource>> pickVideos({int maxFiles = 3}) =>
+      _pick('pickVideos', maxFiles);
+
+  /// Photos become 5-second video clips (profile photo5).
+  Future<List<VideoSource>> pickPhotos({int maxFiles = 10}) =>
+      _pick('pickPhotos', maxFiles);
+
+  Future<List<VideoSource>> _pick(String method, int maxFiles) async {
+    final result = await _methods.invokeListMethod<Object?>(method, {
       'maxFiles': maxFiles,
     });
     return (result ?? const [])
@@ -71,6 +78,12 @@ class NativeVideoService {
 
   Future<void> openExternalUrl(Uri uri) =>
       _methods.invokeMethod<void>('openExternalUrl', {'url': uri.toString()});
+
+  /// Small app state as JSON (for example, rating-prompt progress).
+  Future<String?> getAppState() => _methods.invokeMethod<String>('getAppState');
+
+  Future<void> setAppState(String json) =>
+      _methods.invokeMethod<void>('setAppState', {'json': json});
 
   Future<void> clearCache() => _methods.invokeMethod<void>('clearCache');
 }

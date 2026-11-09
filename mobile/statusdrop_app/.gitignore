@@ -43,3 +43,18 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Self-host delivery build outputs (recreated by Gradle on every build)
+/android/app/libnode/
+/android/app/.cxx/
+/android/app/src/max/assets/selfhost/
+/selfhost/node_modules/
+
+# Raw tutorial screenshots (show real numbers and chats). The edited posters
+# in assets/tutorial/ are made from them by tool/generate_selfhost_tutorial_assets.py.
+/source_art/tutorial images/
+
+# Built apps. Releases attach the MAX APK on GitHub and Play gets the bundle
+# through Play Console; neither belongs in git. (Keystores: android/.gitignore.)
+*.apk
+*.aab

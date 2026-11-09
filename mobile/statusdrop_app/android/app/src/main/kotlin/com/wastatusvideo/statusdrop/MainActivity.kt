@@ -1,9 +1,13 @@
 package com.wastatusvideo.statusdrop
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -20,9 +24,18 @@ class MainActivity : FlutterActivity() {
         const val EVENT_CHANNEL = "com.wastatusvideo.statusdrop/video_events"
         const val MAX_FILES = 3
         const val PICK_VIDEOS_REQUEST = 4107
+        const val PICK_PHOTOS_REQUEST = 4109
+        private val PHOTO_MIME_TYPES = arrayOf("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif")
+        // Small app state (for example, whether the rating prompt was shown).
+        private const val APP_PREFS = "app"
+        private const val APP_STATE_KEY = "state"
+        // The Google Play listing. Only the global edition is on Play.
+        private const val PLAY_PACKAGE = "com.wastatusvideo.statusdrop"
     }
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    // Self-host delivery in the MAX edition; an empty stand-in in global.
+    private val selfHostChannel = SelfHostChannel(this)
     private var eventSink: EventChannel.EventSink? = null
     private var pendingPickResult: MethodChannel.Result? = null
     private var pendingMaxFiles = MAX_FILES
@@ -48,12 +61,15 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
             .setMethodCallHandler(::handleMethodCall)
+
+        selfHostChannel.register(flutterEngine.dartExecutor.binaryMessenger)
     }
 
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "platformReady" -> result.success(true)
             "pickVideos" -> pickVideos(call, result)
+            "pickPhotos" -> pickPhotos(call, result)
             "startProcessing" -> startProcessing(call, result)
             "getProcessedClips" -> result.success(videoProcessor.getProcessedClips())
             "cancelProcessing" -> {
@@ -62,6 +78,19 @@ class MainActivity : FlutterActivity() {
             }
             "clearProcessedClips" -> clearProcessedClips(result)
             "openExternalUrl" -> openExternalUrl(call, result)
+            "getAppState" -> result.success(
+                getSharedPreferences(APP_PREFS, Context.MODE_PRIVATE).getString(APP_STATE_KEY, null),
+            )
+            "setAppState" -> {
+                val json = call.argument<String>("json")
+                if (json == null || json.length > 4096) {
+                    result.error("INVALID_STATE", "App state is missing or too large.", null)
+                    return
+                }
+                getSharedPreferences(APP_PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(APP_STATE_KEY, json).apply()
+                result.success(null)
+            }
             "deleteCachedFile" -> deleteCachedFile(call, result)
             "clearCache" -> clearAppCache(result)
             else -> result.notImplemented()
@@ -95,8 +124,15 @@ class MainActivity : FlutterActivity() {
         val allowed = when {
             scheme == "https" && host == "wa.me" -> true
             scheme == "https" && host == "ig.me" && path == "/m/xd.sapphire" -> true
+            // The StatusDrop community server (permanent invite).
+            scheme == "https" && host == "discord.gg" && path == "/aT4TNMQEK8" -> true
             scheme == "https" && host in setOf("wastatusvideo.com", "www.wastatusvideo.com") &&
-                path == "/privacy.html" -> true
+                path in setOf("/privacy.html", "/max") -> true
+            // The Play listing, to rate the app. market:// opens the Play Store app.
+            scheme == "market" && host == "details" &&
+                uri?.getQueryParameter("id") == PLAY_PACKAGE -> true
+            scheme == "https" && host == "play.google.com" && path == "/store/apps/details" &&
+                uri?.getQueryParameter("id") == PLAY_PACKAGE -> true
             scheme == "https" && host == "github.com" &&
                 path == "/Shamanthnp1/WAstatus/tree/main/mobile/statusdrop_app" -> true
             scheme == "mailto" && mailAddress == "shamanthnadumane@gmail.com" -> true
@@ -139,12 +175,39 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun pickPhotos(call: MethodCall, result: MethodChannel.Result) {
+        if (pendingPickResult != null) {
+            result.error("PICK_IN_PROGRESS", "The picker is already open.", null)
+            return
+        }
+        pendingPickResult = result
+        pendingMaxFiles = (call.argument<Int>("maxFiles") ?: LocalVideoProcessor.MAX_PHOTO_FILES)
+            .coerceIn(1, LocalVideoProcessor.MAX_PHOTO_FILES)
+
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, PHOTO_MIME_TYPES)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, pendingMaxFiles > 1)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivityForResult(intent, PICK_PHOTOS_REQUEST)
+        } catch (error: Exception) {
+            pendingPickResult = null
+            result.error("PICKER_UNAVAILABLE", "No photo picker is available on this device.", null)
+        }
+    }
+
     @Deprecated("Uses the Android document picker callback supported by FlutterActivity")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != PICK_VIDEOS_REQUEST) {
+        if (requestCode != PICK_VIDEOS_REQUEST && requestCode != PICK_PHOTOS_REQUEST) {
             super.onActivityResult(requestCode, resultCode, data)
             return
         }
+        val photos = requestCode == PICK_PHOTOS_REQUEST
+        val maxFiles = if (photos) LocalVideoProcessor.MAX_PHOTO_FILES else MAX_FILES
 
         val result = pendingPickResult
         pendingPickResult = null
@@ -169,11 +232,11 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        val selected = uris.take(pendingMaxFiles.coerceIn(1, MAX_FILES))
+        val selected = uris.take(pendingMaxFiles.coerceIn(1, maxFiles))
         ioExecutor.execute {
             val videos = mutableListOf<Map<String, Any?>>()
             try {
-                selected.forEach { uri -> videos.add(copyPickedVideo(uri)) }
+                selected.forEach { uri -> videos.add(if (photos) copyPickedPhoto(uri) else copyPickedVideo(uri)) }
                 runOnUiThread { result.success(videos) }
             } catch (error: Exception) {
                 videos.forEach { video ->
@@ -182,7 +245,7 @@ class MainActivity : FlutterActivity() {
                 runOnUiThread {
                     result.error(
                         "PICK_FAILED",
-                        error.message ?: "Could not read the selected video.",
+                        error.message ?: "Could not read the selected ${if (photos) "photo" else "video"}.",
                         null,
                     )
                 }
@@ -224,6 +287,61 @@ class MainActivity : FlutterActivity() {
                 "durationSeconds" to metadata.durationSeconds,
                 "width" to metadata.width,
                 "height" to metadata.height,
+            )
+        } catch (error: Exception) {
+            target.delete()
+            throw error
+        }
+    }
+
+    private fun copyPickedPhoto(uri: Uri): Map<String, Any?> {
+        val originalName = queryDisplayName(uri) ?: "photo_${System.currentTimeMillis()}.jpg"
+        val safeName = originalName
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .takeLast(120)
+            .ifBlank { "photo.jpg" }
+        val selectedDir = File(cacheDir, "selected").apply { mkdirs() }
+        val target = File(selectedDir, "${UUID.randomUUID()}_$safeName")
+
+        try {
+            contentResolver.openInputStream(uri).use { input ->
+                requireNotNull(input) { "The selected photo could not be opened." }
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (target.length() <= 0) error("The selected photo is empty.")
+
+            // Size from the header only. EXIF rotation is applied later, when
+            // the frame is drawn.
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(target.absolutePath, bounds)
+            var width = bounds.outWidth
+            var height = bounds.outHeight
+            if (width <= 0 || height <= 0) {
+                // Some formats (older HEIC encoders) only decode through ImageDecoder.
+                try {
+                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(target)) { decoder, info, _ ->
+                        width = info.size.width
+                        height = info.size.height
+                        decoder.setTargetSampleSize(16)
+                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    }.recycle()
+                } catch (_: Exception) {
+                    width = 0
+                    height = 0
+                }
+            }
+            if (width <= 0 || height <= 0) {
+                error("\"$originalName\" is not a photo StatusDrop can read. Try a JPEG or PNG.")
+            }
+            return mapOf(
+                "id" to UUID.randomUUID().toString(),
+                "path" to target.absolutePath,
+                "name" to originalName,
+                "sizeBytes" to target.length(),
+                "durationSeconds" to null,
+                "width" to width,
+                "height" to height,
+                "kind" to "photo",
             )
         } catch (error: Exception) {
             target.delete()
@@ -338,6 +456,7 @@ class MainActivity : FlutterActivity() {
         pendingPickResult?.error("ACTIVITY_DESTROYED", "The picker was closed.", null)
         pendingPickResult = null
         videoProcessor.shutdown()
+        selfHostChannel.dispose()
         ioExecutor.shutdownNow()
         super.onDestroy()
     }

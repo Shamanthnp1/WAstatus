@@ -1,9 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Self-host delivery (foreground service, notification permission) is
+         MAX-only: see src/max/AndroidManifest.xml. -->
 
     <application
-        android:label="StatusDrop"
+        android:label="${appLabel}${appLabelSuffix}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"

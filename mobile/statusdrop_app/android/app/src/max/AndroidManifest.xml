@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- MAX edition only. Merged into src/main/AndroidManifest.xml, so the
+         Play (global) build has no foreground service and none of these
+         permissions. -->
+
+    <!-- Self-host delivery: the bot runs in a foreground service with a
+         visible notification so Android does not freeze it mid-send. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <!-- Self-host WhatsApp bot (embedded Node.js). Own process: Node can
+             start only once per process, and a crash there must not touch
+             video compression. -->
+        <service
+            android:name=".selfhost.SelfHostService"
+            android:process=":selfhost"
+            android:exported="false"
+            android:label="${appLabel}${appLabelSuffix}"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

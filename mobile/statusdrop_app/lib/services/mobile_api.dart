@@ -48,7 +48,6 @@ class MobileApi {
   }
 
   static const _maxClips = 20;
-  static const _maxClipBytes = 15800000;
   static const _maxTotalBytes = 300 * 1024 * 1024;
   static const _maxResponseBytes = 1024 * 1024;
 
@@ -243,7 +242,7 @@ class MobileApi {
       final clip = ordered[index];
       if (clip.order != index + 1 ||
           clip.sizeBytes < 1 ||
-          clip.sizeBytes > _maxClipBytes ||
+          clip.sizeBytes > profile.maxClipBytes ||
           clip.durationSeconds <= 0 ||
           clip.durationSeconds > profile.clipSeconds + 0.75 ||
           !RegExp(r'^[0-9a-f]{64}$').hasMatch(clip.sha256)) {
@@ -288,11 +287,14 @@ class MobileApi {
         onBytesSent(sent.clamp(0, clip.sizeBytes));
         return chunk;
       });
+      // Big 90-second clips need longer on slow mobile uplinks: allow at
+      // least 6 minutes, or about 50 KB/s, up to the server's 20 minutes.
+      final streamTimeout = Duration(
+        seconds: (clip.sizeBytes ~/ 50000).clamp(360, 1200),
+      );
       // addStream awaits IOSink backpressure instead of queueing the entire clip
       // in memory on a slow mobile connection.
-      await request
-          .addStream(countedStream)
-          .timeout(const Duration(minutes: 6));
+      await request.addStream(countedStream).timeout(streamTimeout);
       final response = await request.close().timeout(
         const Duration(minutes: 6),
       );

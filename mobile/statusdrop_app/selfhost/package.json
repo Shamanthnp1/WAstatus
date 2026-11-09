@@ -1,0 +1,17 @@
+{
+  "name": "statusdrop-selfhost-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WhatsApp bot that runs inside the StatusDrop Android app (nodejs-mobile, Node 18) for self-host delivery.",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "bundle": "node build.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -1,7 +1,7 @@
 name: statusdrop
 description: "StatusDrop Android beta: private on-device WhatsApp Status video compression."
 publish_to: 'none'
-version: 1.0.0+7
+version: 1.1.0+8
 
 environment:
   sdk: ^3.10.0
@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
@@ -17,6 +18,19 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Build editions (Android product flavors): global is the Google Play build,
+  # max adds self-host delivery. Pass --flavor global or --flavor max.
+  default-flavor: global
   assets:
     - assets/images/statusdrop_logo.png
     - assets/tutorial/
+    - assets/tutorial/setup/setup_01.webp
+    # Self-host posters show linking your own WhatsApp: MAX only.
+    - path: assets/tutorial/setup/setup_02.webp
+      flavors: [max]
+    - path: assets/tutorial/own/
+      flavors: [max]
+    - path: assets/tutorial/bot/
+      flavors: [max]
+    - path: assets/tutorial/shared/
+      flavors: [max]

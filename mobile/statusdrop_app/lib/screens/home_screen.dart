@@ -1,38 +1,90 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../edition.dart';
 import '../models/native_video_event.dart';
 import '../models/processed_clip.dart';
 import '../models/quality_profile.dart';
+import '../models/self_host.dart';
 import '../models/video_source.dart';
 import '../services/mobile_api.dart';
 import '../services/native_video_service.dart';
+import '../services/self_host_bridge.dart';
+import '../widgets/tutorial_guide.dart';
+import 'self_host_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.videoService, this.mobileApi});
+  const HomeScreen({
+    super.key,
+    this.videoService,
+    this.mobileApi,
+    this.selfHostBridge,
+  });
 
   final NativeVideoService? videoService;
   final MobileApi? mobileApi;
+  final SelfHostBridge? selfHostBridge;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+/// What a finished self-host delivery reports on the home screen.
+class _SelfHostOutcome {
+  const _SelfHostOutcome({
+    required this.clipCount,
+    required this.number,
+    required this.ownChat,
+  });
+
+  final int clipCount;
+  final String? number;
+
+  /// Method 1 (sent to "Message yourself") vs method 2 (bot replied).
+  final bool ownChat;
+}
+
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const maxFiles = 3;
+  static const maxPhotos = 10;
   static const maxBytes = 300 * 1024 * 1024;
+  static const _selfHostCodeLifetime = Duration(minutes: 15);
+  static const _ratingAfterDeliveries = 2;
+
+  /// The Google Play listing (the global edition).
+  static const _playPackage = 'com.wastatusvideo.statusdrop';
 
   late final NativeVideoService _videoService;
   late final MobileApi _mobileApi;
   late final bool _ownsMobileApi;
+  late final SelfHostBridge _selfHost;
+  late final bool _ownsSelfHost;
   StreamSubscription<NativeVideoEvent>? _eventSubscription;
+  StreamSubscription<SelfHostEvent>? _selfHostSubscription;
   Timer? _countdownTimer;
+  SelfHostSettings _deliverySettings = const SelfHostSettings();
+  _SelfHostOutcome? _selfHostOutcome;
+
+  /// True when [_delivery] is a code armed on the user's own bot (method 2),
+  /// not a StatusDrop server code.
+  bool _selfHostArmed = false;
+  String? _botNumber;
+
+  /// Rating prompt progress (Play build only), kept in native app state.
+  int _deliveriesOpened = 0;
+  bool _ratingPromptShown = false;
+  bool _ratingPromptDue = false;
+  String? _lastCountedCode;
 
   final List<VideoSource> _videos = [];
   List<ProcessedClip> _processedClips = const [];
   QualityProfile _profile = QualityProfile.hd29;
+
+  /// The video profile to return to after a photo job is cleared.
+  QualityProfile _videoProfile = QualityProfile.hd29;
   DeliveryResult? _delivery;
   Duration _activationRemaining = Duration.zero;
   bool _isPicking = false;
@@ -49,8 +101,18 @@ class _HomeScreenState extends State<HomeScreen> {
   int get _processedBytes =>
       _processedClips.fold(0, (sum, clip) => sum + clip.sizeBytes);
 
+  bool get _selfHostMode => _deliverySettings.mode.isSelfHost;
+
+  /// The current job is photos (each becomes a 5-second clip), not videos.
+  bool get _photoJob => _videos.isNotEmpty && _videos.first.isPhoto;
+
+  int get _maxCount => _photoJob ? maxPhotos : maxFiles;
+
   int get _currentStep {
-    if (_delivery != null || _processedClips.isNotEmpty || _isUploading) {
+    if (_delivery != null ||
+        _selfHostOutcome != null ||
+        _processedClips.isNotEmpty ||
+        _isUploading) {
       return 2;
     }
     if (_videos.isNotEmpty || _isProcessing) return 1;
@@ -58,6 +120,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String get _stageKey {
+    if (_selfHostOutcome != null) return 'selfhost-sent';
     if (_delivery != null) return 'activation';
     if (_isUploading) return 'uploading';
     if (_processedClips.isNotEmpty) return 'ready';
@@ -72,6 +135,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _videoService = widget.videoService ?? NativeVideoService();
     _ownsMobileApi = widget.mobileApi == null;
     _mobileApi = widget.mobileApi ?? MobileApi();
+    _ownsSelfHost = widget.selfHostBridge == null;
+    _selfHost = widget.selfHostBridge ?? SelfHostBridge();
     _eventSubscription = _videoService.events.listen(
       _handleNativeEvent,
       onError: (Object error) {
@@ -82,27 +147,325 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       },
     );
+    _selfHostSubscription = _selfHost.events.listen(_handleSelfHostEvent);
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadDeliverySettings());
+    if (!Edition.current.hasSelfHost) unawaited(_loadAppState());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
     _eventSubscription?.cancel();
+    _selfHostSubscription?.cancel();
     if (_ownsMobileApi) _mobileApi.close();
+    if (_ownsSelfHost) _selfHost.dispose();
     super.dispose();
   }
 
-  Future<void> _pickVideos() async {
-    if (_isBusy || _delivery != null || _videos.length >= maxFiles) return;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The bot keeps delivering while the app is in the background; catch up
+    // on what happened when the user comes back.
+    if (state == AppLifecycleState.resumed && _selfHostArmed) {
+      unawaited(_checkArmedDelivery());
+    }
+    // Back from WhatsApp after a delivery: a natural moment to ask once.
+    if (state == AppLifecycleState.resumed && _ratingPromptDue) {
+      unawaited(
+        Future<void>.delayed(
+          const Duration(milliseconds: 800),
+          _showRatingPrompt,
+        ),
+      );
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Self-host delivery
+  // -----------------------------------------------------------------------
+  Future<void> _loadDeliverySettings() async {
+    final settings = await _selfHost.loadSettings();
+    if (!mounted) return;
+    setState(() => _deliverySettings = settings);
+    if (settings.mode == DeliveryMode.secondNumber) {
+      await _restoreArmedDelivery();
+    }
+  }
+
+  /// After an app restart, show a code the bot is still waiting for.
+  Future<void> _restoreArmedDelivery() async {
+    try {
+      if (!await _selfHost.isRunning()) return;
+      await _selfHost.connect(startIfStopped: false);
+      final status = await _selfHost.status();
+      final code = status.armedCode;
+      final expiresAt = status.armedExpiresAt;
+      final botNumber = status.me;
+      if (!mounted ||
+          code == null ||
+          expiresAt == null ||
+          botNumber == null ||
+          _delivery != null ||
+          _isBusy ||
+          _videos.isNotEmpty) {
+        return;
+      }
+      setState(() {
+        _delivery = DeliveryResult(
+          activationCode: code,
+          whatsAppUrl: _botChatUrl(botNumber, code),
+          fileCount: status.armedTotal,
+          expiresAt: expiresAt,
+        );
+        _selfHostArmed = true;
+        _botNumber = botNumber;
+        _statusMessage =
+            'Your bot is still waiting for this code. Send it from your main WhatsApp.';
+      });
+      _startActivationCountdown();
+    } catch (_) {
+      // Nothing to restore.
+    }
+  }
+
+  Future<void> _checkArmedDelivery() async {
+    final code = _delivery?.activationCode;
+    if (!_selfHostArmed || code == null) return;
+    try {
+      // Starts the bot again if it already stopped; it remembers how the
+      // last armed delivery ended.
+      final status = await _selfHost.status();
+      if (status.lastDeliveryCode == code &&
+          status.lastDeliveryOutcome == 'delivered') {
+        await _finishArmedDelivery(status.lastDeliveryTotal);
+      }
+    } catch (_) {
+      // Try again on the next resume.
+    }
+  }
+
+  Future<void> _openDeliverySettings() async {
+    if (_isBusy || _delivery != null || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SelfHostScreen(
+          bridge: _selfHost,
+          initialSettings: _deliverySettings,
+          onOpenLink: _openSupportLink,
+        ),
+      ),
+    );
+    final settings = await _selfHost.loadSettings();
+    if (!mounted) return;
+    setState(() => _deliverySettings = settings);
+  }
+
+  void _handleSelfHostEvent(SelfHostEvent event) {
+    if (!mounted) return;
+    switch (event.name) {
+      case 'sendProgress':
+        final sent = event.integer('sent') ?? 0;
+        final total = event.integer('total') ?? 1;
+        if (!_isUploading && !_selfHostArmed) return;
+        setState(() {
+          _uploadProgress = total == 0 ? 0 : sent / total;
+          _statusMessage = 'Sent clip $sent of $total.';
+        });
+      case 'deliveryStarted':
+        if (!_selfHostArmed) return;
+        setState(
+          () => _statusMessage =
+              'Code received. Your bot is sending ${event.integer('total') ?? ''} clips.',
+        );
+      case 'delivered':
+        if (_selfHostArmed &&
+            event.string('code') == _delivery?.activationCode) {
+          unawaited(_finishArmedDelivery(event.integer('total') ?? 0));
+        }
+      case 'deliveryFailed':
+        if (!_selfHostArmed) return;
+        setState(
+          () => _statusMessage =
+              'Sending stopped: ${event.string('error') ?? 'unknown error'}. Send the code again to retry.',
+        );
+      case 'loggedOut':
+        final settings = _deliverySettings.copyWith(clearLinkedNumber: true);
+        setState(() => _deliverySettings = settings);
+        unawaited(_selfHost.saveSettings(settings).catchError((_) {}));
+        if (_selfHostMode) {
+          _showMessage(
+            'WhatsApp logged StatusDrop out of your number. Link it again in Delivery method.',
+          );
+        }
+    }
+  }
+
+  Future<List<SelfHostClip>> _selfHostClips() async {
+    final clips = <SelfHostClip>[];
+    for (final clip in _processedClips) {
+      clips.add(
+        SelfHostClip(
+          path: clip.path,
+          width: _profile.width,
+          height: _profile.height,
+          seconds: clip.durationSeconds.round(),
+          thumbnail: await _selfHost.clipThumbnail(clip.path),
+        ),
+      );
+    }
+    return clips;
+  }
+
+  static Uri _botChatUrl(String botNumber, String code) => Uri.https(
+    'wa.me',
+    '/$botNumber',
+    {'text': 'Hi! My StatusDrop code is $code'},
+  );
+
+  Future<void> _deliver() => switch (_deliverySettings.mode) {
+    DeliveryMode.statusDrop => _uploadAndFinalize(),
+    DeliveryMode.ownNumber => _sendToOwnChat(),
+    DeliveryMode.secondNumber => _armBotDelivery(),
+  };
+
+  /// Method 1: this phone sends the clips to the user's own chat.
+  Future<void> _sendToOwnChat() async {
+    if (_processedClips.isEmpty || _isBusy || _delivery != null) return;
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0;
+      _statusMessage = 'Starting self-host delivery on this phone.';
+    });
+    try {
+      final clips = await _selfHostClips();
+      if (!mounted) return;
+      setState(() => _statusMessage = 'Connecting to your WhatsApp.');
+      final number = await _selfHost.sendToSelf(clips);
+      try {
+        await _videoService.clearProcessedClips();
+      } catch (_) {
+        // Start over clears anything left behind.
+      }
+      if (!mounted) return;
+      setState(() {
+        _isUploading = false;
+        _uploadProgress = 1;
+        _processedClips = const [];
+        _selfHostOutcome = _SelfHostOutcome(
+          clipCount: clips.length,
+          number: number ?? _deliverySettings.linkedNumber,
+          ownChat: true,
+        );
+        _statusMessage = 'Clips sent to your "Message yourself" chat.';
+      });
+    } catch (error) {
+      _selfHostFailed(error);
+    } finally {
+      unawaited(_selfHost.disconnect());
+    }
+  }
+
+  /// Method 2: arm a code on the user's bot number, then wait for it.
+  Future<void> _armBotDelivery() async {
+    if (_processedClips.isEmpty || _isBusy || _delivery != null) return;
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0;
+      _statusMessage = 'Starting your bot on this phone.';
+    });
+    try {
+      final clips = await _selfHostClips();
+      final code = SelfHostBridge.newActivationCode();
+      final expiresAt = DateTime.now().toUtc().add(_selfHostCodeLifetime);
+      if (!mounted) return;
+      setState(() => _statusMessage = 'Connecting your bot to WhatsApp.');
+      final botNumber = await _selfHost.armDelivery(
+        code: code,
+        clips: clips,
+        expiresAt: expiresAt,
+      );
+      if (botNumber == null) {
+        throw const SelfHostException('Your bot did not report its number.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _isUploading = false;
+        _delivery = DeliveryResult(
+          activationCode: code,
+          whatsAppUrl: _botChatUrl(botNumber, code),
+          fileCount: clips.length,
+          expiresAt: expiresAt,
+        );
+        _selfHostArmed = true;
+        _botNumber = botNumber;
+        _statusMessage =
+            'Code ready. Send it to your bot from your main WhatsApp.';
+      });
+      _startActivationCountdown();
+    } catch (error) {
+      _selfHostFailed(error);
+      unawaited(_selfHost.disconnect());
+    }
+  }
+
+  Future<void> _finishArmedDelivery(int total) async {
+    if (!_selfHostArmed) return;
+    _countdownTimer?.cancel();
+    try {
+      await _videoService.clearProcessedClips();
+    } catch (_) {
+      // Start over clears anything left behind.
+    }
+    if (!mounted) return;
+    setState(() {
+      _delivery = null;
+      _selfHostArmed = false;
+      _processedClips = const [];
+      _selfHostOutcome = _SelfHostOutcome(
+        clipCount: total,
+        number: _botNumber,
+        ownChat: false,
+      );
+      _statusMessage = 'Your bot sent the clips to your WhatsApp.';
+    });
+    unawaited(_selfHost.disconnect());
+  }
+
+  void _selfHostFailed(Object error) {
+    if (!mounted) return;
+    final notLinked = error is SelfHostException && error.notLinked;
+    setState(() {
+      _isUploading = false;
+      _statusMessage = notLinked
+          ? 'Link your number in Delivery method, then send again. Your clips were kept.'
+          : 'Sending failed. Your finished clips were kept for retry.';
+    });
+    _showMessage(
+      notLinked
+          ? 'No WhatsApp number is linked for self-host delivery yet.'
+          : _friendlyError(error),
+    );
+  }
+
+  Future<void> _pickMedia({required bool photos}) async {
+    final limit = photos ? maxPhotos : maxFiles;
+    if (_isBusy || _delivery != null || _selfHostOutcome != null) return;
+    // One job is either videos or photos, never both.
+    if (_videos.isNotEmpty && _photoJob != photos) return;
+    if (_videos.length >= limit) return;
     setState(() {
       _isPicking = true;
-      _statusMessage = 'Opening the video picker.';
+      _statusMessage = photos
+          ? 'Opening the photo picker.'
+          : 'Opening the video picker.';
     });
 
     try {
-      final picked = await _videoService.pickVideos(
-        maxFiles: maxFiles - _videos.length,
-      );
+      final picked = photos
+          ? await _videoService.pickPhotos(maxFiles: limit - _videos.length)
+          : await _videoService.pickVideos(maxFiles: limit - _videos.length);
       var runningBytes = _totalBytes;
       final accepted = <VideoSource>[];
       final rejected = <VideoSource>[];
@@ -130,21 +493,28 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (!mounted) return;
+      final noun = photos ? 'photo' : 'video';
       setState(() {
         _videos.addAll(accepted);
         _processedClips = const [];
+        if (accepted.isNotEmpty) {
+          _profile = photos ? QualityProfile.photo5 : _videoProfile;
+        }
         _statusMessage = accepted.isEmpty
-            ? 'No videos were added.'
-            : '${_videos.length} ${_videos.length == 1 ? 'video' : 'videos'} selected.';
+            ? 'No ${noun}s were added.'
+            : '${_videos.length} ${_videos.length == 1 ? noun : '${noun}s'} selected.';
       });
       if (rejected.isNotEmpty) {
         _showMessage(
-          'Some videos were not added because the 300 MB total limit would be exceeded.',
+          'Some ${noun}s were not added because the 300 MB total limit would be exceeded.',
         );
       }
     } catch (error) {
       if (!mounted) return;
-      setState(() => _statusMessage = 'Could not select videos.');
+      setState(
+        () => _statusMessage =
+            'Could not select ${photos ? 'photos' : 'videos'}.',
+      );
       _showMessage(_friendlyError(error));
     } finally {
       if (mounted) setState(() => _isPicking = false);
@@ -157,12 +527,14 @@ class _HomeScreenState extends State<HomeScreen> {
       await _videoService.clearProcessedClips();
       await _videoService.deleteCachedFile(video.path);
       if (!mounted) return;
+      final noun = video.isPhoto ? 'photo' : 'video';
       setState(() {
         _videos.removeWhere((item) => item.id == video.id);
         _processedClips = const [];
+        if (_videos.isEmpty) _profile = _videoProfile;
         _statusMessage = _videos.isEmpty
-            ? 'No videos selected.'
-            : '${_videos.length} ${_videos.length == 1 ? 'video' : 'videos'} selected.';
+            ? 'No ${noun}s selected.'
+            : '${_videos.length} ${_videos.length == 1 ? noun : '${noun}s'} selected.';
       });
     } catch (error) {
       if (!mounted) return;
@@ -173,13 +545,33 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _clearVideos() async {
     if (_isBusy) return;
     try {
+      if (_selfHostArmed) {
+        // Do not delete clips the bot is sending right now.
+        try {
+          final status = await _selfHost.status();
+          if (status.armedInProgress) {
+            _showMessage(
+              'Your bot is sending the clips. Wait until it finishes.',
+            );
+            return;
+          }
+        } catch (_) {
+          // The bot is gone; nothing is being sent.
+        }
+        await _selfHost.cancelDelivery();
+        unawaited(_selfHost.disconnect());
+      }
       await _videoService.clearCache();
       _countdownTimer?.cancel();
       if (!mounted) return;
       setState(() {
         _videos.clear();
+        _profile = _videoProfile;
         _processedClips = const [];
         _delivery = null;
+        _selfHostArmed = false;
+        _botNumber = null;
+        _selfHostOutcome = null;
         _activationRemaining = Duration.zero;
         _progress = 0;
         _uploadProgress = 0;
@@ -193,11 +585,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _selectProfile(QualityProfile profile) async {
     if (_isBusy || _delivery != null || profile == _profile) return;
+    if (profile.isPhoto || _photoJob) return;
     try {
       await _videoService.clearProcessedClips();
       if (!mounted) return;
       setState(() {
         _profile = profile;
+        _videoProfile = profile;
         _processedClips = const [];
         _progress = 0;
         _statusMessage = '${profile.label} selected.';
@@ -210,6 +604,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startProcessing() async {
     if (_videos.isEmpty || _isBusy || _delivery != null) return;
+    if (_selfHostMode && _deliverySettings.linkedNumber == null) {
+      _showMessage(
+        'Link your WhatsApp number in Delivery method first, or switch back to the StatusDrop number.',
+      );
+      return;
+    }
     setState(() {
       _isProcessing = true;
       _processedClips = const [];
@@ -256,10 +656,10 @@ class _HomeScreenState extends State<HomeScreen> {
           _isProcessing = false;
           _progress = 1;
           _statusMessage =
-              '${clips.length} ${clips.length == 1 ? 'clip is' : 'clips are'} ready. Starting secure upload.';
+              '${clips.length} ${clips.length == 1 ? 'clip is' : 'clips are'} ready. ${_selfHostMode ? 'Sending from this phone.' : 'Starting secure upload.'}';
         });
         if (clips.isNotEmpty) {
-          await _uploadAndFinalize();
+          await _deliver();
         }
       } catch (error) {
         if (!mounted) return;
@@ -355,6 +755,109 @@ class _HomeScreenState extends State<HomeScreen> {
     if (delivery == null || _activationRemaining <= Duration.zero) return;
     try {
       await _videoService.openExternalUrl(delivery.whatsAppUrl);
+      _noteDeliveryOpened(delivery.activationCode);
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(_friendlyError(error));
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Rating prompt (Play build only; MAX is not on Google Play)
+  // -----------------------------------------------------------------------
+  // One plain prompt, shown once, when the user comes back after their
+  // second delivery. Play policy: no incentives, no "5 stars" wording, no
+  // "do you like it?" question first, and it can always be dismissed.
+  Future<void> _loadAppState() async {
+    try {
+      final json = await _videoService.getAppState();
+      final map = json == null ? null : jsonDecode(json);
+      if (map is Map) {
+        _deliveriesOpened = (map['deliveriesOpened'] as num?)?.toInt() ?? 0;
+        _ratingPromptShown = map['ratingPromptShown'] == true;
+      }
+    } catch (_) {
+      // Start counting from zero.
+    }
+    _ratingPromptDue =
+        !_ratingPromptShown && _deliveriesOpened >= _ratingAfterDeliveries;
+  }
+
+  Future<void> _saveAppState() async {
+    try {
+      await _videoService.setAppState(
+        jsonEncode({
+          'deliveriesOpened': _deliveriesOpened,
+          'ratingPromptShown': _ratingPromptShown,
+        }),
+      );
+    } catch (_) {
+      // Not worth bothering the user about.
+    }
+  }
+
+  void _noteDeliveryOpened(String code) {
+    if (Edition.current.hasSelfHost || _ratingPromptShown) return;
+    // Count each activation code once, even if Open WhatsApp is tapped again.
+    if (code == _lastCountedCode) return;
+    _lastCountedCode = code;
+    _deliveriesOpened += 1;
+    if (_deliveriesOpened >= _ratingAfterDeliveries) _ratingPromptDue = true;
+    unawaited(_saveAppState());
+  }
+
+  Future<void> _showRatingPrompt() async {
+    if (!mounted || !_ratingPromptDue || _ratingPromptShown || _isBusy) {
+      return;
+    }
+    _ratingPromptDue = false;
+    _ratingPromptShown = true;
+    unawaited(_saveAppState());
+    final rate = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.star_outline_rounded),
+        title: const Text('Rate StatusDrop on Google Play'),
+        content: const Text(
+          'A rating on Google Play helps other people find StatusDrop. It only takes a few seconds.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('No thanks'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Rate on Play'),
+          ),
+        ],
+      ),
+    );
+    if (rate == true) await _openPlayListing();
+  }
+
+  Future<void> _openPlayListing() async {
+    try {
+      // Opens the Play Store app straight on the listing.
+      await _videoService.openExternalUrl(
+        Uri.parse('market://details?id=$_playPackage'),
+      );
+    } catch (_) {
+      await _openSupportLink(
+        Uri.https('play.google.com', '/store/apps/details', {
+          'id': _playPackage,
+        }),
+      );
+    }
+  }
+
+  /// Opens the chat the clips went to: the user's own "Message yourself"
+  /// chat (method 1) or the chat with their bot number (method 2).
+  Future<void> _openSelfHostChat() async {
+    final number = _selfHostOutcome?.number;
+    if (number == null || number.isEmpty) return;
+    try {
+      await _videoService.openExternalUrl(Uri.https('wa.me', '/$number'));
     } catch (error) {
       if (!mounted) return;
       _showMessage(_friendlyError(error));
@@ -414,12 +917,27 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'More options',
             icon: const Icon(Icons.more_vert),
             onSelected: (action) {
-              if (action == _AppMenuAction.about) {
-                unawaited(_showAbout());
+              switch (action) {
+                case _AppMenuAction.delivery:
+                  unawaited(_openDeliverySettings());
+                case _AppMenuAction.about:
+                  unawaited(_showAbout());
+                case _AppMenuAction.rate:
+                  unawaited(_openPlayListing());
               }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(
+                value: _AppMenuAction.delivery,
+                enabled: _delivery == null,
+                child: const Text('Delivery method'),
+              ),
+              if (!Edition.current.hasSelfHost)
+                const PopupMenuItem(
+                  value: _AppMenuAction.rate,
+                  child: Text('Rate on Play Store'),
+                ),
+              const PopupMenuItem(
                 value: _AppMenuAction.about,
                 child: Text('About & support'),
               ),
@@ -449,7 +967,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       progress: busyProgress,
                     ),
                     const SizedBox(height: 14),
-                    const _PrivacyNote(),
+                    _PrivacyNote(selfHost: _selfHostMode),
+                    // One-time WhatsApp setup. Hidden while a delivery panel
+                    // shows, so the code or result stays near the top.
+                    if (_delivery == null && _selfHostOutcome == null) ...[
+                      const SizedBox(height: 14),
+                      const SetupGuideCard(),
+                    ],
                     const SizedBox(height: 24),
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 260),
@@ -465,7 +989,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: child,
                         ),
                       ),
-                      child: _delivery != null
+                      child: _selfHostOutcome != null
+                          ? _SelfHostSentPanel(
+                              key: const ValueKey('selfhost-sent'),
+                              outcome: _selfHostOutcome!,
+                              onOpenWhatsApp: _openSelfHostChat,
+                              onStartOver: _clearVideos,
+                            )
+                          : _delivery != null
                           ? _ActivationPanel(
                               key: const ValueKey('activation'),
                               delivery: _delivery!,
@@ -473,6 +1004,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               onCopy: _copyActivationCode,
                               onOpenWhatsApp: _openWhatsApp,
                               onStartOver: _clearVideos,
+                              subtitle: _selfHostArmed
+                                  ? 'Send this code from your main WhatsApp to your bot +${_botNumber ?? ''}. It replies with ${_delivery!.fileCount} ${_delivery!.fileCount == 1 ? 'clip' : 'clips'}.'
+                                  : null,
                             )
                           : Column(
                               key: ValueKey(_stageKey),
@@ -482,7 +1016,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   complete: _videos.isNotEmpty,
                                   title: 'Choose videos',
                                   description:
-                                      'Pick up to 3 videos. Originals stay in private app storage.',
+                                      'Pick up to 3 videos, or up to 10 photos. Originals stay in private app storage.',
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
@@ -490,10 +1024,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                       FilledButton.icon(
                                         onPressed:
                                             _isBusy ||
+                                                _photoJob ||
                                                 _videos.length >= maxFiles
                                             ? null
-                                            : _pickVideos,
-                                        icon: _isPicking
+                                            : () => _pickMedia(photos: false),
+                                        icon: _isPicking && !_photoJob
                                             ? const SizedBox.square(
                                                 dimension: 20,
                                                 child:
@@ -505,15 +1040,34 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 Icons.video_library_outlined,
                                               ),
                                         label: Text(
-                                          _videos.isEmpty
+                                          _videos.isEmpty || _photoJob
                                               ? 'Choose videos'
                                               : 'Add another video',
+                                        ),
+                                      ),
+                                      const SizedBox(height: 10),
+                                      OutlinedButton.icon(
+                                        onPressed:
+                                            _isBusy ||
+                                                (_videos.isNotEmpty &&
+                                                    !_photoJob) ||
+                                                _videos.length >= maxPhotos
+                                            ? null
+                                            : () => _pickMedia(photos: true),
+                                        icon: const Icon(
+                                          Icons.photo_library_outlined,
+                                        ),
+                                        label: Text(
+                                          _photoJob
+                                              ? 'Add more photos'
+                                              : 'Choose photos',
                                         ),
                                       ),
                                       const SizedBox(height: 14),
                                       _SelectionMeter(
                                         count: _videos.length,
-                                        maxCount: maxFiles,
+                                        maxCount: _maxCount,
+                                        unit: _photoJob ? 'photos' : 'videos',
                                         bytes: _totalBytes,
                                         maxBytes: maxBytes,
                                       ),
@@ -543,26 +1097,46 @@ class _HomeScreenState extends State<HomeScreen> {
                                     step: 2,
                                     complete: false,
                                     title: 'Prepare on this phone',
-                                    description:
-                                        'Choose quality. StatusDrop compresses locally, then continues securely to delivery.',
+                                    description: _photoJob
+                                        ? 'Each photo becomes a 5-second 1080p video clip, so WhatsApp keeps it sharp on Status.'
+                                        : 'Choose quality. StatusDrop compresses locally, then continues securely to delivery.',
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.stretch,
                                       children: [
-                                        ...QualityProfile.values.map(
-                                          (profile) => Padding(
+                                        _DeliveryRow(
+                                          settings: _deliverySettings,
+                                          enabled: !_isBusy,
+                                          onChange: _openDeliverySettings,
+                                        ),
+                                        const SizedBox(height: 12),
+                                        if (_photoJob)
+                                          Padding(
                                             padding: const EdgeInsets.only(
                                               bottom: 10,
                                             ),
                                             child: _QualityOption(
-                                              profile: profile,
-                                              selected: _profile == profile,
+                                              profile: QualityProfile.photo5,
+                                              selected: true,
                                               enabled: !_isBusy,
-                                              onSelected: () =>
-                                                  _selectProfile(profile),
+                                              onSelected: () {},
                                             ),
                                           ),
-                                        ),
+                                        if (!_photoJob)
+                                          ...QualityProfile.videoProfiles.map(
+                                            (profile) => Padding(
+                                              padding: const EdgeInsets.only(
+                                                bottom: 10,
+                                              ),
+                                              child: _QualityOption(
+                                                profile: profile,
+                                                selected: _profile == profile,
+                                                enabled: !_isBusy,
+                                                onSelected: () =>
+                                                    _selectProfile(profile),
+                                              ),
+                                            ),
+                                          ),
                                         const SizedBox(height: 4),
                                         if (_isProcessing)
                                           OutlinedButton.icon(
@@ -596,15 +1170,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                     step: 3,
                                     complete: false,
                                     title: 'Finish delivery',
-                                    description:
-                                        'Automatic upload needs attention. Your finished clips are still safe on this phone.',
+                                    description: _selfHostMode
+                                        ? 'Sending needs attention. Your finished clips are still safe on this phone.'
+                                        : 'Automatic upload needs attention. Your finished clips are still safe on this phone.',
                                     child: _ReadySummary(
                                       clipCount: _processedClips.length,
                                       totalBytes: _processedBytes,
                                       uploading: _isUploading,
-                                      onUpload: _isBusy
-                                          ? null
-                                          : _uploadAndFinalize,
+                                      selfHost: _selfHostMode,
+                                      onUpload: _isBusy ? null : _deliver,
                                     ),
                                   ),
                                 ],
@@ -612,10 +1186,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                     ),
                     const SizedBox(height: 24),
-                    const _TutorialGuide(),
+                    TutorialGuide(
+                      key: ValueKey(_deliverySettings.mode),
+                      steps: TutorialSteps.forMode(_deliverySettings.mode),
+                      hint: TutorialSteps.hintFor(_deliverySettings.mode),
+                      heroScope: 'home',
+                    ),
                     const SizedBox(height: 28),
                     Text(
-                      'StatusDrop 1.0.0 · Open-source Android client',
+                      '$appDisplayName $appVersionName · Open-source Android client',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -630,6 +1209,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Positioned.fill(
               child: _BusyOverlay(
                 uploading: _isUploading,
+                selfHost: _selfHostMode,
                 message: _statusMessage,
                 progress: busyProgress,
                 onCancel: _isProcessing ? _cancelProcessing : null,
@@ -788,12 +1368,14 @@ class _WorkflowStepper extends StatelessWidget {
 class _BusyOverlay extends StatelessWidget {
   const _BusyOverlay({
     required this.uploading,
+    required this.selfHost,
     required this.message,
     required this.progress,
     required this.onCancel,
   });
 
   final bool uploading;
+  final bool selfHost;
   final String message;
   final double progress;
   final VoidCallback? onCancel;
@@ -803,10 +1385,21 @@ class _BusyOverlay extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final percentage = (progress.clamp(0, 1) * 100).round();
-    final title = uploading ? 'Sending securely' : 'Compressing on this phone';
-    final supportingText = uploading
-        ? 'Finished clips are uploading, being verified, and prepared for WhatsApp.'
-        : 'Your original video stays on this phone. You can cancel without losing the selection.';
+    final title = !uploading
+        ? 'Compressing on this phone'
+        : selfHost
+        ? 'Sending from this phone'
+        : 'Sending securely';
+    final supportingText = !uploading
+        ? 'Your original video stays on this phone. You can cancel without losing the selection.'
+        : selfHost
+        ? 'Your own WhatsApp number is sending the finished clips. Keep StatusDrop open until it finishes.'
+        : 'Finished clips are uploading, being verified, and prepared for WhatsApp.';
+    final progressLabel = !uploading
+        ? 'Local processing'
+        : selfHost
+        ? 'WhatsApp send'
+        : 'Secure upload';
 
     return Stack(
       fit: StackFit.expand,
@@ -848,9 +1441,11 @@ class _BusyOverlay extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(18),
                                 ),
                                 child: Icon(
-                                  uploading
-                                      ? Icons.cloud_upload_outlined
-                                      : Icons.auto_awesome_outlined,
+                                  !uploading
+                                      ? Icons.auto_awesome_outlined
+                                      : selfHost
+                                      ? Icons.send_outlined
+                                      : Icons.cloud_upload_outlined,
                                   color: scheme.onPrimaryContainer,
                                   size: 30,
                                 ),
@@ -871,9 +1466,7 @@ class _BusyOverlay extends StatelessWidget {
                               children: [
                                 Expanded(
                                   child: Text(
-                                    uploading
-                                        ? 'Secure upload'
-                                        : 'Local processing',
+                                    progressLabel,
                                     style: theme.textTheme.labelLarge,
                                   ),
                                 ),
@@ -1000,7 +1593,9 @@ class _StatusPanel extends StatelessWidget {
 }
 
 class _PrivacyNote extends StatelessWidget {
-  const _PrivacyNote();
+  const _PrivacyNote({required this.selfHost});
+
+  final bool selfHost;
 
   @override
   Widget build(BuildContext context) {
@@ -1029,7 +1624,9 @@ class _PrivacyNote extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'Original videos never upload. After local compression, only finished clips upload securely.',
+                  selfHost
+                      ? 'Nothing uploads to StatusDrop. Your own WhatsApp number sends the finished clips from this phone.'
+                      : 'Original videos never upload. After local compression, only finished clips upload securely.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: scheme.onSecondaryContainer,
                     height: 1.35,
@@ -1127,12 +1724,14 @@ class _SelectionMeter extends StatelessWidget {
   const _SelectionMeter({
     required this.count,
     required this.maxCount,
+    required this.unit,
     required this.bytes,
     required this.maxBytes,
   });
 
   final int count;
   final int maxCount;
+  final String unit;
   final int bytes;
   final int maxBytes;
 
@@ -1141,14 +1740,14 @@ class _SelectionMeter extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Semantics(
       label:
-          '$count of $maxCount videos selected. ${_HomeScreenState.formatSize(bytes)} of 300 megabytes used.',
+          '$count of $maxCount $unit selected. ${_HomeScreenState.formatSize(bytes)} of 300 megabytes used.',
       child: ExcludeSemantics(
         child: Column(
           children: [
             Row(
               children: [
                 Text(
-                  '$count/$maxCount videos',
+                  '$count/$maxCount $unit',
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
                 const Spacer(),
@@ -1208,7 +1807,10 @@ class _VideoTile extends StatelessWidget {
               color: scheme.primaryContainer,
               borderRadius: BorderRadius.circular(13),
             ),
-            child: Icon(Icons.movie_outlined, color: scheme.onPrimaryContainer),
+            child: Icon(
+              video.isPhoto ? Icons.image_outlined : Icons.movie_outlined,
+              color: scheme.onPrimaryContainer,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1272,7 +1874,7 @@ class _QualityOption extends StatelessWidget {
       selected: selected,
       enabled: enabled,
       label:
-          '${profile.label}. ${profile.description}. ${profile.width} by ${profile.height}.',
+          '${profile.label}. ${profile.description}. ${profile.width} by ${profile.height}.${profile.note == null ? '' : ' ${profile.note}'}',
       child: ExcludeSemantics(
         child: AnimatedOpacity(
           opacity: enabled ? 1 : 0.55,
@@ -1325,6 +1927,42 @@ class _QualityOption extends StatelessWidget {
                                         : scheme.onSurfaceVariant,
                                   ),
                             ),
+                            if (profile.note != null) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: scheme.tertiaryContainer,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.wifi_rounded,
+                                      size: 16,
+                                      color: scheme.onTertiaryContainer,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        profile.note!,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              color: scheme.onTertiaryContainer,
+                                              height: 1.3,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -1351,12 +1989,14 @@ class _ReadySummary extends StatelessWidget {
     required this.clipCount,
     required this.totalBytes,
     required this.uploading,
+    required this.selfHost,
     required this.onUpload,
   });
 
   final int clipCount;
   final int totalBytes;
   final bool uploading;
+  final bool selfHost;
   final VoidCallback? onUpload;
 
   @override
@@ -1400,7 +2040,9 @@ class _ReadySummary extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         Text(
-          'Only these finished clips upload. They remain available for five minutes after activation.',
+          selfHost
+              ? 'Your own WhatsApp number sends these clips from this phone. Nothing uploads to StatusDrop.'
+              : 'Only these finished clips upload. They remain available for five minutes after activation.',
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
@@ -1413,8 +2055,12 @@ class _ReadySummary extends StatelessWidget {
                   dimension: 20,
                   child: CircularProgressIndicator(strokeWidth: 2.5),
                 )
-              : const Icon(Icons.lock_outline),
-          label: Text(uploading ? 'Uploading securely' : 'Retry secure upload'),
+              : Icon(selfHost ? Icons.send_outlined : Icons.lock_outline),
+          label: Text(
+            uploading
+                ? (selfHost ? 'Sending' : 'Uploading securely')
+                : (selfHost ? 'Retry sending' : 'Retry secure upload'),
+          ),
         ),
       ],
     );
@@ -1429,6 +2075,7 @@ class _ActivationPanel extends StatelessWidget {
     required this.onCopy,
     required this.onOpenWhatsApp,
     required this.onStartOver,
+    this.subtitle,
   });
 
   final DeliveryResult delivery;
@@ -1436,6 +2083,9 @@ class _ActivationPanel extends StatelessWidget {
   final VoidCallback onCopy;
   final VoidCallback onOpenWhatsApp;
   final VoidCallback onStartOver;
+
+  /// Replaces the default "N clips verified and ready" line (self-host).
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -1492,7 +2142,8 @@ class _ActivationPanel extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '${delivery.fileCount} ${delivery.fileCount == 1 ? 'clip' : 'clips'} verified and ready',
+                        subtitle ??
+                            '${delivery.fileCount} ${delivery.fileCount == 1 ? 'clip' : 'clips'} verified and ready',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: expired
                               ? scheme.onErrorContainer
@@ -1589,282 +2240,164 @@ class _ActivationPanel extends StatelessWidget {
   }
 }
 
-class _TutorialGuide extends StatefulWidget {
-  const _TutorialGuide();
+/// Shows the current delivery method in step 2, with a way to change it.
+class _DeliveryRow extends StatelessWidget {
+  const _DeliveryRow({
+    required this.settings,
+    required this.enabled,
+    required this.onChange,
+  });
 
-  @override
-  State<_TutorialGuide> createState() => _TutorialGuideState();
-}
-
-class _TutorialGuideState extends State<_TutorialGuide> {
-  static const _steps = <_TutorialStep>[
-    _TutorialStep(
-      asset: 'assets/tutorial/step_01.webp',
-      title: 'Activate on WhatsApp',
-      description: 'Read the activation instructions and open WhatsApp.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_02.webp',
-      title: 'Send the activation message',
-      description:
-          'Send the prefilled message containing your activation code.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_03.webp',
-      title: 'Read the reply and download',
-      description: 'Wait for all clips, then download each video to the phone.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_04.webp',
-      title: 'Open a chat and Gallery',
-      description: 'Open any chat, tap attach, and choose Gallery.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_05.webp',
-      title: 'Select the downloaded video',
-      description: 'Choose the new StatusDrop clip from Gallery.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_06.webp',
-      title: 'Add a caption and send',
-      description: 'Add your caption now, then send the video into the chat.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_07.webp',
-      title: 'Forward the new video',
-      description: 'Use Forward on the newly sent copy—not the original.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_08.webp',
-      title: 'Choose My Status',
-      description: 'Select My Status and continue to the Status screen.',
-    ),
-    _TutorialStep(
-      asset: 'assets/tutorial/step_09.webp',
-      title: 'Post in full HD',
-      description: 'Review the final Status and post your HD video.',
-    ),
-  ];
-
-  late final PageController _controller;
-  int _currentIndex = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = PageController(viewportFraction: 0.92);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _moveTo(int index) async {
-    if (index < 0 || index >= _steps.length || !_controller.hasClients) return;
-    await _controller.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
-  Future<void> _openStep(int index) => Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => _TutorialImageViewer(
-        step: _steps[index],
-        index: index,
-        total: _steps.length,
-      ),
-    ),
-  );
+  final SelfHostSettings settings;
+  final bool enabled;
+  final VoidCallback onChange;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final current = _steps[_currentIndex];
+    final mode = settings.mode;
+    final needsLink = mode.isSelfHost && settings.linkedNumber == null;
+    final detail = !mode.isSelfHost
+        ? 'Clips upload securely; a StatusDrop number sends them.'
+        : needsLink
+        ? 'No number linked yet. Tap Change to link one.'
+        : 'Sent from +${settings.linkedNumber} on this phone.';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+      decoration: BoxDecoration(
+        color: needsLink ? scheme.errorContainer : scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: needsLink ? scheme.error : scheme.outlineVariant,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            mode.isSelfHost
+                ? Icons.phone_android_outlined
+                : Icons.cloud_outlined,
+            color: needsLink
+                ? scheme.onErrorContainer
+                : scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Delivery: ${mode.label}',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: needsLink ? scheme.onErrorContainer : null,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: needsLink
+                        ? scheme.onErrorContainer
+                        : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: enabled ? onChange : null,
+            child: const Text('Change'),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
+/// Result panel after a self-host delivery finished.
+class _SelfHostSentPanel extends StatelessWidget {
+  const _SelfHostSentPanel({
+    super.key,
+    required this.outcome,
+    required this.onOpenWhatsApp,
+    required this.onStartOver,
+  });
+
+  final _SelfHostOutcome outcome;
+  final VoidCallback onOpenWhatsApp;
+  final VoidCallback onStartOver;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final count = outcome.clipCount;
+    final clips = '$count ${count == 1 ? 'clip' : 'clips'}';
+    final number = outcome.number == null ? '' : ' +${outcome.number}';
+    final detail = outcome.ownChat
+        ? '$clips are in your "Message yourself" chat in WhatsApp$number.'
+        : 'Your bot$number sent $clips to the WhatsApp you messaged it from.';
     return Card(
+      color: scheme.primaryContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: BorderSide(color: scheme.primary, width: 1.5),
+      ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
+        padding: const EdgeInsets.all(22),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: scheme.primaryContainer,
+                    color: scheme.primary,
                     borderRadius: BorderRadius.circular(15),
                   ),
-                  child: Icon(
-                    Icons.hd_outlined,
-                    color: scheme.onPrimaryContainer,
-                  ),
+                  child: Icon(Icons.done_all, color: scheme.onPrimary),
                 ),
-                const SizedBox(width: 13),
+                const SizedBox(width: 14),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Semantics(
-                        header: true,
-                        child: Text(
-                          'Post in full HD',
-                          style: theme.textTheme.titleLarge,
-                        ),
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      'Sent to WhatsApp',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: scheme.onPrimaryContainer,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Swipe through the WhatsApp flow. Tap a poster to zoom.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 18),
-            SizedBox(
-              height: 600,
-              child: PageView.builder(
-                controller: _controller,
-                itemCount: _steps.length,
-                onPageChanged: (index) => setState(() => _currentIndex = index),
-                itemBuilder: (context, index) {
-                  final step = _steps[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    child: Semantics(
-                      button: true,
-                      label:
-                          'Step ${index + 1} of ${_steps.length}. ${step.title}. ${step.description} Tap to open full screen.',
-                      child: ExcludeSemantics(
-                        child: Material(
-                          color: scheme.surfaceContainerLow,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                            side: BorderSide(color: scheme.outlineVariant),
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: InkWell(
-                            onTap: () => _openStep(index),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(
-                                  child: Hero(
-                                    tag: 'tutorial-step-${index + 1}',
-                                    child: ColoredBox(
-                                      color: scheme.surfaceContainer,
-                                      child: Image.asset(
-                                        step.asset,
-                                        fit: BoxFit.contain,
-                                        filterQuality: FilterQuality.high,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        step.title,
-                                        style: theme.textTheme.titleMedium,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        step.description,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: theme.textTheme.bodySmall
-                                            ?.copyWith(
-                                              color: scheme.onSurfaceVariant,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
             const SizedBox(height: 14),
             Semantics(
               liveRegion: true,
-              label:
-                  'Step ${_currentIndex + 1} of ${_steps.length}: ${current.title}',
-              child: ExcludeSemantics(
-                child: Row(
-                  children: [
-                    IconButton.filledTonal(
-                      onPressed: _currentIndex > 0
-                          ? () => _moveTo(_currentIndex - 1)
-                          : null,
-                      tooltip: 'Previous tutorial step',
-                      icon: const Icon(Icons.chevron_left),
-                    ),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          Text(
-                            'Step ${_currentIndex + 1} of ${_steps.length}',
-                            style: theme.textTheme.labelLarge,
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              for (
-                                var index = 0;
-                                index < _steps.length;
-                                index++
-                              )
-                                AnimatedContainer(
-                                  duration: const Duration(milliseconds: 180),
-                                  width: index == _currentIndex ? 18 : 7,
-                                  height: 7,
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: index == _currentIndex
-                                        ? scheme.primary
-                                        : scheme.outlineVariant,
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton.filledTonal(
-                      onPressed: _currentIndex < _steps.length - 1
-                          ? () => _moveTo(_currentIndex + 1)
-                          : null,
-                      tooltip: 'Next tutorial step',
-                      icon: const Icon(Icons.chevron_right),
-                    ),
-                  ],
+              child: Text(
+                detail,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: scheme.onPrimaryContainer,
                 ),
               ),
+            ),
+            const SizedBox(height: 14),
+            const _SaveThenShareNote(),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: outcome.number == null ? null : onOpenWhatsApp,
+              icon: const Icon(Icons.chat_outlined),
+              label: const Text('Open WhatsApp'),
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: onStartOver,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Start over and clear local files'),
             ),
           ],
         ),
@@ -1873,94 +2406,95 @@ class _TutorialGuideState extends State<_TutorialGuide> {
   }
 }
 
-class _TutorialImageViewer extends StatelessWidget {
-  const _TutorialImageViewer({
-    required this.step,
-    required this.index,
-    required this.total,
-  });
+/// Clips that arrive in a chat must be saved and sent again before they go
+/// to Status. Forwarding the received copy makes WhatsApp compress it again.
+class _SaveThenShareNote extends StatelessWidget {
+  const _SaveThenShareNote();
 
-  final _TutorialStep step;
-  final int index;
-  final int total;
+  static const _steps = [
+    'Open each clip and tap Download.',
+    'In any chat, attach it from Gallery, add your caption and send.',
+    'Forward that new copy to My Status.',
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: Text('Step ${index + 1} of $total')),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Semantics(
-                    header: true,
-                    child: Text(
-                      step.title,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${step.description} Pinch to zoom and drag to inspect details.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Semantics(
-                image: true,
-                label:
-                    'Tutorial step ${index + 1} of $total. ${step.title}. ${step.description}',
-                child: InteractiveViewer(
-                  minScale: 1,
-                  maxScale: 5,
-                  boundaryMargin: const EdgeInsets.all(48),
-                  child: Center(
-                    child: Hero(
-                      tag: 'tutorial-step-${index + 1}',
-                      child: Image.asset(
-                        step.asset,
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.high,
-                      ),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final body = theme.textTheme.bodyMedium?.copyWith(
+      color: scheme.onSurface,
+      height: 1.35,
+    );
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.tertiary, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.save_alt_rounded, color: scheme.tertiary, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'Save it first, then share',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: scheme.onSurface,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Don\'t forward the copy in that chat straight to Status. WhatsApp compresses it again. For full HD:',
+            style: body,
+          ),
+          const SizedBox(height: 8),
+          for (var index = 0; index < _steps.length; index++)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 22,
+                    child: Text(
+                      '${index + 1}.',
+                      style: body?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Expanded(child: Text(_steps[index], style: body)),
+                ],
+              ),
             ),
-          ],
-        ),
+          const SizedBox(height: 8),
+          Text(
+            'The guide below shows each step.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _TutorialStep {
-  const _TutorialStep({
-    required this.asset,
-    required this.title,
-    required this.description,
-  });
-
-  final String asset;
-  final String title;
-  final String description;
-}
-
-enum _AppMenuAction { about }
+enum _AppMenuAction { delivery, rate, about }
 
 class _AboutSheet extends StatelessWidget {
   const _AboutSheet({required this.onOpenLink});
 
+  static final _discordUri = Uri.parse('https://discord.gg/aT4TNMQEK8');
   static final _instagramUri = Uri.parse('https://ig.me/m/xd.sapphire');
   static final _emailUri = Uri.parse('mailto:shamanthnadumane@gmail.com');
   static final _privacyUri = Uri.parse(
@@ -2005,7 +2539,7 @@ class _AboutSheet extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Version 1.0.0 · Open-source Android client',
+                    '${Edition.current.hasSelfHost ? 'MAX version' : 'Version'} $appVersionName · Open-source Android client',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),
@@ -2048,6 +2582,15 @@ class _AboutSheet extends StatelessWidget {
         Semantics(
           header: true,
           child: Text('Contact & support', style: theme.textTheme.titleLarge),
+        ),
+        const SizedBox(height: 10),
+        _SupportLinkTile(
+          icon: Icons.forum_outlined,
+          title: 'Discord community',
+          subtitle: 'Get help, report bugs and hear about new versions',
+          semanticLabel:
+              'Join the StatusDrop Discord community. Opens an external app.',
+          onTap: () => unawaited(onOpenLink(_discordUri)),
         ),
         const SizedBox(height: 10),
         _SupportLinkTile(
@@ -2108,7 +2651,9 @@ class _AboutSheet extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(
-          'StatusDrop does not ask you to enter a phone number. Delivery begins only after you open WhatsApp and send the activation message.',
+          Edition.current.hasSelfHost
+              ? 'With the StatusDrop number, StatusDrop does not ask you to enter a phone number. Delivery begins only after you open WhatsApp and send the activation message. The self-host methods ask for the number you link, and that login stays only on this phone.'
+              : 'StatusDrop does not ask you to enter a phone number. Delivery begins only after you open WhatsApp and send the activation message.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: scheme.onSurfaceVariant,
           ),
