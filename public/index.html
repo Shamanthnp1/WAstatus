@@ -686,7 +686,7 @@
   </dialog>
   <script>
     (function () {
-      var MAINTENANCE_MODE = true; // set to false to hide the maintenance popup
+      var MAINTENANCE_MODE = false; // set to true to show the maintenance popup
       if (!MAINTENANCE_MODE) return;
       // Closing it hides it for this tab session; it shows again on the next visit.
       var KEY = 'sdMaintDismissed';
