@@ -1127,6 +1127,11 @@ const HD_STEPS =
   '4. Post — done!\n\n' +
   '⚠️ *Important:* Steps 1–2 are what keep it in full HD — forwarding the original directly makes WhatsApp re-compress it. And do NOT edit or trim the video.';
 
+// Shown above the HD steps, where the eye lands first. Points to Discord, not
+// straight to an APK: these replies are part of the Google Play app's flow.
+const MAX_PROMO_LINE =
+  '⭐ *Download StatusDrop MAX for uninterrupted access* — get it from our Discord: https://discord.gg/aT4TNMQEK8';
+
 function buildVerifiedMessage(count) {
   const multi = count > 1;
   const openers = [
@@ -1145,6 +1150,7 @@ function buildVerifiedMessage(count) {
     pick(openers) + '\n\n' +
     `Sending ${count} video${multi ? 's' : ''} now...\n\n` +
     (multi ? `📱 Your video was split into ${count} parts for WhatsApp Status!\n\n` : '') +
+    MAX_PROMO_LINE + '\n\n' +
     HD_STEPS + '\n\n' +
     pick(closers)
   );

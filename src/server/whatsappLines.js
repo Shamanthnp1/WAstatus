@@ -12,7 +12,13 @@ const path = require('path');
  *
  *   line1: WHATSAPP_BUSINESS_NUMBER    BAILEYS_AUTH_DIR    (default 'baileys_auth')  RESET_BAILEYS
  *   line2: WHATSAPP_BUSINESS_NUMBER_2  BAILEYS_AUTH_DIR_2  (default '<line1 dir>_2') RESET_BAILEYS_2
+ *   line3: WHATSAPP_BUSINESS_NUMBER_3  BAILEYS_AUTH_DIR_3  (default '<line1 dir>_3') RESET_BAILEYS_3
+ *
+ * Lines 2 and 3 are optional; each is used only when its number is set.
  */
+
+/** Highest line number read from the environment. */
+const MAX_LINES = 3;
 
 function digitsOnly(value) {
   return String(value || '').replace(/\D/g, '');
@@ -34,21 +40,26 @@ function parseLineConfigs(env = process.env, logger = console) {
     reset: env.RESET_BAILEYS === 'true',
   }];
 
-  const number2 = digitsOnly(env.WHATSAPP_BUSINESS_NUMBER_2);
-  if (number2) {
-    const authDir2 = env.BAILEYS_AUTH_DIR_2 || `${authDir1.replace(/[\\/]+$/, '')}_2`;
-    if (number2 === lines[0].number) {
-      logger.error('!!! WHATSAPP_BUSINESS_NUMBER_2 is the same number as WHATSAPP_BUSINESS_NUMBER. Ignoring the second line.');
-    } else if (path.resolve(authDir2) === path.resolve(authDir1)) {
-      logger.error('!!! BAILEYS_AUTH_DIR_2 points at the same folder as BAILEYS_AUTH_DIR. Ignoring the second line.');
+  for (let n = 2; n <= MAX_LINES; n++) {
+    const numberEnv = `WHATSAPP_BUSINESS_NUMBER_${n}`;
+    const authEnv = `BAILEYS_AUTH_DIR_${n}`;
+    const number = digitsOnly(env[numberEnv]);
+    if (!number) continue;
+    const authDir = env[authEnv] || `${authDir1.replace(/[\\/]+$/, '')}_${n}`;
+    const sameNumber = lines.find((line) => line.number === number);
+    const sameFolder = lines.find((line) => path.resolve(line.authDir) === path.resolve(authDir));
+    if (sameNumber) {
+      logger.error(`!!! ${numberEnv} is the same number as ${sameNumber.numberEnv}. Ignoring line ${n}.`);
+    } else if (sameFolder) {
+      logger.error(`!!! ${authEnv} points at the same folder as ${sameFolder.id}. Ignoring line ${n}.`);
     } else {
       lines.push({
-        id: 'line2',
-        number: number2,
-        numberEnv: 'WHATSAPP_BUSINESS_NUMBER_2',
-        authDir: authDir2,
-        resetEnv: 'RESET_BAILEYS_2',
-        reset: env.RESET_BAILEYS_2 === 'true',
+        id: `line${n}`,
+        number,
+        numberEnv,
+        authDir,
+        resetEnv: `RESET_BAILEYS_${n}`,
+        reset: env[`RESET_BAILEYS_${n}`] === 'true',
       });
     }
   }

@@ -81,7 +81,7 @@ Backend (Node.js / Express in Docker on Azure App Service) ──► Cloudflare 
   returns a 9-character activation code and a WhatsApp link
         │  you send the code from WhatsApp
         ▼
-WhatsApp linked devices (Baileys, one or two numbers)
+WhatsApp linked devices (Baileys, up to three numbers in rotation)
   send the clips back to that same chat, then delete them from R2
 ```
 

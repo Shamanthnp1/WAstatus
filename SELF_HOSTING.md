@@ -45,6 +45,8 @@ Put the settings below in a `.env` file or in your host's app settings. Never co
 | `WHATSAPP_BUSINESS_NUMBER_2` | Optional second number. New activation codes are spread across connected numbers |
 | `BAILEYS_AUTH_DIR_2` | Login folder for the second number; defaults to `<BAILEYS_AUTH_DIR>_2`. Must also survive restarts |
 | `RESET_BAILEYS_2` | Same as `RESET_BAILEYS`, for the second number |
+| `WHATSAPP_BUSINESS_NUMBER_3`, `BAILEYS_AUTH_DIR_3`, `RESET_BAILEYS_3` | Optional third number, same as the second (login folder defaults to `<BAILEYS_AUTH_DIR>_3`). New activation codes rotate across all connected numbers |
+| `WA_START_DELAY_MS` | How long a new server waits before connecting WhatsApp, so the old container can hang up first during a restart; default `90000` |
 | `WHATSAPP_ENABLED` | Set to `false` to stop this server connecting any number while it keeps serving HTTP (for example during a server move). App uploads answer `503` meanwhile |
 | `HUMANIZE_SENDS` | Set to `false` to turn off typing/recording presence and pauses before sends |
 
