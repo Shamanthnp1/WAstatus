@@ -3,6 +3,7 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
@@ -53,6 +54,7 @@ const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
 const { registerWebRetirement } = require('./src/server/webRetirement');
 const { downloadToFile } = require('./src/server/mediaDownload');
 const { parseLineConfigs, pickDeliveryLine, isUnfinishedPairing, clearAuthDir, reconnectPlan } = require('./src/server/whatsappLines');
+const { acquireLease } = require('./src/server/waLease');
 require('dotenv').config();
 
 // ========================
@@ -706,6 +708,12 @@ const WA_LINES = parseLineConfigs(process.env).map((config) => ({
 // The old one must hang up and stay down, or the two fight over the same
 // WhatsApp login (code 440), which is what put both numbers into 403.
 let shuttingDown = false;
+// Handover lease on storage shared by old and new containers (/home on Azure),
+// next to the login folders. Held while this process owns the WhatsApp lines.
+const WA_LEASE_FILE = process.env.WA_LEASE_FILE
+  || path.join(path.dirname(path.resolve(WA_LINES[0].authDir)), '.statusdrop-wa-lease.json');
+const WA_LEASE_OWNER = `${os.hostname()}/${process.pid}/${new Date().toISOString()}`;
+let waLease = null;
 let lineAssignSeq = 0;
 
 // Kill switch for moving the server: WHATSAPP_ENABLED=false keeps this process
@@ -806,6 +814,29 @@ async function resolveWaVersion() {
   return undefined; // let makeWASocket use its bundled default
 }
 
+// WhatsApp's own reason for closing a connection, for the log: the error text
+// (for example "Stream Errored (conflict)") and the reason node's tag and
+// attributes. Never includes keys, message content or phone numbers.
+function closeReason(lastDisconnect) {
+  const error = lastDisconnect?.error;
+  if (!error) return '';
+  const parts = [];
+  if (error.message) parts.push(String(error.message).slice(0, 120));
+  const data = error.data;
+  if (data && typeof data === 'object') {
+    const tag = typeof data.tag === 'string' ? data.tag : '';
+    const attrs = data.attrs && typeof data.attrs === 'object' ? data.attrs : (!tag ? data : null);
+    const safe = attrs
+      ? Object.entries(attrs)
+        .filter(([key, value]) => ['string', 'number'].includes(typeof value) && !/jid|id$|key|token/i.test(key))
+        .map(([key, value]) => `${key}=${String(value).slice(0, 40)}`)
+      : [];
+    const detail = [tag, ...safe].filter(Boolean).join(' ');
+    if (detail) parts.push(detail.slice(0, 160));
+  }
+  return parts.length ? `: ${parts.join(' | ')}` : '';
+}
+
 async function startBaileys(line) {
   if (line.reconnecting || line.stopped || shuttingDown) return;
   line.reconnecting = true;
@@ -879,7 +910,7 @@ async function startBaileys(line) {
           attempt: line.reconnectAttempts + 1,
           shuttingDown,
         });
-        console.log(`${tag} Baileys closed (code ${code}). Reconnect: ${plan.reconnect}`);
+        console.log(`${tag} Baileys closed (code ${code}${closeReason(lastDisconnect)}). Reconnect: ${plan.reconnect}`);
         if (plan.reconnect) {
           line.reconnectAttempts += 1;
           // Not linked yet: reconnecting fast spits out a brand-new pairing
@@ -2129,20 +2160,35 @@ Local: http://localhost:${PORT}
     console.warn('!!! WHATSAPP_ENABLED=false — not connecting any WhatsApp line. Mobile uploads answer 503 until it is re-enabled.');
   } else {
     // During a restart or deploy, Azure keeps the old container running until
-    // this one passes its warm-up probe, then gives the old one SIGTERM and a
-    // 5-second grace period. On 9 Nov 2026 that came 46 s after this log line.
-    // Wait before logging in so the old container has hung up; two connections
-    // with one login get both kicked (440) and then refused (403). Mobile
-    // uploads answer 503 meanwhile.
-    const startDelayMs = Math.max(0, Number(process.env.WA_START_DELAY_MS ?? 90000) || 0);
-    if (startDelayMs) {
-      console.log(`Connecting WhatsApp lines in ${Math.round(startDelayMs / 1000)}s (WA_START_DELAY_MS), so a previous container can hang up first.`);
-    }
-    setTimeout(async () => {
+    // this one passes its warm-up probe, then sends the old one SIGTERM. Two
+    // connections with one login get both kicked (440) and then refused (403),
+    // so connect only once no other container holds the lines: right away on a
+    // cold start, or about a second after the old container hangs up. See
+    // src/server/waLease.js. WA_START_DELAY_MS adds an optional extra wait.
+    const extraDelayMs = Math.max(0, Number(process.env.WA_START_DELAY_MS ?? 0) || 0);
+    (async () => {
+      if (extraDelayMs) {
+        console.log(`Waiting an extra ${Math.round(extraDelayMs / 1000)}s before connecting WhatsApp (WA_START_DELAY_MS).`);
+        await new Promise((resolve) => setTimeout(resolve, extraDelayMs));
+      }
+      waLease = await acquireLease({
+        file: WA_LEASE_FILE,
+        owner: WA_LEASE_OWNER,
+        log: (message) => console.log(message),
+        cancelled: () => shuttingDown,
+        onLost: (other) => {
+          console.error(`!!! Another container (${other}) took the WhatsApp lines; hanging up so two containers never share a login.`);
+          for (const line of WA_LINES) {
+            line.stopped = 'another container took over the WhatsApp lines';
+            try { line.sock?.end?.(undefined); } catch (e) { /* already closed */ }
+          }
+        },
+      });
+      if (!waLease) return; // shutting down before we got the lines
       for (const line of WA_LINES) {
         await startBaileys(line).catch(err => console.error(`${lineTag(line)} Baileys startup failed:`, err));
       }
-    }, startDelayMs);
+    })().catch((err) => console.error('WhatsApp startup failed:', err));
   }
 
   // Startup_Sweep: reclaim disk by deleting orphan temp files in uploads/,
@@ -2184,7 +2230,13 @@ function shutdown(signal) {
     } catch (e) { /* already closed */ }
   }
   server.close();
-  // Give the sockets a moment to close, then exit even if uploads are open.
+  // Release the WhatsApp lease once the sockets have had a moment to close, so
+  // the new container connects about a second later. Azure allows 5 s.
+  setTimeout(() => {
+    waLease?.stop();
+    console.log('WhatsApp lease released.');
+  }, 1000).unref();
+  // Exit even if uploads are still open.
   setTimeout(() => process.exit(0), 3000).unref();
 }
 process.once('SIGTERM', () => shutdown('SIGTERM'));

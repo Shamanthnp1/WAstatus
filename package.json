@@ -24,7 +24,7 @@
     "@fontsource/roboto": "^5.2.10",
     "@hapi/boom": "^10.0.1",
     "@napi-rs/canvas": "^1.0.0",
-    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "axios": "^1.13.6",
     "bootstrap-icons": "^1.13.1",
     "compression": "^1.8.1",

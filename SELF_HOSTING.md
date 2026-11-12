@@ -46,7 +46,8 @@ Put the settings below in a `.env` file or in your host's app settings. Never co
 | `BAILEYS_AUTH_DIR_2` | Login folder for the second number; defaults to `<BAILEYS_AUTH_DIR>_2`. Must also survive restarts |
 | `RESET_BAILEYS_2` | Same as `RESET_BAILEYS`, for the second number |
 | `WHATSAPP_BUSINESS_NUMBER_3`, `BAILEYS_AUTH_DIR_3`, `RESET_BAILEYS_3` | Optional third number, same as the second (login folder defaults to `<BAILEYS_AUTH_DIR>_3`). New activation codes rotate across all connected numbers |
-| `WA_START_DELAY_MS` | How long a new server waits before connecting WhatsApp, so the old container can hang up first during a restart; default `90000` |
+| `WA_LEASE_FILE` | Handover lease that stops two containers connecting the same WhatsApp login during a restart. Defaults to `.statusdrop-wa-lease.json` next to the first login folder (`/home` on Azure, shared by old and new containers). A new server connects as soon as the old one releases it on shutdown, or 20 s after the old one stops refreshing it |
+| `WA_START_DELAY_MS` | Optional extra wait before trying to take the lease; default `0` |
 | `WHATSAPP_ENABLED` | Set to `false` to stop this server connecting any number while it keeps serving HTTP (for example during a server move). App uploads answer `503` meanwhile |
 | `HUMANIZE_SENDS` | Set to `false` to turn off typing/recording presence and pauses before sends |
 

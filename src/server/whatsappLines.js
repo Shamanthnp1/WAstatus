@@ -92,7 +92,10 @@ const STOP_CODES = Object.freeze({
   // Two connections with one login: usually the old and new server
   // containers overlapping during a restart. Fighting back gets numbers banned.
   440: 'another connection is using this login',
-  500: 'the saved session is broken',
+  // Not 500: Baileys reports 500 ("badSession") for any stream error whose
+  // reason it doesn't recognise. On 10 Nov 2026 a healthy line got one, and
+  // treating it as permanent kept the line down for 19 hours. It is retried
+  // like other drops, with the same backoff and give-up limit.
 });
 
 /** Transient drops (timeouts, WhatsApp restarts) give up after this many tries in a row. */
