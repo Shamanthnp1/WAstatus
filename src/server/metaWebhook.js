@@ -13,9 +13,9 @@ const crypto = require('crypto');
  * This module holds only the pure decision logic so it can be unit-tested; the
  * Express wiring lives in server.js.
  *
- * IMPORTANT: the webhook is RECEIVE-ONLY. Message delivery continues to run
- * through Baileys, which is what preserves HD quality. Nothing here triggers a
- * send, so an attacker posting junk to the endpoint cannot cause a delivery.
+ * When the WhatsApp Cloud API line is on (src/server/cloudApi.js), a signed
+ * webhook message can trigger a delivery, so that line refuses to start
+ * without META_APP_SECRET. Without it, POSTs are only logged.
  */
 
 /**

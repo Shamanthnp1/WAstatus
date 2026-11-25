@@ -150,11 +150,23 @@ function clearAuthDir(dir, { keep = [], fsImpl = require('fs') } = {}) {
 }
 
 /**
+ * Can this line deliver right now? A Baileys line needs its socket; a Cloud
+ * API line (kind 'cloud', see cloudApi.js) has none and is ready once its
+ * access token has been checked.
+ *
+ * @param {{connected?: boolean, sock?: object|null, kind?: string}} line
+ */
+function isLineReady(line) {
+  if (!line || !line.connected) return false;
+  return line.kind === 'cloud' || !!line.sock;
+}
+
+/**
  * Choose the line a new activation code should point at: a connected line
  * with the fewest open deliveries. Ties go to the line assigned least
  * recently (`lastAssignedAt`, a counter), so an idle pair alternates.
  *
- * @param {Array<{connected: boolean, sock?: object|null, lastAssignedAt: number}>} lines
+ * @param {Array<{connected: boolean, sock?: object|null, kind?: string, lastAssignedAt: number}>} lines
  * @param {(line: object) => number} activeCountFor open deliveries on a line
  * @returns {object|null} the chosen line, or null when none is connected
  */
@@ -162,7 +174,7 @@ function pickDeliveryLine(lines, activeCountFor) {
   let best = null;
   let bestActive = Infinity;
   for (const line of lines) {
-    if (!line.connected || !line.sock) continue;
+    if (!isLineReady(line)) continue;
     const active = activeCountFor(line);
     if (active < bestActive || (active === bestActive && line.lastAssignedAt < best.lastAssignedAt)) {
       best = line;
@@ -177,6 +189,7 @@ module.exports = {
   MAX_RECONNECT_ATTEMPTS,
   reconnectPlan,
   parseLineConfigs,
+  isLineReady,
   pickDeliveryLine,
   isUnfinishedPairing,
   clearAuthDir,

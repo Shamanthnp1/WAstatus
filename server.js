@@ -53,7 +53,15 @@ const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
 const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
 const { registerWebRetirement } = require('./src/server/webRetirement');
 const { downloadToFile } = require('./src/server/mediaDownload');
-const { parseLineConfigs, pickDeliveryLine, isUnfinishedPairing, clearAuthDir, reconnectPlan } = require('./src/server/whatsappLines');
+const { parseLineConfigs, isLineReady, pickDeliveryLine, isUnfinishedPairing, clearAuthDir, reconnectPlan } = require('./src/server/whatsappLines');
+const {
+  CLOUD_VIDEO_MAX_BYTES,
+  CLOUD_DOCUMENT_MAX_BYTES,
+  parseCloudConfig,
+  createCloudClient,
+  extractInboundMessages,
+  extractFailedStatuses,
+} = require('./src/server/cloudApi');
 const { acquireLease } = require('./src/server/waLease');
 require('dotenv').config();
 
@@ -704,6 +712,42 @@ const WA_LINES = parseLineConfigs(process.env).map((config) => ({
   openedAt: 0,          // when the current connection opened (0 while down)
   lastAssignedAt: 0,    // order of the last activation code pointed at this line
 }));
+
+// WhatsApp Cloud API line (Meta's official API), next to the Baileys lines.
+// Users reach it through the same wa.me link; their message arrives at
+// POST /webhook and the clips go out through the Graph API. See
+// src/server/cloudApi.js. A number on the Cloud API can't also be in a
+// WhatsApp app, so a Baileys line with the same number is never started.
+const CLOUD_CONFIG = parseCloudConfig(process.env);
+const CLOUD_LINE = CLOUD_CONFIG.enabled ? {
+  id: 'cloud',
+  kind: 'cloud',
+  number: CLOUD_CONFIG.number,
+  phoneNumberId: CLOUD_CONFIG.phoneNumberId,
+  client: createCloudClient({
+    token: CLOUD_CONFIG.token,
+    phoneNumberId: CLOUD_CONFIG.phoneNumberId,
+    graphVersion: CLOUD_CONFIG.graphVersion,
+  }),
+  connected: false,  // true once the token and number check out (checkCloudLine)
+  stopped: null,     // set when the settings point at the wrong number
+  lastAssignedAt: 0,
+} : null;
+if (CLOUD_LINE) {
+  for (const line of WA_LINES) {
+    if (line.number && line.number === CLOUD_LINE.number) {
+      line.replacedByCloud = true;
+      line.stopped = 'this number now runs on the WhatsApp Cloud API';
+    }
+  }
+}
+// Every line that can take a delivery: the Cloud API line, then the Baileys
+// lines that still run. Baileys-only work (connecting, the lease, shutdown)
+// keeps using WA_LINES.
+const DELIVERY_LINES = [
+  ...(CLOUD_LINE ? [CLOUD_LINE] : []),
+  ...WA_LINES.filter((line) => !line.replacedByCloud),
+];
 // Set on SIGTERM: Azure starts the new container before it stops the old one.
 // The old one must hang up and stay down, or the two fight over the same
 // WhatsApp login (code 440), which is what put both numbers into 403.
@@ -727,7 +771,13 @@ const WHATSAPP_ENABLED = process.env.WHATSAPP_ENABLED !== 'false';
 function lineTag(line) { return `[WA ${line.id}]`; }
 
 // Public status for /api/health. Never includes the phone number.
+// WHATSAPP_ENABLED switches off Baileys only: the Cloud API line shares no
+// login between servers, so it has no reason to stop during a move.
 function lineStatus(line) {
+  if (line.kind === 'cloud') {
+    if (line.connected) return 'connected';
+    return line.stopped ? 'stopped' : 'disconnected';
+  }
   if (!WHATSAPP_ENABLED) return 'disabled';
   if (line.connected && line.sock) return 'connected';
   if (line.stopped) return 'stopped';
@@ -737,7 +787,7 @@ function lineStatus(line) {
 // True while at least one line can deliver. The mobile routes refuse new
 // uploads with 503 otherwise.
 function isWhatsAppDeliveryAvailable() {
-  return WA_LINES.some((line) => line.connected && line.sock);
+  return DELIVERY_LINES.some(isLineReady);
 }
 
 // Open (not yet delivered) activation codes pointed at this line.
@@ -1103,7 +1153,7 @@ function createDeliverySession(files, caption = '', preferredCode = null, assetK
   // none is connected, fall back to the first configured number (the old
   // single-number behaviour); the mobile routes check
   // isWhatsAppDeliveryAvailable() first and answer 503 instead.
-  const line = pickDeliveryLine(WA_LINES, activeDeliveriesOn) || WA_LINES.find((candidate) => candidate.number);
+  const line = pickDeliveryLine(DELIVERY_LINES, activeDeliveriesOn) || DELIVERY_LINES.find((candidate) => candidate.number);
   if (!line) {
     throw new Error('WhatsApp delivery number is not configured.');
   }
@@ -1193,7 +1243,98 @@ const WELCOME_MESSAGES = [
   'Hi! 👋 StatusDrop makes HD WhatsApp statuses with its Android app — get it at https://wastatusvideo.com 🌐',
 ];
 
+// ---- Cloud API sends (CLOUD_LINE) ----
+// Meta does not promise that back-to-back messages arrive in order, so each
+// send waits a moment before the next one starts.
+const CLOUD_SEND_GAP_MS = 1200;
+const CLOUD_DOCUMENT_NOTE =
+  '📁 This HD clip is over 16 MB, so it came as a file. Open it, save it to your gallery, then post it to Status.';
+
+// Runs one Graph API call. A rejected access token takes the line offline at
+// once, so new uploads get "try again later" instead of a code nobody answers.
+async function cloudCall(line, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err.isTokenError && line.connected) {
+      line.connected = false;
+      console.error(`!!! ${lineTag(line)} Access token rejected: create a new one and update WHATSAPP_CLOUD_TOKEN (${err.message})`);
+    }
+    throw err;
+  }
+}
+
+// The line counts as connected once Meta accepts the token and confirms the
+// Phone number ID really is WHATSAPP_CLOUD_NUMBER. Rechecked every 10 minutes,
+// so an expired token turns into "try again later" for new uploads.
+const CLOUD_CHECK_INTERVAL_MS = 10 * 60 * 1000;
+async function checkCloudLine() {
+  const line = CLOUD_LINE;
+  if (!line || line.stopped || shuttingDown) return;
+  const tag = lineTag(line);
+  try {
+    const info = await line.client.getNumber();
+    const shown = String(info.display_phone_number || '').replace(/\D/g, '');
+    if (shown && shown !== line.number) {
+      line.connected = false;
+      line.stopped = 'WHATSAPP_CLOUD_PHONE_NUMBER_ID belongs to a different number than WHATSAPP_CLOUD_NUMBER';
+      console.error(`!!! ${tag} Stopped: ${line.stopped}. Fix the settings, then restart.`);
+      return;
+    }
+    if (!line.connected) {
+      console.log(`${tag} ✓ WhatsApp Cloud API ready for +${line.number} (quality ${info.quality_rating || 'unknown'}, name ${info.name_status || 'unknown'})`);
+    }
+    line.connected = true;
+  } catch (err) {
+    if (line.connected || !line.lastCheckFailed) {
+      console.error(`!!! ${tag} Cloud API check failed${err.isTokenError ? ' (access token rejected: update WHATSAPP_CLOUD_TOKEN)' : ''}: ${err.message}`);
+    }
+    line.connected = false;
+    line.lastCheckFailed = true;
+    return;
+  }
+  line.lastCheckFailed = false;
+}
+
+async function sendCloudText(line, to, message) {
+  await cloudCall(line, () => line.client.sendText(to, message));
+  await new Promise((resolve) => setTimeout(resolve, CLOUD_SEND_GAP_MS));
+}
+
+// Same file as Baileys sends, uploaded to Meta first (tested to keep full
+// quality on Status). Clips over 16 MB, like the app's 90-second 1080p ones,
+// can only go as a document.
+async function sendCloudVideo(line, to, videoUrl, caption, { index = 0, total = 1 } = {}) {
+  const tmpPath = path.resolve('compressed', `wa_send_${uuidv4()}.mp4`);
+  await fs.promises.mkdir(path.dirname(tmpPath), { recursive: true });
+  try {
+    await downloadToFile(videoUrl, tmpPath, {
+      timeoutMs: WA_DOWNLOAD_TIMEOUT_MS,
+      label: 'R2 clip download',
+    });
+    const { size } = await fs.promises.stat(tmpPath);
+    if (size > CLOUD_DOCUMENT_MAX_BYTES) {
+      throw new Error(`Clip is ${(size / 1e6).toFixed(1)} MB, over the Cloud API's 100 MB limit`);
+    }
+    const asDocument = size > CLOUD_VIDEO_MAX_BYTES;
+    const fileName = total > 1 ? `StatusDrop-part-${index + 1}.mp4` : 'StatusDrop.mp4';
+    // A file-backed Blob streams from disk, so a 60 MB clip never sits in memory.
+    const blob = await fs.openAsBlob(tmpPath, { type: 'video/mp4' });
+    const mediaId = await cloudCall(line, () => line.client.uploadMedia(blob, fileName));
+    if (asDocument) {
+      await cloudCall(line, () => line.client.sendDocument(to, mediaId, fileName, caption || CLOUD_DOCUMENT_NOTE));
+    } else {
+      await cloudCall(line, () => line.client.sendVideo(to, mediaId, caption));
+    }
+    console.log(`${lineTag(line)} Video sent via Cloud API ✓ (${(size / 1e6).toFixed(1)} MB as ${asDocument ? 'document' : 'video'})`);
+  } finally {
+    await fs.promises.unlink(tmpPath).catch(() => { });
+  }
+  await new Promise((resolve) => setTimeout(resolve, CLOUD_SEND_GAP_MS));
+}
+
 async function sendWhatsAppMessage(line, to, message) {
+  if (line.kind === 'cloud') return sendCloudText(line, to, message);
   if (!line.sock || !line.connected) throw new Error(`Baileys ${line.id} not connected`);
   const jid = toJid(to);
   await humanPause(line, jid, 'text');
@@ -1229,7 +1370,8 @@ async function probeVideoMeta(filePath) {
   }
 }
 
-async function sendWhatsAppVideo(line, to, videoUrl, caption) {
+async function sendWhatsAppVideo(line, to, videoUrl, caption, part = {}) {
+  if (line.kind === 'cloud') return sendCloudVideo(line, to, videoUrl, caption, part);
   if (!line.sock || !line.connected) throw new Error(`Baileys ${line.id} not connected`);
   const jid = toJid(to);
 
@@ -1405,7 +1547,7 @@ async function handleIncomingMessage(line, from, text) {
       }
       // All other parts (i > 0) — no caption at all (empty string)
 
-      await sendWhatsAppVideo(line, from, file.url, videoCaption);
+      await sendWhatsAppVideo(line, from, file.url, videoCaption, { index: i, total: session.files.length });
       if (session.deliveryTimedOut) throw new Error('Delivery watchdog elapsed.');
 
       console.log(`✓ Video ${i + 1}/${session.files.length} sent (${((Date.now() - videoSendStart) / 1000).toFixed(2)}s)`);
@@ -1515,7 +1657,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: '✓ Server Running!',
     baileys: isWhatsAppDeliveryAvailable() ? 'connected' : 'disconnected',
-    whatsappLines: WA_LINES.map((line) => ({ line: line.id, status: lineStatus(line) })),
+    whatsappLines: DELIVERY_LINES.map((line) => ({ line: line.id, status: lineStatus(line) })),
     ffmpegOnPath: ffmpegOnPath(),
     fpsCap: FPS_CAP,
   });
@@ -1526,19 +1668,53 @@ app.get('/privacy', (req, res) => {
 });
 
 // ========================
-// META WEBHOOK (WhatsApp Cloud API / coexistence)
+// META WEBHOOK (WhatsApp Cloud API)
 // ========================
-// Required by Meta's "Configure Webhooks" production-setup step. Two behaviours:
 //   GET  /webhook -> echo hub.challenge when hub.verify_token matches ours.
 //   POST /webhook -> accept events and answer 200 fast, or Meta retries.
 //
-// This endpoint is RECEIVE-ONLY and has NO side effects: it does not send
-// messages, touch sessions, or trigger delivery. Message delivery stays on
-// Baileys, which is what preserves HD quality. It is intentionally public
-// (Meta must reach it unauthenticated), so it is protected by the verify token
-// on GET and, when META_APP_SECRET is set, an HMAC signature check on POST.
+// With the Cloud API line on (CLOUD_LINE), a user's message to that number
+// arrives here and can trigger a delivery, exactly like a Baileys message.
+// The line only runs with META_APP_SECRET set, so every POST that reaches
+// handleIncomingMessage carries a valid X-Hub-Signature-256. Without the Cloud
+// API line, POSTs are only logged.
 const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || '';
 const META_APP_SECRET = process.env.META_APP_SECRET || '';
+
+// Message types that can carry an activation code. Reactions, stickers,
+// voice notes and the like are ignored instead of getting a welcome reply.
+const CLOUD_TEXT_TYPES = new Set(['text', 'button', 'interactive', 'image', 'video', 'document']);
+// Meta retries a webhook it couldn't deliver (for example during a restart).
+// Codes live five minutes, so anything older is a replay, not a live request.
+const CLOUD_STALE_SECONDS = 5 * 60;
+
+function handleCloudWebhook(body) {
+  const line = CLOUD_LINE;
+  const tag = lineTag(line);
+  for (const failure of extractFailedStatuses(body, line.phoneNumberId)) {
+    console.warn(`${tag} Delivery report: a message failed (code ${failure.code}: ${failure.title})`);
+  }
+  for (const msg of extractInboundMessages(body, line.phoneNumberId)) {
+    const from = msg.from;
+    if (!CLOUD_TEXT_TYPES.has(msg.type)) {
+      console.log(`${tag} Ignoring a ${msg.type} message from sender ${senderLogId(from)}`);
+      continue;
+    }
+    const staleness = isStaleMessage(msg.timestamp, Date.now(), CLOUD_STALE_SECONDS);
+    if (staleness.stale) {
+      console.log(`${tag} Ignoring stale message from sender ${senderLogId(from)} (${staleness.ageSeconds}s old)`);
+      continue;
+    }
+    if (messageDeduper.isDuplicate(`${line.id}:${msg.id}`)) {
+      console.log(`${tag} Duplicate message id — ignored`);
+      continue;
+    }
+    // Not awaited: one user's delivery must not hold up another's.
+    handleIncomingMessage(line, from, msg.text).catch((err) => {
+      console.error(`${tag} Message handler error:`, err.message);
+    });
+  }
+}
 
 app.get('/webhook', (req, res) => {
   const result = verifyChallenge({
@@ -1566,6 +1742,13 @@ app.post('/webhook', (req, res) => {
     console.log(`📩 Webhook event: ${summarizeEvent(req.body)}`);
   } catch (err) {
     console.error('Webhook logging error:', err.message);
+  }
+  if (CLOUD_LINE && !shuttingDown) {
+    try {
+      handleCloudWebhook(req.body);
+    } catch (err) {
+      console.error(`${lineTag(CLOUD_LINE)} Webhook handling error:`, err.message);
+    }
   }
 });
 
@@ -2155,7 +2338,18 @@ Local: http://localhost:${PORT}
   // Start each WhatsApp line after Express is up so pairing codes show in logs.
   // One after another, so the WA Web version is fetched once and both lines
   // don't hit WhatsApp at the same instant.
-  console.log(`WhatsApp lines configured: ${WA_LINES.map((line) => line.id).join(', ')}`);
+  console.log(`WhatsApp lines configured: ${DELIVERY_LINES.map((line) => line.id).join(', ') || 'none'}`);
+  if (CLOUD_LINE) {
+    for (const line of WA_LINES.filter((l) => l.replacedByCloud)) {
+      console.log(`${lineTag(line)} Not started: its number runs on the WhatsApp Cloud API (${lineTag(CLOUD_LINE)}).`);
+    }
+    checkCloudLine().catch((err) => console.error('Cloud API check failed:', err.message));
+    setInterval(() => {
+      checkCloudLine().catch((err) => console.error('Cloud API check failed:', err.message));
+    }, CLOUD_CHECK_INTERVAL_MS).unref();
+  } else if (CLOUD_CONFIG.configured) {
+    console.error(`!!! WhatsApp Cloud API line is off: ${CLOUD_CONFIG.reason}.`);
+  }
   if (!WHATSAPP_ENABLED) {
     console.warn('!!! WHATSAPP_ENABLED=false — not connecting any WhatsApp line. Mobile uploads answer 503 until it is re-enabled.');
   } else {

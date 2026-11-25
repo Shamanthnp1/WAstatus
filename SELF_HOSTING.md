@@ -61,7 +61,21 @@ Put the settings below in a `.env` file or in your host's app settings. Never co
 | `WHATSAPP_TOKEN`, `WHATSAPP_BUSINESS_ID`, `WHATSAPP_PHONE_ID`, `GRAPH_API_VERSION` | Used only by `npm run subscribe:webhook` |
 | `MAX_CONCURRENT_ENCODES`, `FPS_CAP` | Settings for the retired web compressor's encoder |
 
-The Meta webhook is receive-only. It logs events and doesn't send anything; delivery always goes through Baileys.
+Without the Cloud API line below, the Meta webhook is receive-only. It logs events and doesn't send anything; delivery always goes through Baileys.
+
+### WhatsApp Cloud API line (optional)
+
+A number registered on Meta's official Cloud API can deliver next to the Baileys numbers. Users reach it through the same wa.me link. Their message arrives at `POST /webhook`, and the clips are uploaded to Meta and sent with the Graph API. Clips over 16 MB, such as 90-second 1080p ones, go as a document.
+
+| Variable | Purpose |
+|---|---|
+| `WHATSAPP_CLOUD_TOKEN` | Permanent System User access token with `whatsapp_business_messaging` |
+| `WHATSAPP_CLOUD_PHONE_NUMBER_ID` | The number's Phone number ID (not the WhatsApp Business Account ID) |
+| `WHATSAPP_CLOUD_NUMBER` | The number with country code; the server checks that the Phone number ID matches it |
+| `META_APP_SECRET` | Required for this line: a webhook message now triggers a delivery, so unsigned POSTs must be refused |
+| `WHATSAPP_CLOUD_ENABLED` | Set to `false` to keep the line off without removing the settings |
+
+The line shows as `cloud` in `/api/health`. A Baileys line with the same number is never started. `WHATSAPP_ENABLED=false` stops the Baileys lines only. Point the Meta app's webhook at `https://<your server>/webhook` and subscribe to the `messages` field. Meta's free tier covers 1,000 service messages per number each month; each delivery uses one text plus one message per clip.
 
 ## Link the WhatsApp numbers
 
@@ -83,7 +97,7 @@ Check `GET /api/health`:
 }
 ```
 
-`baileys` is `connected` while at least one number can deliver. Each line shows `connected`, `disconnected`, `not_linked` or `disabled`. Phone numbers are never included.
+`baileys` is `connected` while at least one number can deliver, including the Cloud API line. Each line shows `connected`, `disconnected`, `stopped`, `not_linked` or `disabled`. Phone numbers are never included.
 
 ## API
 
