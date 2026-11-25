@@ -6,6 +6,13 @@ void main() {
   testWidgets('renders the StatusDrop scaffold', (tester) async {
     await tester.pumpWidget(const StatusDropApp());
 
+    // The Play build asks about MAX when it opens.
+    await tester.pumpAndSettle();
+    expect(find.text('Get StatusDrop MAX'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+    expect(find.text('Get StatusDrop MAX'), findsNothing);
+
     expect(find.text('StatusDrop'), findsOneWidget);
     expect(find.textContaining('made on your phone'), findsOneWidget);
     expect(find.text('Select'), findsOneWidget);

@@ -1,5 +1,2 @@
-StatusDrop 1.1.0
-• New: 1080p with no splitting, one clip up to 90 seconds
-• New: turn up to 10 photos into 5-second HD Status clips
-• New "Before you start" card: turn on HD in WhatsApp once
-• Rate StatusDrop from the menu
+StatusDrop 1.1.1
+• Shows how to get StatusDrop MAX, which can send clips from your own WhatsApp

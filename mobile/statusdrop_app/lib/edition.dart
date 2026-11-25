@@ -16,7 +16,7 @@ enum Edition {
 }
 
 /// Shown in the app. Keep in step with `version:` in pubspec.yaml.
-const appVersionName = '1.1.0';
+const appVersionName = '1.1.1';
 
 /// "StatusDrop" or "StatusDrop MAX".
 String get appDisplayName =>

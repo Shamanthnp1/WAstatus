@@ -150,7 +150,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _selfHostSubscription = _selfHost.events.listen(_handleSelfHostEvent);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadDeliverySettings());
-    if (!Edition.current.hasSelfHost) unawaited(_loadAppState());
+    if (!Edition.current.hasSelfHost) {
+      unawaited(_loadAppState());
+      // Each time the Play build opens, point people to MAX.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showMaxPrompt());
+    }
   }
 
   @override
@@ -834,6 +838,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
     if (rate == true) await _openPlayListing();
+  }
+
+  // -----------------------------------------------------------------------
+  // MAX prompt (Play build only)
+  // -----------------------------------------------------------------------
+  /// Shown once per app start. Opens the website page that explains MAX,
+  /// never an APK directly.
+  Future<void> _showMaxPrompt() async {
+    if (!mounted || _isBusy) return;
+    final open = await showDialog<bool>(
+      context: context,
+      builder: (context) => const _MaxPromptDialog(),
+    );
+    if (open == true) await _openSupportLink(maxEditionPage);
   }
 
   Future<void> _openPlayListing() async {
@@ -2663,6 +2681,57 @@ class _AboutSheet extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.close),
           label: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Play build: tells people about MAX and how to switch the delivery method.
+class _MaxPromptDialog extends StatelessWidget {
+  const _MaxPromptDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final steps = theme.textTheme.bodyMedium?.copyWith(height: 1.35);
+    return AlertDialog(
+      scrollable: true,
+      icon: const Icon(Icons.workspace_premium_outlined),
+      title: const Text('Get StatusDrop MAX'),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'WhatsApp often limits the numbers StatusDrop sends from, so '
+            'deliveries can stop for a while. StatusDrop MAX is free and sends '
+            'clips from your own WhatsApp, so delivery does not depend on our '
+            'numbers.',
+            style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            '1. Download MAX from wastatusvideo.com/max. It installs next to '
+            'this app.',
+            style: steps,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '2. In MAX, open the ⋮ menu, tap Delivery method and choose My '
+            'WhatsApp (Message yourself).',
+            style: steps,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Not now'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Get MAX'),
         ),
       ],
     );
