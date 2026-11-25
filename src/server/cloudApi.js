@@ -121,6 +121,61 @@ function extractInboundMessages(body, phoneNumberId) {
 }
 
 /**
+ * WhatsApp Business Account ID (entry.id) of a webhook that concerns our number.
+ * @returns {string|null}
+ */
+function extractWabaId(body, phoneNumberId) {
+  if (!body || body.object !== 'whatsapp_business_account') return null;
+  for (const entry of Array.isArray(body.entry) ? body.entry : []) {
+    for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
+      if (String(change?.value?.metadata?.phone_number_id || '') === String(phoneNumberId) && entry.id) {
+        return String(entry.id);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * True when a delivery report for our number says Meta billed the message
+ * (pricing.type 'regular', or the older billable flag). Service messages are
+ * only billed once the monthly free tier is used up.
+ */
+function hasBillableStatus(body, phoneNumberId) {
+  if (!body || body.object !== 'whatsapp_business_account') return false;
+  for (const entry of Array.isArray(body.entry) ? body.entry : []) {
+    for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
+      const value = change?.value || {};
+      if (String(value.metadata?.phone_number_id || '') !== String(phoneNumberId)) continue;
+      for (const status of Array.isArray(value.statuses) ? value.statuses : []) {
+        const pricing = status?.pricing;
+        if (pricing && (pricing.type === 'regular' || pricing.billable === true)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Sum Meta's pricing analytics into this month's service messages.
+ * @param {Array<{start: number, pricing_category?: string, pricing_type?: string, volume?: number}>} points
+ * @param {number} sinceSeconds count only buckets starting at or after this
+ * @returns {{used: number, billable: boolean}}
+ */
+function summarizeServiceUsage(points, sinceSeconds) {
+  let used = 0;
+  let regular = 0;
+  for (const p of Array.isArray(points) ? points : []) {
+    if (Number(p.start) < sinceSeconds) continue;
+    if (String(p.pricing_category || '').toUpperCase() !== 'SERVICE') continue;
+    const volume = Number(p.volume) || 0;
+    used += volume;
+    if (String(p.pricing_type || '').toUpperCase() === 'REGULAR') regular += volume;
+  }
+  return { used, billable: regular > 0 };
+}
+
+/**
  * Failed delivery reports for our number, for logging. No phone numbers.
  * @returns {Array<{id: string, code: number|null, title: string}>}
  */
@@ -226,6 +281,13 @@ function createCloudClient({
       if (!body.id) throw new CloudApiError('Cloud API media upload returned no id');
       return body.id;
     },
+    /** Daily service/other message volume for a WhatsApp Business Account. */
+    async pricingAnalytics(wabaId, startSeconds, endSeconds) {
+      const field = `pricing_analytics.start(${Math.floor(startSeconds)}).end(${Math.floor(endSeconds)})`
+        + '.granularity(DAILY).metric_types(["VOLUME"]).dimensions(["PRICING_CATEGORY","PRICING_TYPE"])';
+      const body = await call('GET', `${wabaId}?fields=${encodeURIComponent(field)}`);
+      return (body.pricing_analytics?.data || []).flatMap((d) => d.data_points || []);
+    },
     sendVideo(to, mediaId, caption = '') {
       return sendMessage(to, { type: 'video', video: { id: mediaId, ...(caption ? { caption } : {}) } });
     },
@@ -247,5 +309,8 @@ module.exports = {
   messageText,
   extractInboundMessages,
   extractFailedStatuses,
+  extractWabaId,
+  hasBillableStatus,
+  summarizeServiceUsage,
   createCloudClient,
 };

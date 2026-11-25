@@ -74,6 +74,13 @@ A number registered on Meta's official Cloud API can deliver next to the Baileys
 | `WHATSAPP_CLOUD_NUMBER` | The number with country code; the server checks that the Phone number ID matches it |
 | `META_APP_SECRET` | Required for this line: a webhook message now triggers a delivery, so unsigned POSTs must be refused |
 | `WHATSAPP_CLOUD_ENABLED` | Set to `false` to keep the line off without removing the settings |
+| `CLOUD_MONTHLY_MESSAGE_BUDGET` | Most messages the line sends per month; default `950`, inside Meta's 1,000 free. Raise it to allow paid messages |
+| `CLOUD_DAILY_MESSAGE_BUDGET` | `auto` (default) spreads what's left of the month evenly over the remaining days; a number is a fixed daily cap; `off` uses the monthly budget only |
+| `CLOUD_BUDGET_TZ` | Timezone for months and days; default `Asia/Kolkata`. Use your Messaging account's timezone, because Meta resets the free tier at midnight there |
+| `CLOUD_USAGE_FILE` | Where the counts are kept; default `.statusdrop-cloud-usage.json` next to the login folders |
+| `WHATSAPP_CLOUD_WABA_ID` | Optional. Normally learned from the first webhook; used to compare the counts with Meta's |
+
+When the budget is full, the line shows `paused`, app uploads get "try again later", and extra replies are skipped. A delivery report or Meta usage figure that shows a billed message also pauses it for the rest of the month. Each delivery costs one message per clip: the verified note rides on the first clip's caption. Deliveries are counted per country calling code (never full numbers) in the usage file and logs.
 
 The line shows as `cloud` in `/api/health`. A Baileys line with the same number is never started. `WHATSAPP_ENABLED=false` stops the Baileys lines only. Point the Meta app's webhook at `https://<your server>/webhook` and subscribe to the `messages` field. Meta's free tier covers 1,000 service messages per number each month; each delivery uses one text plus one message per clip.
 

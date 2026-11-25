@@ -168,13 +168,14 @@ function isLineReady(line) {
  *
  * @param {Array<{connected: boolean, sock?: object|null, kind?: string, lastAssignedAt: number}>} lines
  * @param {(line: object) => number} activeCountFor open deliveries on a line
+ * @param {(line: object) => boolean} [canTake] extra check, for example the Cloud API message budget
  * @returns {object|null} the chosen line, or null when none is connected
  */
-function pickDeliveryLine(lines, activeCountFor) {
+function pickDeliveryLine(lines, activeCountFor, canTake = isLineReady) {
   let best = null;
   let bestActive = Infinity;
   for (const line of lines) {
-    if (!isLineReady(line)) continue;
+    if (!isLineReady(line) || !canTake(line)) continue;
     const active = activeCountFor(line);
     if (active < bestActive || (active === bestActive && line.lastAssignedAt < best.lastAssignedAt)) {
       best = line;

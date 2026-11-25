@@ -274,8 +274,10 @@ function mobileErrorResponse(res, error, logger = console) {
 // Refuse new work while no WhatsApp line can deliver it. Without this the app
 // would upload, receive an activation code, and the user's message would go
 // unanswered (the bot ignores messages older than 90s once it reconnects).
-function requireDeliveryAvailable(isDeliveryAvailable) {
-  if (!isDeliveryAvailable()) {
+// clipCount lets a line with a message budget (Cloud API) say no before the
+// clips upload instead of after.
+function requireDeliveryAvailable(isDeliveryAvailable, clipCount) {
+  if (!isDeliveryAvailable(clipCount)) {
     throw new MobileUploadError(503, DELIVERY_UNAVAILABLE_MESSAGE);
   }
 }
@@ -301,8 +303,9 @@ function registerMobileUploadRoutes(app, {
   deleteFromR2,
   probeClip,
   createDeliverySession,
-  // () => boolean: true while at least one WhatsApp line is connected.
-  // Defaults to always-available so callers that don't pass it keep working.
+  // (clipCount) => boolean: true while some WhatsApp line can take a delivery
+  // of that many clips. Defaults to always-available so callers that don't
+  // pass it keep working.
   isDeliveryAvailable = () => true,
   logger = console,
 }) {
@@ -311,7 +314,7 @@ function registerMobileUploadRoutes(app, {
   app.post('/api/mobile/sessions', limiter, (req, res) => {
     try {
       const manifest = validateMobileManifest(req.body);
-      requireDeliveryAvailable(isDeliveryAvailable);
+      requireDeliveryAvailable(isDeliveryAvailable, manifest.clips.length);
       const { session, token } = store.create(manifest);
       const origin = `${req.protocol}://${req.get('host')}`;
       return res.status(201).json({
@@ -466,7 +469,7 @@ function registerMobileUploadRoutes(app, {
       }
       // Checked again here: WhatsApp may have dropped while the clips uploaded.
       // The session stays 'uploading', so the app can finalize again later.
-      requireDeliveryAvailable(isDeliveryAvailable);
+      requireDeliveryAvailable(isDeliveryAvailable, session.slots.length);
 
       session.state = 'finalizing';
       session.inFlight += 1;

@@ -50,7 +50,11 @@ const {
   MAX_ENCODE_ATTEMPTS,
 } = require('./src/server/encodeExec');
 const { CLIP_DURATION_LIMIT } = require('./src/shared/constants');
-const { registerMobileUploadRoutes } = require('./src/server/mobileUpload');
+const {
+  registerMobileUploadRoutes,
+  MobileUploadError,
+  DELIVERY_UNAVAILABLE_MESSAGE,
+} = require('./src/server/mobileUpload');
 const { registerWebRetirement } = require('./src/server/webRetirement');
 const { downloadToFile } = require('./src/server/mediaDownload');
 const { parseLineConfigs, isLineReady, pickDeliveryLine, isUnfinishedPairing, clearAuthDir, reconnectPlan } = require('./src/server/whatsappLines');
@@ -61,7 +65,11 @@ const {
   createCloudClient,
   extractInboundMessages,
   extractFailedStatuses,
+  extractWabaId,
+  hasBillableStatus,
+  summarizeServiceUsage,
 } = require('./src/server/cloudApi');
+const { CloudBudget, parseBudgetConfig, callingCode } = require('./src/server/cloudBudget');
 const { acquireLease } = require('./src/server/waLease');
 require('dotenv').config();
 
@@ -741,6 +749,15 @@ if (CLOUD_LINE) {
     }
   }
 }
+// Messages the Cloud API line may send: inside Meta's 1,000 free a month by
+// default, spread over the days left. See src/server/cloudBudget.js. Kept
+// next to the login folders, so on Azure it lives in /home and survives restarts.
+const CLOUD_BUDGET = CLOUD_LINE ? new CloudBudget({
+  file: process.env.CLOUD_USAGE_FILE
+    || path.join(path.dirname(path.resolve(WA_LINES[0].authDir)), '.statusdrop-cloud-usage.json'),
+  ...parseBudgetConfig(process.env),
+}) : null;
+
 // Every line that can take a delivery: the Cloud API line, then the Baileys
 // lines that still run. Baileys-only work (connecting, the lease, shutdown)
 // keeps using WA_LINES.
@@ -775,7 +792,7 @@ function lineTag(line) { return `[WA ${line.id}]`; }
 // login between servers, so it has no reason to stop during a move.
 function lineStatus(line) {
   if (line.kind === 'cloud') {
-    if (line.connected) return 'connected';
+    if (line.connected) return cloudCanTake(1) ? 'connected' : 'paused';
     return line.stopped ? 'stopped' : 'disconnected';
   }
   if (!WHATSAPP_ENABLED) return 'disabled';
@@ -784,10 +801,32 @@ function lineStatus(line) {
   return line.sock?.authState?.creds?.registered === false ? 'not_linked' : 'disconnected';
 }
 
+// Cloud API messages still owed to open deliveries on that line: one per clip
+// not sent yet (the verified text rides on the first clip's caption).
+function cloudReservedMessages() {
+  let reserved = 0;
+  for (const session of sessions.values()) {
+    if (session.lineId === 'cloud' && (session.status === 'pending' || session.status === 'processing')) {
+      reserved += Math.max(0, (session.files?.length || 0) - (session.cloudSent || 0));
+    }
+  }
+  return reserved;
+}
+
+// Room in the Cloud API budget for a new delivery of `clipCount` clips?
+function cloudCanTake(clipCount = 1) {
+  return !!CLOUD_BUDGET && CLOUD_BUDGET.canSpend(clipCount, cloudReservedMessages());
+}
+
+// Can this line take a new delivery of `clipCount` clips?
+function lineCanTake(line, clipCount = 1) {
+  return isLineReady(line) && (line.kind !== 'cloud' || cloudCanTake(clipCount));
+}
+
 // True while at least one line can deliver. The mobile routes refuse new
 // uploads with 503 otherwise.
-function isWhatsAppDeliveryAvailable() {
-  return DELIVERY_LINES.some(isLineReady);
+function isWhatsAppDeliveryAvailable(clipCount = 1) {
+  return DELIVERY_LINES.some((line) => lineCanTake(line, clipCount));
 }
 
 // Open (not yet delivered) activation codes pointed at this line.
@@ -1149,13 +1188,13 @@ function createDeliverySession(files, caption = '', preferredCode = null, assetK
   if (!Array.isArray(files) || files.length === 0) {
     throw new Error('Cannot create an empty delivery session.');
   }
-  // Point the new code at a connected line with the fewest open deliveries. If
-  // none is connected, fall back to the first configured number (the old
-  // single-number behaviour); the mobile routes check
-  // isWhatsAppDeliveryAvailable() first and answer 503 instead.
-  const line = pickDeliveryLine(DELIVERY_LINES, activeDeliveriesOn) || DELIVERY_LINES.find((candidate) => candidate.number);
+  // Point the new code at a connected line with the fewest open deliveries
+  // (and, for the Cloud API line, room in its message budget for every clip).
+  // The mobile routes check isWhatsAppDeliveryAvailable() first; this catches
+  // a line that dropped or filled up in between.
+  const line = pickDeliveryLine(DELIVERY_LINES, activeDeliveriesOn, (candidate) => lineCanTake(candidate, files.length));
   if (!line) {
-    throw new Error('WhatsApp delivery number is not configured.');
+    throw new MobileUploadError(503, DELIVERY_UNAVAILABLE_MESSAGE);
   }
   const activationCode = preferredCode && !sessions.has(preferredCode)
     ? preferredCode
@@ -1296,9 +1335,59 @@ async function checkCloudLine() {
   line.lastCheckFailed = false;
 }
 
+// Text replies (welcome, expired code, retry notes) are extras: they only go
+// out while the budget has room beyond the clips already promised, so a busy
+// day can't push the bill past the free messages.
+// Meta's own count of this month's service messages (pricing analytics, a few
+// hours behind). It catches messages this process never saw, and a billed one
+// pauses the line. Needs the WhatsApp Business Account ID, which arrives with
+// the first webhook (or WHATSAPP_CLOUD_WABA_ID).
+const CLOUD_USAGE_SYNC_MS = 30 * 60 * 1000;
+let cloudUsageSyncFailed = false;
+async function syncCloudUsageFromMeta() {
+  const waba = CLOUD_BUDGET?.wabaId;
+  if (!CLOUD_LINE || !waba || shuttingDown) return;
+  // Daily buckets may be aligned to UTC rather than the budget timezone; 12 h
+  // of slack keeps this month's first bucket and drops last month's last one.
+  const since = CLOUD_BUDGET.monthStartSeconds() - 12 * 3600;
+  try {
+    const points = await CLOUD_LINE.client.pricingAnalytics(waba, since, Date.now() / 1000);
+    CLOUD_BUDGET.syncFromMeta(summarizeServiceUsage(points, since));
+    cloudUsageSyncFailed = false;
+  } catch (err) {
+    if (!cloudUsageSyncFailed) console.warn(`${lineTag(CLOUD_LINE)} Could not read usage from Meta: ${err.message}`);
+    cloudUsageSyncFailed = true;
+  }
+}
+
 async function sendCloudText(line, to, message) {
+  if (!CLOUD_BUDGET.canSpend(1, cloudReservedMessages())) {
+    console.log(`${lineTag(line)} Reply skipped: the message budget is full (${CLOUD_BUDGET.summary()})`);
+    return false;
+  }
   await cloudCall(line, () => line.client.sendText(to, message));
+  CLOUD_BUDGET.recordSend(to);
   await new Promise((resolve) => setTimeout(resolve, CLOUD_SEND_GAP_MS));
+  return true;
+}
+
+// On the Cloud API line each delivery costs one message per clip: the
+// verified note and posting steps ride on the first clip's caption instead of
+// a separate text (captions are limited to 1,024 characters).
+const CLOUD_CAPTION_MAX = 1024;
+function buildCloudCaption(index, total, userCaption = '') {
+  const parts = [];
+  if (index === 0) {
+    parts.push(total > 1
+      ? `✅ Code verified! Part 1 of ${total}, the other parts follow. Your video was split for WhatsApp Status.`
+      : '✅ Code verified! Here is your HD video.');
+    parts.push(MAX_PROMO_LINE);
+    parts.push('📱 *Post in full HD:* tap ⬇ to save it, send it to *Message yourself* via 📎 → Gallery, then forward that new copy to *My Status*. Don\'t edit or trim it.');
+    if (userCaption) parts.push(userCaption);
+  } else {
+    parts.push(`Part ${index + 1} of ${total}`);
+  }
+  return parts.join('\n\n').slice(0, CLOUD_CAPTION_MAX);
 }
 
 // Same file as Baileys sends, uploaded to Meta first (tested to keep full
@@ -1322,10 +1411,12 @@ async function sendCloudVideo(line, to, videoUrl, caption, { index = 0, total = 
     const blob = await fs.openAsBlob(tmpPath, { type: 'video/mp4' });
     const mediaId = await cloudCall(line, () => line.client.uploadMedia(blob, fileName));
     if (asDocument) {
-      await cloudCall(line, () => line.client.sendDocument(to, mediaId, fileName, caption || CLOUD_DOCUMENT_NOTE));
+      const docCaption = [caption, CLOUD_DOCUMENT_NOTE].filter(Boolean).join('\n\n').slice(0, CLOUD_CAPTION_MAX);
+      await cloudCall(line, () => line.client.sendDocument(to, mediaId, fileName, docCaption));
     } else {
       await cloudCall(line, () => line.client.sendVideo(to, mediaId, caption));
     }
+    CLOUD_BUDGET.recordSend(to);
     console.log(`${lineTag(line)} Video sent via Cloud API ✓ (${(size / 1e6).toFixed(1)} MB as ${asDocument ? 'document' : 'video'})`);
   } finally {
     await fs.promises.unlink(tmpPath).catch(() => { });
@@ -1503,6 +1594,19 @@ async function handleIncomingMessage(line, from, text) {
     return;
   }
 
+  // Cloud API line: never deliver past the message budget. A code made for
+  // this line already has its clips reserved; a code made for another number
+  // needs room now. Telling the user would cost a message too, so it stays quiet.
+  if (line.kind === 'cloud') {
+    const room = session.lineId === line.id
+      ? CLOUD_BUDGET.canSpend(0, cloudReservedMessages())
+      : cloudCanTake(session.files.length);
+    if (!room) {
+      console.warn(`${lineTag(line)} Not delivering ${code}: ${CLOUD_BUDGET.pausedReason(cloudReservedMessages()) || 'message budget full'} (${CLOUD_BUDGET.summary()})`);
+      return;
+    }
+  }
+
   // A code only has five minutes to be claimed. Once a valid message claims it,
   // cancel that deadline so a long ordered send cannot lose its R2 files midway.
   if (session.expiryTimer) {
@@ -1525,10 +1629,14 @@ async function handleIncomingMessage(line, from, text) {
   session.processingSince = Date.now();
   sessions.set(code, session);
 
-  try {
-    await sendWhatsAppMessage(line, from, buildVerifiedMessage(session.files.length));
-  } catch (err) {
-    console.error('Failed code verified message:', err.message);
+  // Baileys sends the verified note as its own text. The Cloud API line puts
+  // it on the first clip's caption instead, which halves its message bill.
+  if (line.kind !== 'cloud') {
+    try {
+      await sendWhatsAppMessage(line, from, buildVerifiedMessage(session.files.length));
+    } catch (err) {
+      console.error('Failed code verified message:', err.message);
+    }
   }
 
   const waStartTime = Date.now();
@@ -1541,13 +1649,17 @@ async function handleIncomingMessage(line, from, text) {
 
       // Build caption: user caption on FIRST part only, nothing on subsequent parts
       let videoCaption = '';
-      if (i === 0 && session.caption) {
+      if (line.kind === 'cloud') {
+        videoCaption = buildCloudCaption(i, session.files.length, session.caption);
+      } else if (i === 0 && session.caption) {
         // First video/part — use user's caption
         videoCaption = session.caption;
       }
       // All other parts (i > 0) — no caption at all (empty string)
 
       await sendWhatsAppVideo(line, from, file.url, videoCaption, { index: i, total: session.files.length });
+      // Clips already sent no longer count as reserved in the Cloud API budget.
+      if (line.kind === 'cloud' && session.lineId === line.id) session.cloudSent = i + 1;
       if (session.deliveryTimedOut) throw new Error('Delivery watchdog elapsed.');
 
       console.log(`✓ Video ${i + 1}/${session.files.length} sent (${((Date.now() - videoSendStart) / 1000).toFixed(2)}s)`);
@@ -1555,6 +1667,11 @@ async function handleIncomingMessage(line, from, text) {
     }
     console.log(`✓ All sends completed (${((Date.now() - waStartTime) / 1000).toFixed(2)}s)`);
     session.status = 'sent';
+    if (line.kind === 'cloud') {
+      // Country calling code only, never the number: for pricing by region.
+      CLOUD_BUDGET.recordDelivery(from);
+      console.log(`${lineTag(line)} Delivered ${session.files.length} clip(s) to +${callingCode(from)} · messages ${CLOUD_BUDGET.summary()}`);
+    }
   } catch (err) {
     if (session.deliveryTimedOut) {
       console.error(`Delivery watchdog stopped ${code}:`, err.message);
@@ -1691,6 +1808,14 @@ const CLOUD_STALE_SECONDS = 5 * 60;
 function handleCloudWebhook(body) {
   const line = CLOUD_LINE;
   const tag = lineTag(line);
+  const wabaId = extractWabaId(body, line.phoneNumberId);
+  if (wabaId && !CLOUD_BUDGET.wabaId) {
+    CLOUD_BUDGET.setWabaId(wabaId);
+    syncCloudUsageFromMeta().catch(() => {});
+  }
+  // A delivery report priced 'regular' means Meta started billing: the free
+  // tier is gone, so the line pauses for the rest of the month.
+  if (hasBillableStatus(body, line.phoneNumberId)) CLOUD_BUDGET.markBillable();
   for (const failure of extractFailedStatuses(body, line.phoneNumberId)) {
     console.warn(`${tag} Delivery report: a message failed (code ${failure.code}: ${failure.title})`);
   }
@@ -2347,6 +2472,16 @@ Local: http://localhost:${PORT}
     setInterval(() => {
       checkCloudLine().catch((err) => console.error('Cloud API check failed:', err.message));
     }, CLOUD_CHECK_INTERVAL_MS).unref();
+    if (process.env.WHATSAPP_CLOUD_WABA_ID) CLOUD_BUDGET.setWabaId(process.env.WHATSAPP_CLOUD_WABA_ID);
+    console.log(`${lineTag(CLOUD_LINE)} Message budget: ${CLOUD_BUDGET.summary()} (timezone ${CLOUD_BUDGET.timeZone}). Countries this month: ${CLOUD_BUDGET.countrySummary()}`);
+    syncCloudUsageFromMeta().catch(() => {});
+    setInterval(() => {
+      syncCloudUsageFromMeta().catch(() => {});
+    }, CLOUD_USAGE_SYNC_MS).unref();
+    // A short report every 6 hours: usage against the budget and countries.
+    setInterval(() => {
+      console.log(`${lineTag(CLOUD_LINE)} Usage: ${CLOUD_BUDGET.summary()}. Countries this month: ${CLOUD_BUDGET.countrySummary()}`);
+    }, 6 * 60 * 60 * 1000).unref();
   } else if (CLOUD_CONFIG.configured) {
     console.error(`!!! WhatsApp Cloud API line is off: ${CLOUD_CONFIG.reason}.`);
   }
@@ -2416,6 +2551,7 @@ server.keepAliveTimeout = 610000;
 function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  CLOUD_BUDGET?.flush();
   console.log(`${signal} received: closing WhatsApp lines so another container can take over cleanly.`);
   for (const line of WA_LINES) {
     line.stopped = line.stopped || 'the server is shutting down';
