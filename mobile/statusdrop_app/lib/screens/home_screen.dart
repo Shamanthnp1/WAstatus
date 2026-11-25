@@ -2729,8 +2729,7 @@ class _MaxPromptDialog extends StatelessWidget {
         children: [
           Text(
             'StatusDrop is a free service, and our WhatsApp numbers can’t '
-            'handle too many requests. WhatsApp limits numbers that send a '
-            'lot, so deliveries can stop for a while.',
+            'handle too many requests.',
             style: body,
           ),
           const SizedBox(height: 12),
