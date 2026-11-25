@@ -1,2 +1,2 @@
 StatusDrop 1.1.1
-• Shows how to get StatusDrop MAX, which can send clips from your own WhatsApp
+• Explains why StatusDrop deliveries can pause, and how StatusDrop MAX sends clips from your own WhatsApp or a second number you own

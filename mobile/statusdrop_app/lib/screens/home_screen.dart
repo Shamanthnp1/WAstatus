@@ -843,15 +843,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // -----------------------------------------------------------------------
   // MAX prompt (Play build only)
   // -----------------------------------------------------------------------
-  /// Shown once per app start. Opens the website page that explains MAX,
-  /// never an APK directly.
+  /// Shown once per app start. Leads to Discord or to the Delivery method
+  /// screen, whose MAX card has the Learn more link; never to an APK.
   Future<void> _showMaxPrompt() async {
     if (!mounted || _isBusy) return;
-    final open = await showDialog<bool>(
+    final choice = await showDialog<_MaxPromptChoice>(
       context: context,
       builder: (context) => const _MaxPromptDialog(),
     );
-    if (open == true) await _openSupportLink(maxEditionPage);
+    switch (choice) {
+      case _MaxPromptChoice.deliveryMethod:
+        await _openDeliverySettings();
+      case _MaxPromptChoice.discord:
+        await _openSupportLink(_AboutSheet._discordUri);
+      case _MaxPromptChoice.later || null:
+        break;
+    }
   }
 
   Future<void> _openPlayListing() async {
@@ -2687,14 +2694,31 @@ class _AboutSheet extends StatelessWidget {
   }
 }
 
-/// Play build: tells people about MAX and how to switch the delivery method.
+enum _MaxPromptChoice { later, discord, deliveryMethod }
+
+/// Play build: says why StatusDrop deliveries can pause and what MAX offers.
 class _MaxPromptDialog extends StatelessWidget {
   const _MaxPromptDialog();
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final steps = theme.textTheme.bodyMedium?.copyWith(height: 1.35);
+    final body = theme.textTheme.bodyMedium?.copyWith(height: 1.35);
+    Widget method(String name, String detail) => Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$name: ',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            TextSpan(text: detail),
+          ],
+        ),
+        style: body,
+      ),
+    );
     return AlertDialog(
       scrollable: true,
       icon: const Icon(Icons.workspace_premium_outlined),
@@ -2704,34 +2728,47 @@ class _MaxPromptDialog extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'WhatsApp often limits the numbers StatusDrop sends from, so '
-            'deliveries can stop for a while. StatusDrop MAX is free and sends '
-            'clips from your own WhatsApp, so delivery does not depend on our '
-            'numbers.',
-            style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
+            'StatusDrop is a free service, and our WhatsApp numbers can’t '
+            'handle too many requests. WhatsApp limits numbers that send a '
+            'lot, so deliveries can stop for a while.',
+            style: body,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Text(
-            '1. Download MAX from wastatusvideo.com/max. It installs next to '
-            'this app.',
-            style: steps,
+            'For uninterrupted access, download StatusDrop MAX. It’s free and '
+            'sends clips from a number you own. In MAX, open ⋮ > Delivery '
+            'method and choose:',
+            style: body,
           ),
-          const SizedBox(height: 6),
+          method(
+            DeliveryMode.ownNumber.label,
+            'your own WhatsApp sends the clips to your Message yourself chat.',
+          ),
+          method(
+            DeliveryMode.secondNumber.label,
+            'a second number you own sends the clips to you.',
+          ),
+          const SizedBox(height: 12),
           Text(
-            '2. In MAX, open the ⋮ menu, tap Delivery method and choose My '
-            'WhatsApp (Message yourself).',
-            style: steps,
+            'Tap Delivery method, then Learn more, to get MAX. Questions? Ask '
+            'us on Discord.',
+            style: body,
           ),
         ],
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
+          onPressed: () => Navigator.of(context).pop(_MaxPromptChoice.later),
           child: const Text('Not now'),
         ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_MaxPromptChoice.discord),
+          child: const Text('Discord'),
+        ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('Get MAX'),
+          onPressed: () =>
+              Navigator.of(context).pop(_MaxPromptChoice.deliveryMethod),
+          child: const Text('Delivery method'),
         ),
       ],
     );
