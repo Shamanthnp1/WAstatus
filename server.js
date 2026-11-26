@@ -1293,7 +1293,9 @@ const CLOUD_SEND_GAP_MS = 1200;
 const CLOUD_OVERSIZED_REPLY =
   '⚠️ This video is too large to send here: the 90-second (no splitting) option is disabled in the Play Store version of StatusDrop.\n\n' +
   '⭐ To use it, get *StatusDrop MAX* (free) from our Discord: https://discord.gg/aT4TNMQEK8\n' +
-  'Then in MAX tap ⋮ → *Delivery method* → *My WhatsApp (Message yourself)*.\n\n' +
+  'Then in MAX tap ⋮ → *Delivery method* and choose either:\n' +
+  '• *My WhatsApp (Message yourself)*: your own WhatsApp sends the clips to your Message yourself chat\n' +
+  '• *My second number as a bot*: a second number you own sends the clips to you\n\n' +
   'Or choose *1080p, 29-second parts* in this app and send the new code.';
 
 function isOversizedForCloud(session) {
