@@ -60,7 +60,6 @@ const { downloadToFile } = require('./src/server/mediaDownload');
 const { parseLineConfigs, isLineReady, pickDeliveryLine, isUnfinishedPairing, clearAuthDir, reconnectPlan } = require('./src/server/whatsappLines');
 const {
   CLOUD_VIDEO_MAX_BYTES,
-  CLOUD_DOCUMENT_MAX_BYTES,
   parseCloudConfig,
   createCloudClient,
   extractInboundMessages,
@@ -1201,7 +1200,9 @@ function createDeliverySession(files, caption = '', preferredCode = null, assetK
     : generateCode();
   const createdAt = Date.now();
   const session = {
-    files: files.map((file) => ({ fileName: file.fileName, url: file.url })),
+    // sizeBytes (when the caller knows it) lets the Cloud API line spot clips
+    // over its limit before trying to send them.
+    files: files.map((file) => ({ fileName: file.fileName, url: file.url, sizeBytes: file.sizeBytes })),
     assetKeys: Array.isArray(assetKeys) ? [...assetKeys] : [],
     createdAt,
     status: 'pending',
@@ -1286,8 +1287,32 @@ const WELCOME_MESSAGES = [
 // Meta does not promise that back-to-back messages arrive in order, so each
 // send waits a moment before the next one starts.
 const CLOUD_SEND_GAP_MS = 1200;
-const CLOUD_DOCUMENT_NOTE =
-  '📁 This HD clip is over 16 MB, so it came as a file. Open it, save it to your gallery, then post it to Status.';
+// Sent instead of the clips when one is over Meta's 16 MiB limit, which only
+// the app's 90-second "no splitting" option produces. Points to Discord, not
+// straight to an APK: these replies are part of the Google Play app's flow.
+const CLOUD_OVERSIZED_REPLY =
+  '⚠️ This video is too large to send here: the 90-second (no splitting) option is disabled in the Play Store version of StatusDrop.\n\n' +
+  '⭐ To use it, get *StatusDrop MAX* (free) from our Discord: https://discord.gg/aT4TNMQEK8\n' +
+  'Then in MAX tap ⋮ → *Delivery method* → *My WhatsApp (Message yourself)*.\n\n' +
+  'Or choose *1080p, 29-second parts* in this app and send the new code.';
+
+function isOversizedForCloud(session) {
+  return (session.files || []).some((file) => Number(file.sizeBytes) > CLOUD_VIDEO_MAX_BYTES);
+}
+
+// One reply, then the code is spent and its files deleted, so sending the
+// code again doesn't cost another message.
+async function rejectOversizedCloudDelivery(line, from, code) {
+  recentlySentCodes.add(code);
+  setTimeout(() => recentlySentCodes.delete(code), 600000).unref?.();
+  await expireDeliverySession(code, 'too large for the Cloud API', true);
+  console.log(`${lineTag(line)} Code ${code} is over the 16 MiB Cloud API limit (90-second clip): sent the MAX notice to +${callingCode(from)}`);
+  try {
+    await sendWhatsAppMessage(line, from, CLOUD_OVERSIZED_REPLY);
+  } catch (err) {
+    console.error('Failed oversized-clip notice:', err.message);
+  }
+}
 
 // Runs one Graph API call. A rejected access token takes the line offline at
 // once, so new uploads get "try again later" instead of a code nobody answers.
@@ -1391,8 +1416,8 @@ function buildCloudCaption(index, total, userCaption = '') {
 }
 
 // Same file as Baileys sends, uploaded to Meta first (tested to keep full
-// quality on Status). Clips over 16 MB, like the app's 90-second 1080p ones,
-// can only go as a document.
+// quality on Status). Clips over 16 MiB are stopped before this (see
+// isOversizedForCloud); the size check here catches any that slip through.
 async function sendCloudVideo(line, to, videoUrl, caption, { index = 0, total = 1 } = {}) {
   const tmpPath = path.resolve('compressed', `wa_send_${uuidv4()}.mp4`);
   await fs.promises.mkdir(path.dirname(tmpPath), { recursive: true });
@@ -1402,22 +1427,18 @@ async function sendCloudVideo(line, to, videoUrl, caption, { index = 0, total = 
       label: 'R2 clip download',
     });
     const { size } = await fs.promises.stat(tmpPath);
-    if (size > CLOUD_DOCUMENT_MAX_BYTES) {
-      throw new Error(`Clip is ${(size / 1e6).toFixed(1)} MB, over the Cloud API's 100 MB limit`);
+    if (size > CLOUD_VIDEO_MAX_BYTES) {
+      const err = new Error(`Clip is ${(size / 1e6).toFixed(1)} MB, over the Cloud API's 16 MiB limit`);
+      err.oversized = true;
+      throw err;
     }
-    const asDocument = size > CLOUD_VIDEO_MAX_BYTES;
     const fileName = total > 1 ? `StatusDrop-part-${index + 1}.mp4` : 'StatusDrop.mp4';
-    // A file-backed Blob streams from disk, so a 60 MB clip never sits in memory.
+    // A file-backed Blob streams from disk instead of sitting in memory.
     const blob = await fs.openAsBlob(tmpPath, { type: 'video/mp4' });
     const mediaId = await cloudCall(line, () => line.client.uploadMedia(blob, fileName));
-    if (asDocument) {
-      const docCaption = [caption, CLOUD_DOCUMENT_NOTE].filter(Boolean).join('\n\n').slice(0, CLOUD_CAPTION_MAX);
-      await cloudCall(line, () => line.client.sendDocument(to, mediaId, fileName, docCaption));
-    } else {
-      await cloudCall(line, () => line.client.sendVideo(to, mediaId, caption));
-    }
+    await cloudCall(line, () => line.client.sendVideo(to, mediaId, caption));
     CLOUD_BUDGET.recordSend(to);
-    console.log(`${lineTag(line)} Video sent via Cloud API ✓ (${(size / 1e6).toFixed(1)} MB as ${asDocument ? 'document' : 'video'})`);
+    console.log(`${lineTag(line)} Video sent via Cloud API ✓ (${(size / 1e6).toFixed(1)} MB)`);
   } finally {
     await fs.promises.unlink(tmpPath).catch(() => { });
   }
@@ -1594,6 +1615,13 @@ async function handleIncomingMessage(line, from, text) {
     return;
   }
 
+  // Cloud API line: a 90-second clip over 16 MiB can't be sent at all, so
+  // say so once instead of trying (each failed try used to cost a reply).
+  if (line.kind === 'cloud' && isOversizedForCloud(session)) {
+    await rejectOversizedCloudDelivery(line, from, code);
+    return;
+  }
+
   // Cloud API line: never deliver past the message budget. A code made for
   // this line already has its clips reserved; a code made for another number
   // needs room now. Telling the user would cost a message too, so it stays quiet.
@@ -1680,6 +1708,11 @@ async function handleIncomingMessage(line, from, text) {
     }
     if (sessions.get(code) !== session) {
       console.warn(`Delivery owner for ${code} changed; stale failure will not restore it.`);
+      return;
+    }
+    // A clip over the Cloud API limit will never go through: no retry.
+    if (err.oversized && line.kind === 'cloud') {
+      await rejectOversizedCloudDelivery(line, from, code);
       return;
     }
     // Delivery stalled/failed — but the video was ALREADY processed and is

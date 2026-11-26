@@ -65,7 +65,7 @@ Without the Cloud API line below, the Meta webhook is receive-only. It logs even
 
 ### WhatsApp Cloud API line (optional)
 
-A number registered on Meta's official Cloud API can deliver next to the Baileys numbers. Users reach it through the same wa.me link. Their message arrives at `POST /webhook`, and the clips are uploaded to Meta and sent with the Graph API. Clips over 16 MB, such as 90-second 1080p ones, go as a document.
+A number registered on Meta's official Cloud API can deliver next to the Baileys numbers. Users reach it through the same wa.me link. Their message arrives at `POST /webhook`, and the clips are uploaded to Meta and sent with the Graph API. Meta takes MP4s up to 16 MiB (16,777,216 bytes), as a video or a document. For a code with a bigger clip, which only the 90-second "no splitting" option makes, the line sends one reply pointing to StatusDrop MAX and the 29-second option, then deletes the clips.
 
 | Variable | Purpose |
 |---|---|

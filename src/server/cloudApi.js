@@ -24,9 +24,12 @@
 
 const DEFAULT_GRAPH_VERSION = 'v26.0';
 
-/** Cloud API caps a `video` message at 16 MB; bigger clips go as a document (100 MB). */
-const CLOUD_VIDEO_MAX_BYTES = 16 * 1000 * 1000;
-const CLOUD_DOCUMENT_MAX_BYTES = 100 * 1000 * 1000;
+/**
+ * Largest MP4 Meta's media upload accepts: exactly 16 MiB (16,777,216 bytes
+ * uploaded on 26 Nov 2026, one byte more was "File too large"). It applies to
+ * MP4s sent as a document too, so bigger clips can't go through the Cloud API.
+ */
+const CLOUD_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
 
 /** Meta error codes that mean the access token itself is unusable. */
 const TOKEN_ERROR_CODES = new Set([190, 102, 10, 200]);
@@ -303,7 +306,6 @@ function createCloudClient({
 module.exports = {
   DEFAULT_GRAPH_VERSION,
   CLOUD_VIDEO_MAX_BYTES,
-  CLOUD_DOCUMENT_MAX_BYTES,
   CloudApiError,
   parseCloudConfig,
   messageText,

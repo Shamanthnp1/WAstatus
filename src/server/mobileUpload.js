@@ -474,7 +474,11 @@ function registerMobileUploadRoutes(app, {
       session.state = 'finalizing';
       session.inFlight += 1;
       countedInFlight = true;
-      const files = session.slots.map((slot) => ({ fileName: slot.key, url: slot.url }));
+      const files = session.slots.map((slot) => ({
+        fileName: slot.key,
+        url: slot.url,
+        sizeBytes: slot.manifest.sizeBytes,
+      }));
       const delivery = await createDeliverySession(files, '');
       const result = {
         success: true,
