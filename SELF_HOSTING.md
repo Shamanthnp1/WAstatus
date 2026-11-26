@@ -76,6 +76,7 @@ A number registered on Meta's official Cloud API can deliver next to the Baileys
 | `WHATSAPP_CLOUD_ENABLED` | Set to `false` to keep the line off without removing the settings |
 | `CLOUD_MONTHLY_MESSAGE_BUDGET` | Most messages the line sends per month; default `950`, inside Meta's 1,000 free. Raise it to allow paid messages |
 | `CLOUD_DAILY_MESSAGE_BUDGET` | `auto` (default) spreads what's left of the month evenly over the remaining days; a number is a fixed daily cap; `off` uses the monthly budget only |
+| `CLOUD_USER_DAILY_DELIVERIES` | Deliveries one WhatsApp number may get per day on the Cloud API line; default `7`, `off` for no limit. Past it, the number gets one notice a day pointing to StatusDrop MAX, and further codes that day are dropped |
 | `CLOUD_BUDGET_TZ` | Timezone for months and days; default `Asia/Kolkata`. Use your Messaging account's timezone, because Meta resets the free tier at midnight there |
 | `CLOUD_USAGE_FILE` | Where the counts are kept; default `.statusdrop-cloud-usage.json` next to the login folders |
 | `WHATSAPP_CLOUD_WABA_ID` | Optional. Normally learned from the first webhook; used to compare the counts with Meta's |

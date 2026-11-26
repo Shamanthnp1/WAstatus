@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -29,6 +30,8 @@ const path = require('path');
 
 const DEFAULT_MONTHLY_BUDGET = 950;
 const DEFAULT_TIME_ZONE = 'Asia/Kolkata';
+/** Deliveries one WhatsApp number may get per day (CLOUD_USER_DAILY_DELIVERIES). */
+const DEFAULT_USER_DAILY_DELIVERIES = 7;
 
 // Two-digit country calling codes. 1 (North America) and 7 (Russia,
 // Kazakhstan) are one digit; every other code is three digits.
@@ -74,10 +77,16 @@ function parseBudgetConfig(env = process.env) {
   } catch (_) {
     timeZone = DEFAULT_TIME_ZONE;
   }
+  const userRaw = String(env.CLOUD_USER_DAILY_DELIVERIES ?? '').trim().toLowerCase();
+  const userNumber = Number.parseInt(userRaw, 10);
   return {
     monthlyLimit: Number.isFinite(monthly) && monthly >= 0 ? monthly : DEFAULT_MONTHLY_BUDGET,
     // 'auto' spreads the month; a number is a fixed cap; 'off' means only the monthly budget.
     daily: dailyRaw === 'off' ? 'off' : (Number.isFinite(dailyNumber) && dailyNumber >= 0 ? dailyNumber : 'auto'),
+    // Deliveries per WhatsApp number per day; 'off' (or 0) means no per-user limit.
+    userDailyLimit: userRaw === 'off' || userNumber === 0
+      ? null
+      : (Number.isFinite(userNumber) && userNumber > 0 ? userNumber : DEFAULT_USER_DAILY_DELIVERIES),
     timeZone,
   };
 }
@@ -91,6 +100,11 @@ class CloudBudget {
     file,
     monthlyLimit = DEFAULT_MONTHLY_BUDGET,
     daily = 'auto',
+    userDailyLimit = DEFAULT_USER_DAILY_DELIVERIES,
+    // Key for hashing phone numbers. A plain hash of a phone number can be
+    // reversed by trying every number, so it is keyed with a server secret
+    // that is not stored in the usage file.
+    hashKey = '',
     timeZone = DEFAULT_TIME_ZONE,
     now = Date.now,
     fsImpl = fs,
@@ -99,6 +113,8 @@ class CloudBudget {
     this.file = file;
     this.monthlyLimit = monthlyLimit;
     this.daily = daily;
+    this.userDailyLimit = userDailyLimit;
+    this.hashKey = hashKey || 'statusdrop-cloud-users';
     this.timeZone = timeZone;
     this.now = now;
     this.fs = fsImpl;
@@ -119,7 +135,40 @@ class CloudBudget {
       dayLimit: null,
       countries: {},
       wabaId: null, // WhatsApp Business Account, learned from webhooks (entry.id)
+      // Today's deliveries per WhatsApp number (keyed hash), and who has
+      // already been told they reached the limit. Cleared every day.
+      users: { day, counts: {}, notified: {} },
     };
+  }
+
+  _userKey(number) {
+    const digits = String(number || '').replace(/\D/g, '');
+    return crypto.createHmac('sha256', this.hashKey).update(digits).digest('hex').slice(0, 20);
+  }
+
+  /** Deliveries this WhatsApp number got today. */
+  userDeliveriesToday(number) {
+    this._rollover();
+    return this.state.users.counts[this._userKey(number)] || 0;
+  }
+
+  /** May this WhatsApp number get another delivery today? */
+  userCanDeliver(number) {
+    if (!this.userDailyLimit) return true;
+    return this.userDeliveriesToday(number) < this.userDailyLimit;
+  }
+
+  /**
+   * Record that this number was told about the daily limit. Returns true the
+   * first time today, so the notice costs at most one message per number per day.
+   */
+  markUserNotified(number) {
+    this._rollover();
+    const key = this._userKey(number);
+    if (this.state.users.notified[key]) return false;
+    this.state.users.notified[key] = true;
+    this._scheduleSave();
+    return true;
   }
 
   /** Remember the WhatsApp Business Account ID for usage checks with Meta. */
@@ -173,7 +222,10 @@ class CloudBudget {
     try {
       const saved = JSON.parse(this.fs.readFileSync(this.file, 'utf8'));
       if (saved && saved.version === 1 && typeof saved.month === 'string') {
-        return { ...this._empty(today), ...saved, countries: saved.countries || {} };
+        const users = saved.users && typeof saved.users === 'object'
+          ? { day: saved.users.day || today, counts: saved.users.counts || {}, notified: saved.users.notified || {} }
+          : { day: today, counts: {}, notified: {} };
+        return { ...this._empty(today), ...saved, countries: saved.countries || {}, users };
       }
     } catch (_) { /* first run, or unreadable: start counting from zero */ }
     return this._empty(today);
@@ -200,6 +252,12 @@ class CloudBudget {
     }
     if (s.dayLimit === null) {
       s.dayLimit = this._dayLimitFor(today);
+      changed = true;
+    }
+    if (s.users.day !== today) {
+      const limited = Object.keys(s.users.notified).length;
+      if (limited) this.logger.log(`[WA cloud] Day ${s.users.day}: ${limited} number(s) reached the daily limit of ${this.userDailyLimit}.`);
+      s.users = { day: today, counts: {}, notified: {} };
       changed = true;
     }
     // Keep about three months of country stats.
@@ -252,11 +310,17 @@ class CloudBudget {
     this._scheduleSave();
   }
 
-  /** Count one finished delivery (its messages were counted by recordSend). */
+  /**
+   * Count one finished delivery (its messages were counted by recordSend).
+   * @returns {number} deliveries this number has had today, including this one
+   */
   recordDelivery(to) {
     this._rollover();
     this._country(to).deliveries += 1;
+    const key = this._userKey(to);
+    this.state.users.counts[key] = (this.state.users.counts[key] || 0) + 1;
     this._scheduleSave();
+    return this.state.users.counts[key];
   }
 
   /** Meta said a message was billed: stop for the rest of the month. */
@@ -321,6 +385,7 @@ class CloudBudget {
 module.exports = {
   DEFAULT_MONTHLY_BUDGET,
   DEFAULT_TIME_ZONE,
+  DEFAULT_USER_DAILY_DELIVERIES,
   callingCode,
   dayKey,
   parseBudgetConfig,

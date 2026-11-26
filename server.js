@@ -755,6 +755,8 @@ const CLOUD_BUDGET = CLOUD_LINE ? new CloudBudget({
   file: process.env.CLOUD_USAGE_FILE
     || path.join(path.dirname(path.resolve(WA_LINES[0].authDir)), '.statusdrop-cloud-usage.json'),
   ...parseBudgetConfig(process.env),
+  // Keys the per-number hashes, so the usage file alone can't be matched back to numbers.
+  hashKey: CLOUD_CONFIG.appSecret,
 }) : null;
 
 // Every line that can take a delivery: the Cloud API line, then the Baileys
@@ -1298,6 +1300,35 @@ const CLOUD_OVERSIZED_REPLY =
   '• *My second number as a bot*: a second number you own sends the clips to you\n\n' +
   'Or choose *1080p, 29-second parts* in this app and send the new code.';
 
+// Sent once a day to a number that already had today's deliveries on the
+// Cloud API line (CLOUD_USER_DAILY_DELIVERIES, default 7).
+function buildUserLimitReply(limit) {
+  return (
+    `⏳ You've reached today's limit of ${limit} videos on the StatusDrop number. ` +
+    'It resets at midnight India time (18:30 UTC). Please try again tomorrow.\n\n' +
+    '⭐ For more videos, get *StatusDrop MAX* (free) from our Discord: https://discord.gg/aT4TNMQEK8\n' +
+    'Then in MAX tap ⋮ → *Delivery method* and choose either:\n' +
+    '• *My WhatsApp (Message yourself)*: your own WhatsApp sends the clips to your Message yourself chat\n' +
+    '• *My second number as a bot*: a second number you own sends the clips to you'
+  );
+}
+
+// The code is spent and its clips deleted; the notice goes out once per
+// number per day, so repeated codes after the limit cost nothing.
+async function rejectUserLimitedCloudDelivery(line, from, code) {
+  recentlySentCodes.add(code);
+  setTimeout(() => recentlySentCodes.delete(code), 600000).unref?.();
+  await expireDeliverySession(code, 'daily per-number limit', true);
+  const notify = CLOUD_BUDGET.markUserNotified(from);
+  console.log(`${lineTag(line)} Code ${code}: +${callingCode(from)} sender ${senderLogId(from)} reached the daily limit of ${CLOUD_BUDGET.userDailyLimit}${notify ? ', sending the notice' : ' (already told today)'}`);
+  if (!notify) return;
+  try {
+    await sendWhatsAppMessage(line, from, buildUserLimitReply(CLOUD_BUDGET.userDailyLimit));
+  } catch (err) {
+    console.error('Failed daily-limit notice:', err.message);
+  }
+}
+
 function isOversizedForCloud(session) {
   return (session.files || []).some((file) => Number(file.sizeBytes) > CLOUD_VIDEO_MAX_BYTES);
 }
@@ -1624,6 +1655,13 @@ async function handleIncomingMessage(line, from, text) {
     return;
   }
 
+  // Cloud API line: each WhatsApp number gets a few deliveries a day, so a
+  // handful of heavy users can't use up everyone's share of the free messages.
+  if (line.kind === 'cloud' && !CLOUD_BUDGET.userCanDeliver(from)) {
+    await rejectUserLimitedCloudDelivery(line, from, code);
+    return;
+  }
+
   // Cloud API line: never deliver past the message budget. A code made for
   // this line already has its clips reserved; a code made for another number
   // needs room now. Telling the user would cost a message too, so it stays quiet.
@@ -1699,8 +1737,9 @@ async function handleIncomingMessage(line, from, text) {
     session.status = 'sent';
     if (line.kind === 'cloud') {
       // Country calling code only, never the number: for pricing by region.
-      CLOUD_BUDGET.recordDelivery(from);
-      console.log(`${lineTag(line)} Delivered ${session.files.length} clip(s) to +${callingCode(from)} · messages ${CLOUD_BUDGET.summary()}`);
+      const today = CLOUD_BUDGET.recordDelivery(from);
+      const perUser = CLOUD_BUDGET.userDailyLimit ? ` · this number ${today}/${CLOUD_BUDGET.userDailyLimit} today` : '';
+      console.log(`${lineTag(line)} Delivered ${session.files.length} clip(s) to +${callingCode(from)}${perUser} · messages ${CLOUD_BUDGET.summary()}`);
     }
   } catch (err) {
     if (session.deliveryTimedOut) {
@@ -2508,7 +2547,7 @@ Local: http://localhost:${PORT}
       checkCloudLine().catch((err) => console.error('Cloud API check failed:', err.message));
     }, CLOUD_CHECK_INTERVAL_MS).unref();
     if (process.env.WHATSAPP_CLOUD_WABA_ID) CLOUD_BUDGET.setWabaId(process.env.WHATSAPP_CLOUD_WABA_ID);
-    console.log(`${lineTag(CLOUD_LINE)} Message budget: ${CLOUD_BUDGET.summary()} (timezone ${CLOUD_BUDGET.timeZone}). Countries this month: ${CLOUD_BUDGET.countrySummary()}`);
+    console.log(`${lineTag(CLOUD_LINE)} Message budget: ${CLOUD_BUDGET.summary()} (timezone ${CLOUD_BUDGET.timeZone}), per number ${CLOUD_BUDGET.userDailyLimit || 'unlimited'} deliveries a day. Countries this month: ${CLOUD_BUDGET.countrySummary()}`);
     syncCloudUsageFromMeta().catch(() => {});
     setInterval(() => {
       syncCloudUsageFromMeta().catch(() => {});
